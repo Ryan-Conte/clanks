@@ -1,8 +1,10 @@
 # clanks
 
-**Put the clankers to work.**
+**A full software team of clankers, on your desktop.**
 
-clanks is a self-hosted desktop app for running a crew of AI agents, your own clankers. You chat with one of your clanks the way you would with any assistant. Hand it something big, like "build a booking site for my barber shop" or "write me a report on the local coffee market", and the lead clank breaks it into tickets on a live kanban board. Worker clanks pick those tickets up, each in its own sandbox, and hand back real outputs: merge requests, research notes, emails and documents. You review and sign off.
+clanks is a self-hosted desktop app that gives you a whole dev team made of AI agents, your own clankers. There is a Lead, a Business Analyst, a Designer, Engineers and QA, and they work the way a real team does. The Lead and the BA turn your idea into a spec. The Designer shapes it. Engineers build it and open pull requests. QA checks the work against the spec. The Lead gives the final sign-off before anything reaches you. When someone finds a problem, the ticket bounces back to whoever can fix it.
+
+You start by creating a project: pick the clanks you need, choose their models and, for software work, connect GitHub and choose a repo. Then you tell the Lead something like *"build me a surfing website that sells surf boards"* and watch the team plan it, build it and ship it as pull requests. You can open a chat with any clank at any point and ask why it made a call.
 
 There is no clanks account and no clanks cloud. You bring your own API keys (Anthropic, OpenAI, and others) or point clanks at a model you host yourself (Ollama, vLLM, LM Studio, anything OpenAI-compatible). Keys stay on your machine and go straight to the provider you chose.
 
@@ -10,36 +12,64 @@ There is no clanks account and no clanks cloud. You bring your own API keys (Ant
 
 ## How it works
 
-1. **Chat it through.** Open a chat with a clank. Small asks get answered right there, like any assistant.
-2. **The lead clank plans.** For bigger work, the lead clank (Atlas in the examples) asks what it needs to, then turns the project into tickets with acceptance criteria, dependencies and an output type.
-3. **The crew clocks in.** Each ticket is claimed by a worker clank running in an isolated container, on local Docker or your own Kubernetes cluster. Workers use the tools their ticket needs, post progress back to the board, and hand off to each other.
-4. **You sign off.** Outputs land in a review column: an MR to approve, a doc to read, an email draft to send. Nothing leaves your machine or touches your repos without the permissions you gave it.
+1. **Create or pick a project.** The home screen lists your projects. A new project asks for a name and, if the project involves code, a GitHub repo (sign in with GitHub, then pick an existing repo or create one). Projects without code use a local folder instead. Then you pick the clanks you need from the premade list, or create your own with a custom prompt, and choose a model for each. You can add more clanks to the team later.
+2. **Talk to the Lead.** Describe what you want. The Lead asks clarifying questions, then brings in the BA.
+3. **The spec gets written.** The BA writes a spec with user stories and acceptance criteria. The Lead reviews it for scope and order. You approve it, edit it or send it back.
+4. **The board fills up.** The Lead breaks the approved spec into tickets with dependencies and assigns them. UI work goes to the Designer first.
+5. **The team builds.** Engineers each take a ticket in their own sandbox, write the code and tests, and open a pull request against your repo.
+6. **QA validates.** QA runs the build and tests and checks the work against the BA's acceptance criteria. Failures bounce back to the Engineer with a report.
+7. **The Lead signs off.** The Lead does a final review against the spec and the rest of the project, then hands the PR to you. You merge.
 
-The chat is the main way you use clanks. The board is the shared view of what the crew is doing, and you can drag cards, reassign them or add your own.
+At any step, a clank that finds a problem with what it was handed can bounce the ticket back: an Engineer who finds a gap in the spec sends it to the BA, QA sends bugs to the Engineer, and the Lead can send anything back to anyone. Each bounce carries a reason, so the whole history is on the ticket.
 
-## Meet the crew
+## Meet the team
 
-Clanks are configurable agents: a name, a role, a model, a set of tools and a set of permissions. The defaults ship as:
+Every project gets its own team. Each clank keeps its own context per project: its conversations, its notes, the decisions it made and why. Ask Forge why it picked a library, ask Gauge what failed, or ask Scribe where an acceptance criterion came from, and they answer from their own record of that project.
 
-| Clank | Role | Typical outputs |
+| Clank | Role | Owns |
 | --- | --- | --- |
-| **Atlas** | Lead. Plans projects, writes tickets, assigns work, reviews hand-offs. | Ticket breakdowns, status summaries |
-| **Forge** | Engineer. Works in a git checkout inside a sandbox. | Branches, merge requests, test runs |
-| **Scout** | Researcher. Browses, reads and cites. | Research notes, comparison tables |
-| **Quill** | Writer. Drafts and edits. | Emails, docs, reports |
+| **Atlas** | Lead | Talks to you, plans the project with the BA, breaks the spec into tickets, assigns work, gives final sign-off. |
+| **Scribe** | Business Analyst | Turns your idea into a spec: user stories, acceptance criteria, edge cases, open questions. Owns the spec when tickets bounce back. |
+| **Prism** | Designer | User flows, wireframes, the design system, and UI specs the Engineers build from. Reviews UI work for fidelity. |
+| **Forge** | Engineer | Writes the code and tests in a sandbox, opens pull requests. A project can run several Forges in parallel. |
+| **Gauge** | QA | Runs the build, the tests and end-to-end checks, and validates every ticket against the BA's acceptance criteria. |
+| **Scout** | Researcher | Optional. Looks into libraries, APIs, competitors and pricing when the team needs facts. |
+| **Quill** | Writer | Optional. Docs, blog posts, release notes, copy and emails. |
+| **Buzz** | Marketing | Optional. Positioning, campaign plans, channel strategy, social posts, launch calendars. |
 
-Every clank can run on a different model. Plan with a frontier model, run the crew on a local one, and swap any time.
+You choose who is on each project's team. Pick only the clanks you need when you create it, and add more at any time from the premade list. A small site might need just Atlas, Forge and Gauge; a bigger product gets the whole crew.
+
+Need a role that isn't on the list? Create a custom clank: give it a name, a role prompt, a model and the tools it may use, and decide where it sits in the workflow (for example a Security reviewer between QA and the Lead). Custom clanks are saved to your library so you can reuse them in other projects.
+
+Every clank can run on a different model. Plan with a frontier model, build with a fast one, run QA on a local one, and swap any time.
+
+## Example: a marketing team
+
+Not every project is code. Say you want a project called **Scavr.io marketing**:
+
+1. Create the project and skip the repo; its outputs go to a local folder.
+2. Pick the team: **Atlas** (Lead), **Quill** (Writer), **Prism** (Designer) and **Buzz** (Marketing).
+3. Tell Atlas: *"Plan the launch of Scavr.io: a landing page refresh, a blog post, a two-week social campaign and a launch email."*
+
+Atlas and Buzz agree the positioning, audience and channels, and you approve that brief. Atlas then puts tickets on the board: Quill drafts the blog post and email, Prism makes the social graphics and the landing page mock-ups, and Buzz builds the campaign calendar and posts. Each piece goes to Atlas for review against the brief, and anything off-message bounces back with a reason. You approve the finished pieces; nothing is published or sent without you.
+
+There is no BA, Engineer or QA on this team, and that's fine: the workflow only routes work through the clanks a project has.
 
 ## Features (planned)
 
 - Chat-first desktop app for macOS, Windows and Linux (Electron).
+- A home screen of projects, each with its own team, board, briefs or specs, history, and a GitHub repo or local folder.
+- Software and non-software projects (marketing, research, content) with the same workflow.
+- Pick the clanks each project needs from a premade list, add more later, or create custom clanks with your own prompts.
+- GitHub sign-in to pick or create a repo; real branches and pull requests. GitLab later.
+- A full team workflow: spec, design, build, QA, Lead sign-off, then you.
+- Tickets that bounce back with a reason when anyone finds an issue, with a limit that escalates to you if a ticket keeps looping.
+- Per-project memory for every clank, so you can ask any of them why.
 - Bring your own model: Anthropic, OpenAI, Google, OpenRouter, and any OpenAI-compatible endpoint, including local models.
-- A lead clank that turns a project into a dependency-aware kanban board.
-- Worker clanks in isolated containers: local Docker first, your own Kubernetes cluster next.
-- Output types beyond code: research, email drafts, documents, spreadsheets.
-- Git integrations that open real MRs/PRs on GitHub and GitLab.
-- Human-in-the-loop by default: approvals for merges, sends and anything outbound.
-- Per-clank budgets, token and cost tracking, and a full activity log of every tool call.
+- Engineers and QA in isolated containers: local Docker first, your own Kubernetes cluster next.
+- A live kanban board as the shared view of who is doing what.
+- Human in the loop by default: you approve the spec and merge the PRs.
+- Per-project budgets, token and cost tracking, and a full activity log of every tool call.
 - Everything stored locally in SQLite. Secrets in your OS keychain.
 
 ## Tech stack
@@ -50,7 +80,7 @@ TypeScript end to end.
 - **Orchestrator:** Node, running in Electron's main process (and later as a headless daemon).
 - **Storage:** SQLite (via Drizzle), secrets in the OS keychain.
 - **Models:** a provider abstraction over cloud APIs and OpenAI-compatible local servers.
-- **Tools:** MCP for tool servers, plus built-in tools for files, shell, git and web.
+- **Tools:** MCP for tool servers, plus built-in tools for files, shell, git, browser and web.
 - **Sandboxes:** Docker locally, Kubernetes Jobs/Pods on a cluster you control.
 
 The reasoning behind each choice is in [docs/PLAN.md](docs/PLAN.md).
@@ -68,8 +98,8 @@ pnpm dev
 
 ## Docs
 
-- [Roadmap](docs/ROADMAP.md): milestones from first chat to a full crew on Kubernetes.
-- [Buildout plan](docs/PLAN.md): architecture, data model, agent runtime and the order things get built.
+- [Roadmap](docs/ROADMAP.md): milestones from the first project to a full team on Kubernetes.
+- [Buildout plan](docs/PLAN.md): architecture, the team workflow, data model, agent runtime and the order things get built.
 
 ## Related
 
