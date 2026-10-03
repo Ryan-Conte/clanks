@@ -4,7 +4,7 @@
 
 clanks is a self-hosted desktop app that gives you a whole dev team made of AI agents, your own clankers. There is a Lead, a Business Analyst, a Designer, Engineers and QA, and they work the way a real team does. The Lead and the BA turn your idea into a spec. The Designer shapes it. Engineers build it and open pull requests. QA checks the work against the spec. The Lead gives the final sign-off before anything reaches you. When someone finds a problem, the ticket bounces back to whoever can fix it.
 
-You start by creating a project: pick your models, connect GitHub and choose a repo. Then you tell the Lead something like *"build me a surfing website that sells surf boards"* and watch the team plan it, build it and ship it as pull requests. You can open a chat with any clank at any point and ask why it made a call.
+You start by creating a project: pick the clanks you need, choose their models and, for software work, connect GitHub and choose a repo. Then you tell the Lead something like *"build me a surfing website that sells surf boards"* and watch the team plan it, build it and ship it as pull requests. You can open a chat with any clank at any point and ask why it made a call.
 
 There is no clanks account and no clanks cloud. You bring your own API keys (Anthropic, OpenAI, and others) or point clanks at a model you host yourself (Ollama, vLLM, LM Studio, anything OpenAI-compatible). Keys stay on your machine and go straight to the provider you chose.
 
@@ -12,7 +12,7 @@ There is no clanks account and no clanks cloud. You bring your own API keys (Ant
 
 ## How it works
 
-1. **Create or pick a project.** The home screen lists your projects. A new project asks for a name and a GitHub repo (sign in with GitHub, then pick an existing repo or create one). Then you pick the clanks you need from the premade list, or create your own with a custom prompt, and choose a model for each. You can add more clanks to the team later.
+1. **Create or pick a project.** The home screen lists your projects. A new project asks for a name and, if the project involves code, a GitHub repo (sign in with GitHub, then pick an existing repo or create one). Projects without code use a local folder instead. Then you pick the clanks you need from the premade list, or create your own with a custom prompt, and choose a model for each. You can add more clanks to the team later.
 2. **Talk to the Lead.** Describe what you want. The Lead asks clarifying questions, then brings in the BA.
 3. **The spec gets written.** The BA writes a spec with user stories and acceptance criteria. The Lead reviews it for scope and order. You approve it, edit it or send it back.
 4. **The board fills up.** The Lead breaks the approved spec into tickets with dependencies and assigns them. UI work goes to the Designer first.
@@ -34,7 +34,8 @@ Every project gets its own team. Each clank keeps its own context per project: i
 | **Forge** | Engineer | Writes the code and tests in a sandbox, opens pull requests. A project can run several Forges in parallel. |
 | **Gauge** | QA | Runs the build, the tests and end-to-end checks, and validates every ticket against the BA's acceptance criteria. |
 | **Scout** | Researcher | Optional. Looks into libraries, APIs, competitors and pricing when the team needs facts. |
-| **Quill** | Writer | Optional. Docs, release notes, marketing copy and emails. |
+| **Quill** | Writer | Optional. Docs, blog posts, release notes, copy and emails. |
+| **Buzz** | Marketing | Optional. Positioning, campaign plans, channel strategy, social posts, launch calendars. |
 
 You choose who is on each project's team. Pick only the clanks you need when you create it, and add more at any time from the premade list. A small site might need just Atlas, Forge and Gauge; a bigger product gets the whole crew.
 
@@ -42,10 +43,23 @@ Need a role that isn't on the list? Create a custom clank: give it a name, a rol
 
 Every clank can run on a different model. Plan with a frontier model, build with a fast one, run QA on a local one, and swap any time.
 
+## Example: a marketing team
+
+Not every project is code. Say you want a project called **Scavr.io marketing**:
+
+1. Create the project and skip the repo; its outputs go to a local folder.
+2. Pick the team: **Atlas** (Lead), **Quill** (Writer), **Prism** (Designer) and **Buzz** (Marketing).
+3. Tell Atlas: *"Plan the launch of Scavr.io: a landing page refresh, a blog post, a two-week social campaign and a launch email."*
+
+Atlas and Buzz agree the positioning, audience and channels, and you approve that brief. Atlas then puts tickets on the board: Quill drafts the blog post and email, Prism makes the social graphics and the landing page mock-ups, and Buzz builds the campaign calendar and posts. Each piece goes to Atlas for review against the brief, and anything off-message bounces back with a reason. You approve the finished pieces; nothing is published or sent without you.
+
+There is no BA, Engineer or QA on this team, and that's fine: the workflow only routes work through the clanks a project has.
+
 ## Features (planned)
 
 - Chat-first desktop app for macOS, Windows and Linux (Electron).
-- A home screen of projects, each with its own repo, team, board, specs and history.
+- A home screen of projects, each with its own team, board, briefs or specs, history, and a GitHub repo or local folder.
+- Software and non-software projects (marketing, research, content) with the same workflow.
 - Pick the clanks each project needs from a premade list, add more later, or create custom clanks with your own prompts.
 - GitHub sign-in to pick or create a repo; real branches and pull requests. GitLab later.
 - A full team workflow: spec, design, build, QA, Lead sign-off, then you.

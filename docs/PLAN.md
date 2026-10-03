@@ -25,7 +25,8 @@ The clanks below are the premade list. Each project's team is chosen when the pr
 | Forge | Engineer | A ticket, its acceptance criteria, design specs | Branch, commits, tests, pull request | Sandbox |
 | Gauge | QA | A PR and its ticket's acceptance criteria | QA report with pass/fail per criterion and evidence | Sandbox |
 | Scout | Researcher (optional) | A question | Research note with sources | Sandbox |
-| Quill | Writer (optional) | A ticket | Docs, release notes, copy | Sandbox |
+| Quill | Writer (optional) | A ticket | Docs, blog posts, release notes, copy, emails | Sandbox |
+| Buzz | Marketing (optional) | Your goals, the brief | Positioning, campaign plans, channel strategy, social posts, calendars | In-process |
 
 ### Custom clanks and the library
 
@@ -58,6 +59,12 @@ Atlas plans with whatever team the project has. If a ticket needs a role the tea
 7. **Sign-off.** Atlas reviews the PR, the QA report and the spec together, and checks the change fits the rest of the project. Approved tickets go to you with the PR ready to merge.
 8. **Done.** You merge. CI status and merge state come back from GitHub.
 
+### Non-software projects
+
+The same workflow runs without a repo. The spec becomes a **brief** (goals, audience, messages, deliverables, success measures), written by Atlas with whichever planning clank the team has (Scribe, Buzz or Scout) and approved by you. Tickets route through the clanks the project has, and Atlas's sign-off checks each deliverable against the brief instead of a PR against the spec. Outputs are files in the project folder (Markdown, images, HTML mock-ups, CSV calendars), and anything outbound (publishing, sending) waits for your approval.
+
+Example, **Scavr.io marketing** with Atlas, Quill, Prism and Buzz: Atlas and Buzz write the launch brief; tickets go to Quill (blog post, launch email), Prism (social graphics, landing page mock-ups) and Buzz (campaign calendar, posts); Atlas reviews each against the brief and bounces off-message work back with a reason.
+
 ### Bounce-backs
 
 Any clank can return a ticket to an earlier owner instead of passing it on. A bounce has a target role, a category and a reason, and it is recorded on the ticket.
@@ -87,7 +94,7 @@ The app opens on the home screen: recent projects as cards with their status (sp
 New project wizard:
 
 1. **Basics.** Name, one-line description, optional template.
-2. **Repository.** Sign in with GitHub, then pick an existing repo or create a new one (public or private, with a default branch). The repo is cloned locally as the project's workspace.
+2. **Workspace.** For software projects, sign in with GitHub, then pick an existing repo or create a new one (public or private, with a default branch); the repo is cloned locally as the workspace. For other projects (marketing, research, content), pick a local folder; it is git-initialised so every output is versioned.
 3. **Models.** A default model for the team, with per-clank overrides (for example a frontier model for Atlas and Scribe, a fast model for Forge, a local model for Gauge). Each choice is checked against the providers you configured.
 4. **Team.** Tick the clanks you need from the premade list (Atlas is always included), optionally starting from a preset ("Full team", "Solo engineer"). "New clank" creates a custom one with its own prompt. The team can be changed later from the project's team settings.
 
@@ -151,7 +158,7 @@ apps/
 packages/
   core/               Shared types, zod schemas, workflow state machine, event types
   orchestrator/       Project, conversation, workflow, scheduler, context, runners, store
-  roles/              Default role definitions: prompts, tools, routes (Atlas, Scribe, Prism, Forge, Gauge, Scout, Quill)
+  roles/              Default role definitions: prompts, tools, routes (Atlas, Scribe, Prism, Forge, Gauge, Scout, Quill, Buzz)
   providers/          Model provider interface and adapters
   github/             GitHub auth (device flow), repos, branches, PRs, checks
   tools/              Built-in tools, permission model, MCP client
@@ -186,7 +193,7 @@ Stored in SQLite. Simplified:
 
 - **provider**: id, kind (`anthropic`, `openai`, `openai_compatible`, ...), base URL, keychain reference, enabled models.
 - **github_account**: id, login, keychain reference for the token.
-- **project**: id, name, description, repo (owner/name, default branch), local workspace path, team preset, status, budget.
+- **project**: id, name, description, kind (`software`, `general`), repo (owner/name, default branch; optional), local workspace path, team preset, status, budget.
 - **clank_template**: id, source (`premade`, `custom`), role, name, avatar, prompt, default model, tools, permission policy, workflow slot. The clank library.
 - **clank**: id, project, template (optional), role, name, avatar, system prompt, provider + model, tool allowlist, permission policy, budget.
 - **conversation**: id, project, clank, title. **message**: id, conversation, role, content parts (text, tool call, tool result, attachment), tokens, cost.

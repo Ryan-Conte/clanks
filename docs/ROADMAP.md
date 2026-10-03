@@ -24,7 +24,7 @@ The home screen and the first conversation.
 - Settings screen to add keys or local endpoints, with a "test connection" button.
 - **Home screen as a project creator and selector.** Recent projects as cards; "New project" opens a short wizard:
   1. Name and one-line description.
-  2. Sign in with GitHub (OAuth device flow), then pick an existing repo or create a new one.
+  2. Workspace: sign in with GitHub (OAuth device flow) and pick or create a repo, or choose a local folder for projects without code.
   3. Pick the team: choose clanks from the premade list (Atlas is always included), or create a custom clank with a name, role prompt and model.
   4. Pick a default model, and optionally a model per clank.
 - Clank library: the premade clanks plus any custom ones you create, reusable across projects.
@@ -79,12 +79,13 @@ Engineers build, QA validates, the Lead signs off, and tickets bounce when somet
 ## Milestone 5: Designer and the rest of the team
 
 - Prism, the Designer: user flows, wireframes rendered as live HTML previews, and a design system (tokens, components) committed to the repo. UI tickets go through Prism before Forge, and Prism reviews UI work for fidelity before QA.
-- Scout (Researcher) and Quill (Writer) as optional team members, with research notes, docs and release notes as ticket outputs.
+- Scout (Researcher), Quill (Writer) and Buzz (Marketing) as optional team members, with research notes, docs, blog posts, campaign plans and social posts as ticket outputs.
+- Non-software projects: the example "Scavr.io marketing" project (Atlas, Quill, Prism, Buzz) runs end to end on a local folder, with Atlas reviewing every piece against the approved brief.
 - Custom clanks in the workflow: a custom clank (DevOps, Security, Data) gets a place in ticket routes, so Atlas can send work through it and it can hand off and bounce like the built-in roles.
-- Team presets as shortcuts in the new-project wizard: "Full team", "Solo engineer", "Research only".
+- Team presets as shortcuts in the new-project wizard: "Full dev team", "Solo engineer", "Marketing team", "Research only".
 - Decision log: every clank records the key decisions it makes and why, linked to tickets, so "why did you do that?" has a sourced answer.
 
-**Done when:** a UI-heavy project goes through design before build, and a custom clank can be added to the workflow without code changes.
+**Done when:** a UI-heavy project goes through design before build, the Scavr.io marketing example produces an approved blog post, graphics and campaign calendar, and a custom clank can be added to the workflow without code changes.
 
 ## Milestone 6: Bring your own cluster
 
@@ -113,7 +114,7 @@ Ideas worth keeping, not yet scheduled.
 
 - Shared projects for small teams over a self-hosted sync server.
 - A clank marketplace: import and export clank roles, prompts and tool bundles.
-- Non-software projects with their own team presets (research report, marketing campaign).
+- Publishing integrations for marketing work (CMS, social schedulers, email platforms), always behind an approval.
 - Scheduled work ("every Monday, triage new issues").
 - Voice chat with a clank.
 - Mobile companion app for approvals on the go.
