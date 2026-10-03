@@ -2,6 +2,8 @@
 
 Each milestone ends with something you can actually use. Later milestones build on earlier ones; nothing is thrown away. The detail on how each piece is built is in [PLAN.md](PLAN.md).
 
+The north star is the full loop: you create a project, ask the Lead for "a surfing website that sells surf boards", and the team (Lead, BA, Designer, Engineers, QA) specs it, builds it, validates it and hands you pull requests to merge.
+
 ## Milestone 0: Foundations
 
 Get a runnable shell and the plumbing everything else sits on.
@@ -14,83 +16,90 @@ Get a runnable shell and the plumbing everything else sits on.
 
 **Done when:** a packaged app opens on all three platforms and CI is green.
 
-## Milestone 1: Chat with a clank
+## Milestone 1: Projects and the Lead
 
-The core experience works with one agent and no board yet.
+The home screen and the first conversation.
 
 - Provider abstraction with streaming and tool calling. Adapters for Anthropic, OpenAI, and any OpenAI-compatible endpoint (covers Ollama, vLLM, LM Studio, OpenRouter).
 - Settings screen to add keys or local endpoints, with a "test connection" button.
-- Clank profiles: name, avatar, role prompt, model. Ship Atlas, Forge, Scout and Quill as defaults.
-- Chat UI: conversation list, streaming replies, markdown and code rendering, stop and retry.
-- Conversations persisted locally.
-- Token and cost tracking per message.
+- **Home screen as a project creator and selector.** Recent projects as cards; "New project" opens a short wizard:
+  1. Name and one-line description.
+  2. Sign in with GitHub (OAuth device flow), then pick an existing repo or create a new one.
+  3. Pick a default model, and optionally a model per clank.
+- Inside a project: chat with Atlas, the Lead. Conversations persisted per project.
+- Per-project context for each clank: its own conversation history and a notes store it can read and write.
+- Token and cost tracking per message and per project.
 
-**Done when:** you can chat with a clank on a cloud model and on a local model, close the app, and pick the conversation back up.
+**Done when:** you can create a project bound to a GitHub repo, chat with the Lead on a cloud or local model, close the app, and pick the project back up from the home screen.
 
-## Milestone 2: Tools and a local workspace
+## Milestone 2: Tools and the workspace
 
-Clanks can do things, safely, on your machine.
+Clanks can do things, safely.
 
 - Tool layer with a permission model: each tool call is allowed, asked or denied per clank.
-- Built-in tools: read and write files in a workspace folder, run shell commands, git, web fetch and search.
+- Built-in tools: read and write files, run shell commands, git, web fetch and search.
+- Each project gets a local clone of its repo as the workspace.
 - MCP client so any MCP server can be attached to a clank.
 - Approval prompts in chat for anything marked "ask".
 - Activity log of every tool call with inputs, outputs and duration.
 
-**Done when:** you can ask Forge to change code in a local folder, approve its commands, and see every step it took.
+**Done when:** you can ask a clank to read the project's repo and make a change on a branch, approve its commands, and see every step it took.
 
-## Milestone 3: The board
+## Milestone 3: Spec and board
 
-The lead clank plans, and the work becomes visible.
+The Lead and the BA turn an idea into an approved spec and a board.
 
-- Projects, tickets, columns (Backlog, Ready, Doing, Review, Done) and ticket dependencies.
-- Kanban view as a secondary tab, kept live from the orchestrator.
-- Atlas planning flow: clarifying questions in chat, then a proposed ticket breakdown you can edit before it goes on the board.
-- Ticket detail: acceptance criteria, output type, assignee, linked chat, activity.
-- Chat and board stay in sync: Atlas can be asked "what's the status?" and answers from the board.
+- Scribe, the BA, joins the team. Atlas brings Scribe in when a request is bigger than a quick answer.
+- Spec flow: clarifying questions in chat, then Scribe drafts a spec (overview, user stories, acceptance criteria, non-goals, open questions) and Atlas reviews it for scope and order.
+- Spec view in the app: read it, edit it, comment, approve or send it back. Specs are versioned.
+- Atlas breaks the approved spec into tickets, each linked to the stories and acceptance criteria it covers, with dependencies and an assigned role.
+- Kanban board as a secondary tab, kept live from the orchestrator. Columns follow the team workflow (see the plan).
+- Talk to any clank: switch the chat to Scribe and ask why a criterion exists; it answers from its own project context.
 
-**Done when:** a one-paragraph project request becomes an editable board of tickets with dependencies.
+**Done when:** "build me a surfing website that sells surf boards" becomes an approved spec and a board of linked tickets.
 
-## Milestone 4: The crew clocks in (local)
+## Milestone 4: The build loop
 
-Multiple workers run in parallel on your machine.
+Engineers build, QA validates, the Lead signs off, and tickets bounce when something is wrong.
 
-- Orchestrator scheduler: claims Ready tickets whose dependencies are done, respects concurrency and budget limits.
-- Docker sandbox runner: one container per ticket run, workspace mounted, network policy per clank.
-- Worker runtime inside the container that talks back to the orchestrator over a small authenticated API.
-- Hand-offs: a worker can create follow-up tickets, ask another clank a question, or block on the user.
-- Review column: outputs wait for you; approve, request changes (the ticket goes back with your notes) or reject.
+- Orchestrator scheduler: moves tickets between roles, claims work whose dependencies are done, respects concurrency and budget limits.
+- Docker sandbox runner: one container per run, with the repo checked out on a ticket branch and network policy per clank.
+- Forge, the Engineer: implements a ticket with tests, pushes a branch and opens a pull request on GitHub. Several Forges can run in parallel.
+- Gauge, QA: checks out the PR in its own sandbox, runs the build, the tests and browser checks, and validates each acceptance criterion with evidence (test output, screenshots). Writes a QA report on the ticket.
+- Atlas final sign-off: reviews the PR against the spec and the rest of the project, then moves it to you.
+- Bounce-backs: any clank can return a ticket upstream with a reason (spec gap to Scribe, bug to Forge, anything from Atlas to anyone). After a configurable number of bounces the ticket escalates to you.
+- CI status from GitHub mirrored on the ticket.
 - Budgets per project and per clank, with automatic pause when hit.
 
-**Done when:** a "build a small site" project runs end to end with three workers in parallel and you only touch it to approve.
+**Done when:** a small project runs end to end with two Engineers in parallel, at least one QA bounce-back is handled without you, and you only step in to approve the spec and merge PRs.
 
-## Milestone 5: Real outputs
+## Milestone 5: Designer and the rest of the team
 
-Workers deliver things you can ship, not just files in a folder.
+- Prism, the Designer: user flows, wireframes rendered as live HTML previews, and a design system (tokens, components) committed to the repo. UI tickets go through Prism before Forge, and Prism reviews UI work for fidelity before QA.
+- Scout (Researcher) and Quill (Writer) as optional team members, with research notes, docs and release notes as ticket outputs.
+- Custom roles: add your own clank (DevOps, Security, Data) with its own prompt, tools and place in the workflow.
+- Team presets per project: "Full team", "Solo engineer", "Research only".
+- Decision log: every clank records the key decisions it makes and why, linked to tickets, so "why did you do that?" has a sourced answer.
 
-- GitHub and GitLab integration: branches, commits, PRs/MRs, CI status back on the ticket.
-- Research output: notes with sources and citations, rendered in the app.
-- Documents: Markdown, exported to DOCX and PDF.
-- Email: drafts composed in the app, sent only on your approval through your own SMTP or Gmail connection.
-- Output artifacts stored and versioned per ticket.
-
-**Done when:** one project produces a merged PR, a cited research note and an approved email.
+**Done when:** a UI-heavy project goes through design before build, and a custom role can be added to the workflow without code changes.
 
 ## Milestone 6: Bring your own cluster
 
-Run the crew on infrastructure you control.
+Run the team on infrastructure you control.
 
-- Kubernetes runner: tickets become Jobs/Pods in a namespace you choose, using your kubeconfig.
+- Kubernetes runner: Engineer and QA runs become Jobs/Pods in a namespace you choose, using your kubeconfig.
 - Helm chart for a small in-cluster gateway that relays worker traffic back to the desktop app.
-- Optional headless mode: the orchestrator as a standalone daemon so a crew keeps running with the laptop closed, with the desktop app as a client.
+- Optional headless mode: the orchestrator as a standalone daemon so a team keeps working with the laptop closed, with the desktop app as a client.
+- Preview environments: QA can deploy a PR to a short-lived preview in the cluster and test it there.
 - Resource requests, image selection and secrets injection per clank.
 
 **Done when:** the Milestone 4 demo runs on a remote cluster with the same UI.
 
 ## Milestone 7: Polish and first public release
 
-- Onboarding: first-run flow that picks a provider and runs a sample project.
-- Templates: starter projects ("ship a feature", "turn a question into a report").
+- Onboarding: first-run flow that adds a provider, connects GitHub and runs a sample project.
+- Project templates: "marketing site", "e-commerce store", "REST API", "internal dashboard".
+- GitLab support alongside GitHub.
 - Auto-update, crash reporting (opt-in), signed and notarized builds.
 - Docs site and the download links on [clanks.si](https://clanks.si).
 - License chosen and published.
@@ -99,9 +108,10 @@ Run the crew on infrastructure you control.
 
 Ideas worth keeping, not yet scheduled.
 
-- Shared boards for small teams over a self-hosted sync server.
-- A clank marketplace: import and export clank profiles and tool bundles.
-- Scheduled and recurring projects ("every Monday, research and summarise X").
+- Shared projects for small teams over a self-hosted sync server.
+- A clank marketplace: import and export clank roles, prompts and tool bundles.
+- Non-software projects with their own team presets (research report, marketing campaign).
+- Scheduled work ("every Monday, triage new issues").
 - Voice chat with a clank.
 - Mobile companion app for approvals on the go.
-- Evaluation harness to compare models per role on your own tickets.
+- Evaluation harness to compare models per role on your own projects.
