@@ -25,7 +25,7 @@ The home screen and the first conversation.
 - **Home screen as a project creator and selector.** Recent projects as cards; "New project" opens a short wizard:
   1. Name and one-line description.
   2. Workspace: sign in with GitHub (OAuth device flow) and pick or create a repo, or choose a local folder for projects without code.
-  3. Pick the team: choose clanks from the premade list (Atlas is always included), or create a custom clank with a name, role prompt and model.
+  3. Pick the team: Atlas is always included and every other clank is optional; choose from the premade list or create a custom clank with a name, role prompt and model.
   4. Pick a default model, and optionally a model per clank.
 - Clank library: the premade clanks plus any custom ones you create, reusable across projects.
 - Team settings inside a project: add a clank from the library or a new custom one at any time, change its model or prompt, or remove it.
@@ -79,7 +79,7 @@ Engineers build, QA validates, the Lead signs off, and tickets bounce when somet
 ## Milestone 5: Designer and the rest of the team
 
 - Prism, the Designer: user flows, wireframes rendered as live HTML previews, and a design system (tokens, components) committed to the repo. UI tickets go through Prism before Forge, and Prism reviews UI work for fidelity before QA.
-- Scout (Researcher), Quill (Writer) and Buzz (Marketing) as optional team members, with research notes, docs, blog posts, campaign plans and social posts as ticket outputs.
+- Scout (Researcher), Quill (Writer) and Buzz (Marketing) as premade clanks, with research notes, docs, blog posts, campaign plans and social posts as ticket outputs.
 - Non-software projects: the example "Scavr.io marketing" project (Atlas, Quill, Prism, Buzz) runs end to end on a local folder, with Atlas reviewing every piece against the approved brief.
 - Custom clanks in the workflow: a custom clank (DevOps, Security, Data) gets a place in ticket routes, so Atlas can send work through it and it can hand off and bounce like the built-in roles.
 - Team presets as shortcuts in the new-project wizard: "Full dev team", "Solo engineer", "Marketing team", "Research only".

@@ -24,7 +24,7 @@ At any step, a clank that finds a problem with what it was handed can bounce the
 
 ## Meet the team
 
-Every project gets its own team. Each clank keeps its own context per project: its conversations, its notes, the decisions it made and why. Ask Forge why it picked a library, ask Gauge what failed, or ask Scribe where an acceptance criterion came from, and they answer from their own record of that project.
+Every project gets its own team. **Atlas, the Lead, is the only required clank; every other clank is optional.** Each clank keeps its own context per project: its conversations, its notes, the decisions it made and why. Ask Forge why it picked a library, ask Gauge what failed, or ask Scribe where an acceptance criterion came from, and they answer from their own record of that project.
 
 | Clank | Role | Owns |
 | --- | --- | --- |
@@ -33,11 +33,11 @@ Every project gets its own team. Each clank keeps its own context per project: i
 | **Prism** | Designer | User flows, wireframes, the design system, and UI specs the Engineers build from. Reviews UI work for fidelity. |
 | **Forge** | Engineer | Writes the code and tests in a sandbox, opens pull requests. A project can run several Forges in parallel. |
 | **Gauge** | QA | Runs the build, the tests and end-to-end checks, and validates every ticket against the BA's acceptance criteria. |
-| **Scout** | Researcher | Optional. Looks into libraries, APIs, competitors and pricing when the team needs facts. |
-| **Quill** | Writer | Optional. Docs, blog posts, release notes, copy and emails. |
-| **Buzz** | Marketing | Optional. Positioning, campaign plans, channel strategy, social posts, launch calendars. |
+| **Scout** | Researcher | Looks into libraries, APIs, competitors and pricing when the team needs facts. |
+| **Quill** | Writer | Docs, blog posts, release notes, copy and emails. |
+| **Buzz** | Marketing | Positioning, campaign plans, channel strategy, social posts, launch calendars. |
 
-You choose who is on each project's team. Pick only the clanks you need when you create it, and add more at any time from the premade list. A small site might need just Atlas, Forge and Gauge; a bigger product gets the whole crew.
+You choose who is on each project's team. Pick only the clanks you need when you create it, and add more at any time from the premade list. A small site might need just Atlas, Forge and Gauge; a bigger product gets the whole crew. Atlas on its own works too: it answers in chat and handles small tasks itself, and it suggests adding a clank when a ticket needs a role the team doesn't have.
 
 Need a role that isn't on the list? Create a custom clank: give it a name, a role prompt, a model and the tools it may use, and decide where it sits in the workflow (for example a Security reviewer between QA and the Lead). Custom clanks are saved to your library so you can reuse them in other projects.
 

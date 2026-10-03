@@ -15,7 +15,7 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
 
 ## The team
 
-The clanks below are the premade list. Each project's team is chosen when the project is created: Atlas is always on it, and every other clank is optional. More clanks can be added at any time, from the premade list or as custom clanks. Every clank is configurable per project (prompt, model, tools, permissions, place in the workflow).
+The clanks below are the premade list. Each project's team is chosen when the project is created: Atlas is always on it, and every other clank (BA, Designer, Engineer and QA included) is optional. A team of just Atlas is valid: Atlas answers in chat and does small tasks itself in the in-process runner. More clanks can be added at any time, from the premade list or as custom clanks. Every clank is configurable per project (prompt, model, tools, permissions, place in the workflow).
 
 | Clank | Role | Inputs | Outputs | Runs |
 | --- | --- | --- | --- | --- |
@@ -24,9 +24,9 @@ The clanks below are the premade list. Each project's team is chosen when the pr
 | Prism | Designer | Spec stories with UI | Flows, wireframes (HTML previews), design tokens and component specs | Sandbox |
 | Forge | Engineer | A ticket, its acceptance criteria, design specs | Branch, commits, tests, pull request | Sandbox |
 | Gauge | QA | A PR and its ticket's acceptance criteria | QA report with pass/fail per criterion and evidence | Sandbox |
-| Scout | Researcher (optional) | A question | Research note with sources | Sandbox |
-| Quill | Writer (optional) | A ticket | Docs, blog posts, release notes, copy, emails | Sandbox |
-| Buzz | Marketing (optional) | Your goals, the brief | Positioning, campaign plans, channel strategy, social posts, calendars | In-process |
+| Scout | Researcher | A question | Research note with sources | Sandbox |
+| Quill | Writer | A ticket | Docs, blog posts, release notes, copy, emails | Sandbox |
+| Buzz | Marketing | Your goals, the brief | Positioning, campaign plans, channel strategy, social posts, calendars | In-process |
 
 ### Custom clanks and the library
 
