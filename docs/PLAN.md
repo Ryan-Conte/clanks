@@ -15,7 +15,7 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
 
 ## The team
 
-Roles ship as defaults and are fully configurable per project (prompt, model, tools, permissions, place in the workflow).
+The clanks below are the premade list. Each project's team is chosen when the project is created: Atlas is always on it, and every other clank is optional. More clanks can be added at any time, from the premade list or as custom clanks. Every clank is configurable per project (prompt, model, tools, permissions, place in the workflow).
 
 | Clank | Role | Inputs | Outputs | Runs |
 | --- | --- | --- | --- | --- |
@@ -26,6 +26,12 @@ Roles ship as defaults and are fully configurable per project (prompt, model, to
 | Gauge | QA | A PR and its ticket's acceptance criteria | QA report with pass/fail per criterion and evidence | Sandbox |
 | Scout | Researcher (optional) | A question | Research note with sources | Sandbox |
 | Quill | Writer (optional) | A ticket | Docs, release notes, copy | Sandbox |
+
+### Custom clanks and the library
+
+A custom clank is defined by a name, avatar, role prompt, model, tool allowlist, permission policy and an optional workflow slot (a stage it owns in ticket routes, and which roles it may bounce to). Premade and custom clanks live in a local **clank library**. Adding a clank to a project copies the template into the project, so editing it in one project doesn't change another; you can save changes back to the library explicitly.
+
+Atlas plans with whatever team the project has. If a ticket needs a role the team lacks (for example UI work with no Prism), Atlas either routes around it (Forge builds from the spec alone) or asks you whether to add that clank.
 
 "In-process" clanks run in the orchestrator because they only need the model and the project's data. "Sandbox" clanks need a filesystem, a shell or a browser, so each run gets its own container.
 
@@ -83,7 +89,7 @@ New project wizard:
 1. **Basics.** Name, one-line description, optional template.
 2. **Repository.** Sign in with GitHub, then pick an existing repo or create a new one (public or private, with a default branch). The repo is cloned locally as the project's workspace.
 3. **Models.** A default model for the team, with per-clank overrides (for example a frontier model for Atlas and Scribe, a fast model for Forge, a local model for Gauge). Each choice is checked against the providers you configured.
-4. **Team.** A preset ("Full team", "Solo engineer") and optional custom roles.
+4. **Team.** Tick the clanks you need from the premade list (Atlas is always included), optionally starting from a preset ("Full team", "Solo engineer"). "New clank" creates a custom one with its own prompt. The team can be changed later from the project's team settings.
 
 After creation you land in the project's chat with Atlas.
 
@@ -181,7 +187,8 @@ Stored in SQLite. Simplified:
 - **provider**: id, kind (`anthropic`, `openai`, `openai_compatible`, ...), base URL, keychain reference, enabled models.
 - **github_account**: id, login, keychain reference for the token.
 - **project**: id, name, description, repo (owner/name, default branch), local workspace path, team preset, status, budget.
-- **clank**: id, project, role, name, avatar, system prompt, provider + model, tool allowlist, permission policy, budget.
+- **clank_template**: id, source (`premade`, `custom`), role, name, avatar, prompt, default model, tools, permission policy, workflow slot. The clank library.
+- **clank**: id, project, template (optional), role, name, avatar, system prompt, provider + model, tool allowlist, permission policy, budget.
 - **conversation**: id, project, clank, title. **message**: id, conversation, role, content parts (text, tool call, tool result, attachment), tokens, cost.
 - **spec**: id, project, current version. **spec_version**: id, spec, number, body, status (`draft`, `in_review`, `approved`, `superseded`), author clank, approved at.
 - **story**: id, spec_version, title, description. **acceptance_criterion**: id, story, text, stable key (`AC-12`).
@@ -291,14 +298,14 @@ The first steps, in the order they unblock each other:
 1. Monorepo, Electron + React shell, CI with lint, typecheck and tests.
 2. `core` types, the workflow state machine and the SQLite store with migrations.
 3. Provider interface, Anthropic and OpenAI-compatible adapters, fake provider.
-4. Home screen, new-project wizard, GitHub device-flow sign-in and repo picker.
+4. Home screen, new-project wizard with team picker and custom clanks, clank library, GitHub device-flow sign-in and repo picker.
 5. Chat with Atlas inside a project, with per-project conversations and notes. **First demo.**
 6. Tool registry, permission policy, approval prompts, activity log, local repo workspace.
 7. Scribe and the spec flow, the spec view, Atlas ticket planning, the board.
 8. Workflow engine with hand-offs, bounces and escalation, plus the in-process runner for fast iteration.
 9. Worker runtime, worker API and Docker runner; Forge opening real PRs.
 10. Gauge with QA reports and browser checks; Atlas sign-off. **Full loop demo.**
-11. Prism and the design stage, decision log, custom roles.
+11. Prism and the design stage, decision log, custom clanks in ticket routes.
 12. Kubernetes runner, headless mode, preview environments.
 
 ## Open questions

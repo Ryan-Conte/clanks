@@ -12,7 +12,7 @@ There is no clanks account and no clanks cloud. You bring your own API keys (Ant
 
 ## How it works
 
-1. **Create or pick a project.** The home screen lists your projects. A new project asks for a name, a GitHub repo (sign in with GitHub, then pick an existing repo or create one) and which model each clank should use.
+1. **Create or pick a project.** The home screen lists your projects. A new project asks for a name and a GitHub repo (sign in with GitHub, then pick an existing repo or create one). Then you pick the clanks you need from the premade list, or create your own with a custom prompt, and choose a model for each. You can add more clanks to the team later.
 2. **Talk to the Lead.** Describe what you want. The Lead asks clarifying questions, then brings in the BA.
 3. **The spec gets written.** The BA writes a spec with user stories and acceptance criteria. The Lead reviews it for scope and order. You approve it, edit it or send it back.
 4. **The board fills up.** The Lead breaks the approved spec into tickets with dependencies and assigns them. UI work goes to the Designer first.
@@ -36,12 +36,17 @@ Every project gets its own team. Each clank keeps its own context per project: i
 | **Scout** | Researcher | Optional. Looks into libraries, APIs, competitors and pricing when the team needs facts. |
 | **Quill** | Writer | Optional. Docs, release notes, marketing copy and emails. |
 
-Every clank can run on a different model. Plan with a frontier model, build with a fast one, run QA on a local one, and swap any time. Roles are configurable: rename them, change their prompts, add your own (DevOps, Security, Data) or turn some off for smaller projects.
+You choose who is on each project's team. Pick only the clanks you need when you create it, and add more at any time from the premade list. A small site might need just Atlas, Forge and Gauge; a bigger product gets the whole crew.
+
+Need a role that isn't on the list? Create a custom clank: give it a name, a role prompt, a model and the tools it may use, and decide where it sits in the workflow (for example a Security reviewer between QA and the Lead). Custom clanks are saved to your library so you can reuse them in other projects.
+
+Every clank can run on a different model. Plan with a frontier model, build with a fast one, run QA on a local one, and swap any time.
 
 ## Features (planned)
 
 - Chat-first desktop app for macOS, Windows and Linux (Electron).
 - A home screen of projects, each with its own repo, team, board, specs and history.
+- Pick the clanks each project needs from a premade list, add more later, or create custom clanks with your own prompts.
 - GitHub sign-in to pick or create a repo; real branches and pull requests. GitLab later.
 - A full team workflow: spec, design, build, QA, Lead sign-off, then you.
 - Tickets that bounce back with a reason when anyone finds an issue, with a limit that escalates to you if a ticket keeps looping.

@@ -25,12 +25,15 @@ The home screen and the first conversation.
 - **Home screen as a project creator and selector.** Recent projects as cards; "New project" opens a short wizard:
   1. Name and one-line description.
   2. Sign in with GitHub (OAuth device flow), then pick an existing repo or create a new one.
-  3. Pick a default model, and optionally a model per clank.
-- Inside a project: chat with Atlas, the Lead. Conversations persisted per project.
+  3. Pick the team: choose clanks from the premade list (Atlas is always included), or create a custom clank with a name, role prompt and model.
+  4. Pick a default model, and optionally a model per clank.
+- Clank library: the premade clanks plus any custom ones you create, reusable across projects.
+- Team settings inside a project: add a clank from the library or a new custom one at any time, change its model or prompt, or remove it.
+- Inside a project: chat with Atlas, the Lead, or any other clank on the team. Conversations persisted per project.
 - Per-project context for each clank: its own conversation history and a notes store it can read and write.
 - Token and cost tracking per message and per project.
 
-**Done when:** you can create a project bound to a GitHub repo, chat with the Lead on a cloud or local model, close the app, and pick the project back up from the home screen.
+**Done when:** you can create a project bound to a GitHub repo with a team you picked (including one custom clank), add another clank later, chat with the Lead on a cloud or local model, close the app, and pick the project back up from the home screen.
 
 ## Milestone 2: Tools and the workspace
 
@@ -77,11 +80,11 @@ Engineers build, QA validates, the Lead signs off, and tickets bounce when somet
 
 - Prism, the Designer: user flows, wireframes rendered as live HTML previews, and a design system (tokens, components) committed to the repo. UI tickets go through Prism before Forge, and Prism reviews UI work for fidelity before QA.
 - Scout (Researcher) and Quill (Writer) as optional team members, with research notes, docs and release notes as ticket outputs.
-- Custom roles: add your own clank (DevOps, Security, Data) with its own prompt, tools and place in the workflow.
-- Team presets per project: "Full team", "Solo engineer", "Research only".
+- Custom clanks in the workflow: a custom clank (DevOps, Security, Data) gets a place in ticket routes, so Atlas can send work through it and it can hand off and bounce like the built-in roles.
+- Team presets as shortcuts in the new-project wizard: "Full team", "Solo engineer", "Research only".
 - Decision log: every clank records the key decisions it makes and why, linked to tickets, so "why did you do that?" has a sourced answer.
 
-**Done when:** a UI-heavy project goes through design before build, and a custom role can be added to the workflow without code changes.
+**Done when:** a UI-heavy project goes through design before build, and a custom clank can be added to the workflow without code changes.
 
 ## Milestone 6: Bring your own cluster
 
