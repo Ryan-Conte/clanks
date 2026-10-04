@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint, format and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - name: Migrations match the schema
+        run: |
+          pnpm db:generate
+          if [ -n "$(git status --porcelain packages/orchestrator/drizzle)" ]; then
+            git status --porcelain packages/orchestrator/drizzle
+            echo "::error::The schema changed without a migration. Run 'pnpm db:generate' and commit the result."
+            exit 1
+          fi
+
+  test:
+    name: Unit tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: [check, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            app: dist/linux-unpacked/clanks
+          - os: windows-latest
+            app: dist/win-unpacked/clanks.exe
+          - os: macos-latest
+            app: dist/mac-arm64/clanks.app/Contents/MacOS/clanks
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package
+        env:
+          # Never pick up a signing identity from the runner; builds are unsigned until Milestone 11.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Smoke test the packaged app
+        working-directory: apps/desktop
+        env:
+          CLANKS_DATA_DIR: ${{ runner.temp }}/clanks-data
+        run: |
+          args=(--smoke-test "--screenshot=$RUNNER_TEMP/clanks-${{ runner.os }}.png")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # Runners have no display and no SUID sandbox helper, so run under Xvfb without it.
+            xvfb-run --auto-servernum "${{ matrix.app }}" --no-sandbox "${args[@]}"
+          else
+            "${{ matrix.app }}" "${args[@]}"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: clanks-${{ runner.os }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.deb
+            ${{ runner.temp }}/clanks-${{ runner.os }}.png

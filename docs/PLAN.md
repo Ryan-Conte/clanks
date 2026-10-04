@@ -52,9 +52,12 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
 
 ### App data
 
+`<app data>` is `%LOCALAPPDATA%\clanks` on Windows (local, not roaming, since it holds models), `~/Library/Application Support/clanks` on macOS and `~/.config/clanks` on Linux. Running from source uses `clanks-dev` instead, and `CLANKS_DATA_DIR` overrides both.
+
 ```
 <app data>/
   clanks.db                   SQLite: everything in the data model below
+  secrets.json                API keys and tokens, encrypted by the OS keychain; never in the database
   models/blobs/               GGUF files, named sha256-<digest>
   models/manifests/           name:tag → blob, chat template, default parameters
   runtime/                    llama-server builds downloaded for your GPU backend
@@ -63,6 +66,7 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
   artifacts/<ticket>/         notes, documents, email drafts, screenshots
   crew/                       your clank library: edited and custom priming docs
   browser/                    persistent browser sessions, only when enabled
+  chromium/                   the app window's own Chromium caches and storage
   logs/
 ```
 
@@ -103,10 +107,10 @@ docs/
 | UI | React, Vite, Tailwind, TanStack Query, dnd-kit for the board | Matches the landing page stack and the ecosystem for chat and kanban UIs. |
 | Local inference | llama.cpp `llama-server`, bundled, one supervised child process per loaded model | Runs GGUF models on Metal, CUDA, Vulkan or CPU; speaks an OpenAI-compatible API with tool calling and grammars; parallel slots let several clanks share one loaded model. A child process means a native crash can't take the app down. In-process bindings (node-llama-cpp) were considered for that reason. |
 | Model format and source | GGUF from Hugging Face, plus a curated catalog | GGUF is what llama.cpp loads, comes pre-quantised and carries no executable code. Almost every open model is published in it. |
-| Storage | SQLite via better-sqlite3 + Drizzle | Single local file, fast, easy backups, typed schema and migrations. |
+| Storage | SQLite via better-sqlite3 + Drizzle | Single local file, fast, easy backups, typed schema and migrations. better-sqlite3 ships N-API binaries that load in Node and Electron alike, so nothing is compiled or rebuilt for Electron. |
 | Context and memory | A project context shared by the crew and a private memory per clank, in SQLite with FTS5 full-text search | Every clank knows the project's facts and decisions, each can answer "why did you do that?" from its own record, and it all works offline with no extra service. Embeddings from the local runtime can be added later. |
-| Secrets | OS keychain (Electron `safeStorage`, keytar fallback) | Keys never touch the database or plain-text config. |
-| IPC | tRPC over Electron IPC (electron-trpc) | End-to-end types between renderer and orchestrator; the same router can serve the local API later. |
+| Secrets | OS keychain through Electron `safeStorage`: values are encrypted with a key the keychain holds (Keychain, DPAPI, libsecret or KWallet) and kept in their own file | Keys never touch the database or plain-text config. keytar was the planned fallback, but it's archived and needs the same Linux keyring, so there is none: without a keyring, clanks refuses to save secrets rather than keep them in plain text. Local models need no keys. |
+| IPC | tRPC over Electron IPC, through a small adapter of our own (queries, mutations and subscriptions) | End-to-end types between renderer and orchestrator; the same router can serve the local API later. electron-trpc was the plan, but it and its forks target tRPC v10 and are unmaintained. |
 | Models | Own thin provider interface; adapters on official SDKs | Keeps streaming, tool calls and usage reporting consistent without locking into a framework. |
 | Tools | Built-ins plus MCP | MCP gives access to the existing tool ecosystem with no custom glue. |
 | Integrations | Declarative manifests over OpenAPI, plus MCP servers | Most third-party APIs are already described by OpenAPI, so an integration can be data: no code to review or sandbox, with hosts and risks declared up front. MCP covers the rest and reuses an existing ecosystem. |

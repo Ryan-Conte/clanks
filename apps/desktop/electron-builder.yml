@@ -1,0 +1,61 @@
+appId: si.clanks.app
+productName: clanks
+copyright: Copyright © 2026 Ryan Conte
+
+directories:
+  buildResources: build
+  output: dist
+
+# Workspace packages are bundled into out/ by electron-vite. Only runtime `dependencies`
+# (better-sqlite3 and its prebuilt binaries) are copied in as node_modules.
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - '!**/*.map'
+  # better-sqlite3 also ships SQLite's C sources and a prebuild for every platform.
+  # Only the binaries for the platform being packaged are needed.
+  - '!node_modules/better-sqlite3/{deps,src}/**'
+  - '!node_modules/better-sqlite3/binding.gyp'
+asarUnpack:
+  - '**/*.node'
+  - resources/**
+# better-sqlite3 ships N-API prebuilds that work in Electron as they are.
+npmRebuild: false
+
+mac:
+  target: [dmg, zip]
+  category: public.app-category.developer-tools
+  # Unsigned until signing and notarisation land (Milestone 11).
+  identity: null
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/{linux,linuxmusl,win32}-*'
+
+win:
+  target: [nsis]
+  executableName: clanks
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*'
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup-${arch}.${ext}
+
+linux:
+  target: [AppImage, deb]
+  category: Development
+  executableName: clanks
+  maintainer: Ryan Conte
+  synopsis: Put the clankers to work.
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/{darwin,linuxmusl,win32}-*'
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+publish: null

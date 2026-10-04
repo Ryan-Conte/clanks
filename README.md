@@ -10,7 +10,7 @@ Everything runs on your own computer. clanks downloads open models and runs them
 
 There is no clanks account and no clanks cloud. Local models need nothing else. If you want, a clank can use a cloud model with your own API key (Anthropic, OpenAI, Google, OpenRouter) instead, or a model server you already run elsewhere (vLLM, LM Studio, Ollama). Keys stay in your OS keychain and go straight to the provider you chose.
 
-> Status: pre-alpha. This repo currently holds the plan and the crew's priming docs. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
+> Status: pre-alpha. [Milestone 0](docs/ROADMAP.md#milestone-0-foundations) is in: the desktop app opens, with its tray, database, keychain and CI, but the crew can't do any work yet. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
 
 ## Every project gets its own crew
 
@@ -161,9 +161,9 @@ TypeScript end to end.
 
 The reasoning behind each choice is in [docs/PLAN.md](docs/PLAN.md).
 
-## Getting started
+## Development
 
-Not runnable yet. Once Milestone 0 lands, development will look like:
+You need Node 22.12 or later and pnpm 10 (`corepack enable` gives you the version the repo pins). Nothing else: the SQLite driver ships prebuilt binaries and Electron downloads itself on first run.
 
 ```bash
 git clone https://github.com/Ryan-Conte/clanks
@@ -171,6 +171,16 @@ cd clanks
 pnpm install
 pnpm dev
 ```
+
+| Command | What it does |
+| --- | --- |
+| `pnpm dev` | Runs the app from source with hot reload. Its data goes in a `clanks-dev` folder, apart from an installed copy's. |
+| `pnpm test` | Unit tests for every package. |
+| `pnpm lint`, `pnpm format`, `pnpm typecheck` | The same checks CI runs. |
+| `pnpm db:generate` | Writes a migration after you change the schema in `packages/orchestrator/src/store/schema.ts`. |
+| `pnpm package` | Builds installers for your platform into `apps/desktop/dist`. |
+
+`CLANKS_DATA_DIR` points the app at another data folder. Add `--smoke-test` to a packaged app to check that it starts, loads its window and reads its database, then quits. CI does this on macOS, Windows and Linux for every push.
 
 ## Docs
 
