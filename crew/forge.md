@@ -30,7 +30,7 @@ You work in your own git worktree on the branch `clanks/<ticket key>`. Other wor
 
 ## How you work
 
-1. **Read the ticket.** Note each acceptance criterion; your output must address every one. Read the ticket's stories in the spec with `spec_read`, and the outputs of the tickets it depends on.
+1. **Read the ticket.** Note each acceptance criterion; your output must address every one. If it has stories, read them in the spec with `spec_read`. Read the outputs of the tickets it depends on.
 2. **Orient.** Run `git_status`, list the top of the repo, and read the README and the manifest (`package.json`, `pyproject.toml`, `Cargo.toml` and so on). Find out how the project builds, runs and tests. Use `fs_search` to find the code you need to change and the code that calls it.
 3. **Plan.** Call `post_progress` with a short plan: the steps and the files you expect to change.
 4. **Change.**
@@ -60,7 +60,7 @@ When the ticket depends on a `design` ticket, the run context includes the desig
 - Never read, print or change secrets: `.env` files, keys, credentials, tokens.
 - Commands must be non-interactive. No `sudo`, no global installs. Use `shell_start` for anything long-running, like a dev server or a watcher.
 - Keep command output short: filter it, or use quiet flags.
-- If the criteria or the spec leave a real gap, meaning behaviour a user would notice that the spec does not decide, do not guess: `ticket_bounce` to `scribe` with the exact question. Decide minor implementation details yourself and record them with `memory_write`.
+- If the criteria or the spec leave a real gap, meaning behaviour a user would notice that the spec does not decide, do not guess: `ticket_bounce` to `scribe` with the exact question. Decide minor implementation details yourself. Record the ones other clanks need (a library, a pattern, a naming rule) with `context_write`, and your own reasoning with `memory_write`.
 - Found a bug or a needed change outside the ticket? File it with `board_create_ticket` and carry on.
 
 ## Bounces

@@ -6,7 +6,7 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
 
 - **Everything runs on your machine.** One Electron app holds the UI, the orchestrator, the model runtime, the workspaces, the diff editor, the browser and the design tool. It pulls and hosts its own models, so after the first download it works fully offline. No clanks account, no clanks server.
 - **Local models by default, cloud optional.** A clank can use a cloud model if you add a key. Keys live in the OS keychain and go straight to that provider.
-- **Watch everything.** Every file a clank changes shows up in the diff editor, every page it opens in the browser pane, every command in the terminal and every design change in Studio, as it happens. You can step in at any point.
+- **Watch everything.** Every file a clank changes shows up in the diff editor, every page it opens in the browser pane, every command in the terminal and every design change in Studio, as it happens. The live board shows every clank's status at a glance. You can step in at any point.
 - **Chat first, board second.** Every action is reachable from chat. The board is a live view of shared state, not a separate workflow.
 - **A real team, not a swarm.** Work moves through stages in order (Spec, Design, Build, QA, Sign-off), and each clank can push back on what it was handed, with a reason that stays on the ticket.
 - **Human in the loop by default.** You approve the spec before anything is built, and every ticket ends with you. Merges, emails, posts and spend over budget wait for your approval. Pushing a branch and opening a pull request on a repo you connected is part of building; merging stays yours. Approval can be given ahead of time for a post or send scheduled for later, but always for its exact content, account and time. Clanks have no tools for any of these; the orchestrator does them.
@@ -22,7 +22,7 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
 │  App window                               Main process (Node)                                 │
 │  ┌──────────────────────────┐  typed IPC  ┌───────────────────────────────────────────────┐   │
 │  │ Chat                     │◄───────────►│ Orchestrator                                  │   │
-│  │ Board                    │             │  ├─ Conversation service + planner (Atlas)    │   │
+│  │ Home + live board        │             │  ├─ Conversation service + planner (Atlas)    │   │
 │  │ Routines                 │             │  ├─ Conversation service + planner (Atlas)    │   │
 │  │ Studio (design tool)     │             │  ├─ Scheduler + workflow: stages, bounces     │   │
 │  │ Workbench                │             │  ├─ Agent runtime + crew priming docs         │   │
@@ -104,7 +104,7 @@ docs/
 | Local inference | llama.cpp `llama-server`, bundled, one supervised child process per loaded model | Runs GGUF models on Metal, CUDA, Vulkan or CPU; speaks an OpenAI-compatible API with tool calling and grammars; parallel slots let several clanks share one loaded model. A child process means a native crash can't take the app down. In-process bindings (node-llama-cpp) were considered for that reason. |
 | Model format and source | GGUF from Hugging Face, plus a curated catalog | GGUF is what llama.cpp loads, comes pre-quantised and carries no executable code. Almost every open model is published in it. |
 | Storage | SQLite via better-sqlite3 + Drizzle | Single local file, fast, easy backups, typed schema and migrations. |
-| Memory | Per clank, per project, in SQLite with FTS5 full-text search | Each clank can answer "why did you do that?" from its own record, offline, with no extra service. Embeddings from the local runtime can be added later for fuzzier recall. |
+| Context and memory | A project context shared by the crew and a private memory per clank, in SQLite with FTS5 full-text search | Every clank knows the project's facts and decisions, each can answer "why did you do that?" from its own record, and it all works offline with no extra service. Embeddings from the local runtime can be added later. |
 | Secrets | OS keychain (Electron `safeStorage`, keytar fallback) | Keys never touch the database or plain-text config. |
 | IPC | tRPC over Electron IPC (electron-trpc) | End-to-end types between renderer and orchestrator; the same router can serve the local API later. |
 | Models | Own thin provider interface; adapters on official SDKs | Keeps streaming, tool calls and usage reporting consistent without locking into a framework. |
@@ -136,15 +136,18 @@ Stored in SQLite. Simplified:
 - **package**: id, kind (`clank`, `integration`, `crew`, `routine`), index, version, sha256, publisher, licence, pinned, installed at, status (`active`, `update_available`, `revoked`).
 - **conversation**: id, clank, title, project (optional), created/updated.
 - **message**: id, conversation, role, content parts (text, tool call, tool result, attachment), tokens, cost.
-- **project**: id, title, brief, workspace (a GitHub repo cloned locally, or a local folder), base branch, status, budget, bounce limit.
+- **project**: id, title, brief, workspace (a GitHub repo cloned locally, or a local folder), base branch, status, budget, bounce limit, required checks per output type.
 - **project_clank**: project, clank, model override. The project's crew; Atlas is always in it.
 - **spec**: id, project, version, body, status (draft, signed off, approved), approved at. Stories and criteria are parsed out so tickets can reference them.
-- **ticket**: id, project, key (`CLK-101`), title, description, story ids, acceptance criteria, output type (`spec`, `design`, `pr`, `copy`, `doc`, `email`, `research`, `campaign`, `other`), route (the clanks it passes through), current stage, column, assignee clank, bounce count, priority, created by (user or clank).
+- **ticket**: id, project, key (`CLK-101`), title, description, story ids (optional), acceptance criteria, output type (`spec`, `design`, `pr`, `copy`, `doc`, `email`, `research`, `campaign`, `other`), route (the clanks it passes through), skipped checks with reasons, current stage, column, assignee clank (empty while the ticket is open), bounce count, priority, origin (`spec`, `chat`, `board`, `routine`, `proposal`) and created by (user or clank).
 - **ticket_dependency**: ticket, depends on.
 - **bounce**: id, ticket, from clank, to clank, reason, numbered issues, at.
 - **run**: id, ticket, clank, worktree path, branch, base commit, command sandbox (`host`, `docker`), status, started/ended, tokens, cost, wall time.
 - **checkpoint**: id, run, event, shadow commit, author (clank or user). One per tool call or user edit that changed files.
+- **user_profile**: name, time zone, language, preferences, writing samples. Shared by every clank in every project.
+- **context_note**: id, project, kind (`fact`, `decision`, `convention`, `glossary`, `link`), title, body, why, author, ticket, status (`provisional`, `active`, `superseded`, `dropped`), supersedes, pinned. The project context shared by the crew; see [CONTEXT.md](CONTEXT.md).
 - **memory**: id, project, clank, kind (`decision`, `note`, `run_summary`), body, ticket, run, created. Indexed with FTS5. You can read, edit and delete any entry.
+- **run_status**: run, state, waiting reason, live label, progress steps, updated at. Materialized from events for the live board; never edited directly.
 - **event**: id, run or conversation, type, payload, timestamp. Append-only; the activity log, the live board and the workbench timeline are all built from it. Large payloads (command output, screenshots, renders) are stored by reference.
 - **artifact**: id, ticket, run, kind (`spec`, `branch`, `design`, `note`, `doc`, `copy`, `email`, `campaign`, `file`, `screenshot`), location, version.
 - **review_comment**: id, run, anchor (file and line range, or design node and canvas position), body, status. Sent back to the clank on "Request changes".
@@ -171,10 +174,37 @@ Atlas talks the idea through with you and briefs Scribe with a `spec` ticket. Sc
 Spec ──► Design ──► Build ──► QA ──► [custom checks] ──► Sign-off ──► you
 ```
 
+The stages are an order, not a checklist. A ticket passes through only the stages it needs, in this order.
+
 - Each clank's frontmatter says whether it is a **maker** (works its own tickets) or a **checker** (reviews other clanks' tickets of the types it applies to), and which stage it sits in.
-- A ticket's **route** is computed when it is created: its maker, then every checker that applies to its type in stage order, then Atlas. A `pr` goes Forge → Gauge → Atlas; a `design` goes Prism → Atlas; a `campaign` goes Buzz → Atlas. A custom checker such as Sentinel (`after: qa`, `applies_to: [pr]`) slots in automatically.
-- Tickets with a UI depend on a design ticket, so design runs first.
+- A ticket's **route** is computed when it is created: its maker, then every checker that applies to its type in stage order, then Atlas, then you. A `pr` goes Forge → Gauge → Atlas; a `design` goes Prism → Atlas; a `campaign` goes Buzz → Atlas. A custom checker such as Sentinel (`after: qa`, `applies_to: [pr]`) slots in automatically. Spec and design are never steps in another ticket's route; they're separate tickets it may depend on.
+- **Only UI work waits for design.** A ticket with a UI depends on a Prism design ticket for that screen or flow. Everything else goes straight to its maker: scaffolding, config, CI, backend, data, integrations, dependency upgrades and bug fixes.
+- **Not everything waits for the spec.** Feature work comes from the approved spec. Work you ask for directly ("set up a Next.js app for the website", "upgrade React") becomes a ticket straight away, with acceptance criteria but no stories, and can run while the spec is still being written.
 - Checkers work in their own worktree of the maker's branch, so they test exactly what was submitted.
+
+| Ticket | Where it came from | Route |
+| --- | --- | --- |
+| Set up a Next.js app for the website | You, in chat | Forge → Gauge → Atlas → you |
+| Fix the footer link | You, from the board | Forge → Gauge → Atlas → you |
+| Design the board finder quiz | Spec, US-6 | Prism → Atlas → you |
+| Build the board finder quiz | Spec, US-6, after its design | Forge → Gauge → Atlas → you |
+| Compare payment providers | Atlas, before planning checkout | Scout → Atlas → you |
+| Write the launch email | Spec, US-9 | Quill → Atlas → you |
+| Add Stripe webhooks, with Sentinel in the crew | Spec, US-4 | Forge → Gauge → Sentinel → Atlas → you |
+
+### Assigning and picking up
+
+- **Assigned** tickets name a clank. Atlas assigns when it creates tickets, and you can assign or reassign any ticket from the board or the ticket drawer.
+- **Open** tickets name only an output type, such as `pr`. The scheduler hands an open ticket to the first free clank in the crew that makes that type: whichever Forge run frees up first, or a custom maker that also makes `pr`. A backlog gets picked up without anyone assigning each card.
+- **Picking order.** Backlog tickets whose dependencies are done go by priority, then age. When several clanks could take one, the scheduler prefers the clank that made the tickets it depends on, since it already knows that work, then the one with the shortest queue.
+- **Any maker of the type.** A ticket can go to any clank whose outputs include its type, not only the default one. Its checks follow its type, whoever makes it.
+- **Reassigning** before work starts is free. During a run, the run stops first; the work so far stays on the ticket's branch and the new clank carries on from it.
+
+### Required and optional checks
+
+- Atlas's sign-off and your approval are on every route.
+- Each project sets which checks are required for each output type. By default Gauge is required for `pr`. When you add a custom checker, you choose whether it's required.
+- Atlas or you can drop an optional check from one ticket, with a reason shown on the card, such as "Security review skipped: README only". A required check can only be changed in project settings, not skipped on a ticket.
 
 ### Bounces
 
@@ -193,12 +223,21 @@ Backlog ──► Build ──► QA + review ──► Ready for you ──► 
               └──── changes requested ──────┘
 ```
 
-- **Backlog**: waiting on dependencies or a free slot.
+- **Backlog**: waiting on dependencies or a free slot, or, for open tickets, a free clank that makes their type.
 - **Build**: the ticket's maker is working on it, whether that's Scribe, Prism, Forge, Quill, Buzz or Scout.
 - **QA + review**: its checkers, then Atlas's sign-off.
 - **Ready for you**: signed off. You approve (to **Done**; merges and sends happen now), request changes with comments (back to its maker), or reject.
 - A ticket waiting on `ask_user` shows as blocked in whichever column it's in, with the question in chat.
-- The scheduler claims Backlog tickets whose dependencies are done, in priority order, within the limits per project, per clank and per loaded model.
+- The scheduler claims Backlog tickets whose dependencies are done, in priority order, within the limits per project, per clank and per loaded model. Assigned tickets wait for their clank; open tickets go to the first free clank that makes their type.
+
+The board is live, and it's where you watch the crew work. The full spec is in [BOARD.md](BOARD.md).
+
+- **Header and crew strip:** "● 3 clanks working", **Needs you** with a count, and every clank in the project with its status and current tickets (Forge ×2 for parallel runs).
+- **Cards:** key, type badge, title, assignee with a status icon (working, waiting for a model, needs you, waits on, paused, failed), progress from the clank's posted plan, and a live line from its latest tool call, such as "Running `npm test`" or "Designing `Promo / X`".
+- **Live updates:** a projection of the event log pushed over a tRPC subscription. Cards slide between columns, bounces slide back with their reason, and everything rebuilds from SQLite after a restart.
+- **Activity feed:** one line per meaningful event ("Gauge › bounced CLK-103 to Forge: AC-4 failed"). Click a line to open the ticket at that moment.
+- **Working with it:** peek on hover, a ticket drawer on click, **Watch** to follow the run in the workbench, drags to prioritise, reassign, start or stop. Every drag is a command the state machine can refuse, and approving always opens the approval card.
+- **Other views:** **By clank** (one lane per clank and per parallel run) and **Schedule**. **Home** is the same overview across every project: needs you, working now, coming up, machine load and today's usage.
 
 The workflow engine and ticket state machine live in `packages/core` and are the only code allowed to move a ticket.
 
@@ -217,7 +256,7 @@ Planning is a specialisation of the same loop. Atlas gets board tools (`board_cr
 Context is the scarce resource, especially on local models:
 
 - Makers get the ticket, its stories and acceptance criteria and the outputs of the tickets it depends on, never the chat that produced it. Checkers also get the maker's output and notes.
-- The clank's memory for the project is searched with the ticket's title and stories, and the best matches are added within a fixed budget. The clank can search further with `memory_search`.
+- The project context and the clank's own memory are searched with the ticket's title and stories, and the best matches are added within each layer's budget. The clank can search further with `context_search` and `memory_search`.
 - Large tool results are truncated (head and tail, with a note of what was cut). The full result stays in the event log and can be read in pages.
 - Near the context limit, older turns are summarised. Runs are checkpointed so they resume after an app restart or a model crash.
 
@@ -245,17 +284,28 @@ The system prompt is assembled stable parts first, so llama.cpp's prompt cache a
 1. `CREW.md`, with variables filled in (`{{date}}`, `{{os}}`, `{{clank.name}}`, `{{user.name}}`, `{{crew}}` for the project's crew and `{{workflow}}` for its stages).
 2. The clank's doc body, with HTML comments removed.
 3. Integration guides: for each integration this clank can use in this project, a fixed preamble and the integration's `guide.md`.
-4. Project instructions: `CLANKS.md` at the workspace root, or `AGENTS.md` if there isn't one.
-5. Memory: the clank's most relevant entries for this project.
-6. Run context: the mode and, for a ticket, its key, title, description, stories, acceptance criteria, output type, dependency outputs and bounce history, plus the routine, run date and due time for tickets a routine created. A ticket that depends on a design also gets `design/DESIGN.md` and a spec of the relevant frames.
+4. Your profile: name, time zone, language and preferences, the same in every project.
+5. Project instructions: `CLANKS.md` at the workspace root, or `AGENTS.md` if there isn't one. The top part goes to every clank, plus this clank's `## For <clank>` section.
+6. Project context, shared by the whole crew: project facts, the brief and spec summary, the design language and the most relevant project notes.
+7. Clank memory: this clank's most relevant entries for this project.
+8. Run context: the mode and, for a ticket, its key, title, description, stories, acceptance criteria, output type, dependency outputs and bounce history, plus the routine, run date and due time for tickets a routine created. A ticket that depends on a design also gets `design/DESIGN.md` and a spec of the relevant frames.
 
 The docs have to work on small local models. `CREW.md` plus any one clank doc stays under 2,500 tokens, names only real tools, and ends with the output contract that `submit_output` validates against; CI checks all three. Edited copies live in the app data folder and the bundled files are never modified. The format and writing rules are in [crew/README.md](../crew/README.md).
 
 Each doc's frontmatter declares `model.tags`, `model.needs`, `model.prefers` and `model.min_context`. When you create a project, the app matches those against the model catalog and your hardware to propose a model per clank, which you can change any time.
 
-### Memory
+### Context and memory
 
-Each clank keeps its own memory per project: its chats, a summary of every run, and the decisions it records with `memory_write`, each with the reason. Ask Forge why it picked a library and it answers from its own record with `memory_search`. Memory lives in SQLite with full-text search, stays on your machine, and is visible and editable in the clank's profile. Atlas can also search the rest of the crew's memory when it signs off.
+Every project has a context shared by all its clanks, and every clank has a memory of its own. The full spec is in [CONTEXT.md](CONTEXT.md).
+
+- **Project context**, which every clank in the project reads and adds to:
+  - project facts the app generates (repo, how to run it, integrations and their modes, crew, spec version, routines);
+  - the brief and a summary of the spec;
+  - the design language;
+  - **project notes**: facts, decisions, conventions, glossary entries and links, written by you or by clanks with `context_write`. A clank's note is provisional, but visible to the crew straight away, until its ticket is approved, and Atlas tidies notes at sign-off.
+- **Clank memory**, private to one clank in one project: its chats, a summary of every run, and the decisions it records with `memory_write`, each with its reason. Ask Forge why it picked a library and it answers from its own record. Atlas can search the memory of a clank whose ticket it signs off.
+- **Instructions stay yours.** Your profile, `CLANKS.md` (with `## For <clank>` sections) and the priming docs are instructions. Notes and memory are information, labelled that way in prompts.
+- **Budgets per layer** scale to the model's context window. The Context tab's **Preview** shows exactly what a clank sees on a ticket, layer by layer, with token counts.
 
 ## Local models
 
@@ -329,13 +379,14 @@ Usage is recorded for every call. Cloud calls are priced from tables in config; 
 | Spec | `spec_read`, `spec_write` | Most clanks read the approved spec; Scribe writes drafts. |
 | Review | `review_pass` | Checkers: Gauge, Atlas and custom checkers. |
 | Crew | `post_progress`, `ask_clank`, `ask_user`, `submit_output`, `fail`, `ticket_bounce` | Every clank. `ticket_bounce` reaches only the clanks in its `bounce_to`. |
-| Memory | `memory_write`, `memory_search` | Every clank, on its own memory. Atlas can search the whole crew's. |
+| Context and memory | `context_search`, `context_write`, `memory_search`, `memory_write` | Every clank. The project context is shared by the crew; memory is the clank's own. Atlas can search the memory of a clank whose ticket it signs off. |
 | Artifacts | `artifact_save` | Allowed. |
 | Routines | `routine_list`, `routine_get`, `routine_propose` | Atlas and Buzz. `routine_propose` only drafts; you activate. |
 | Integrations | `int_<integration>_<operation>`, generated from each connected integration | By risk level: read allowed, write asks, outbound asks every time. Granted per project and per clank. |
 
 - Tool names are `snake_case` with a group prefix because provider APIs reject dots in tool names.
 - MCP servers can be attached per clank. Their tools appear alongside the built-ins with an `mcp_<server>_` prefix.
+- Every tool declares a short live label for the board ("Running `npm test`", "Editing `src/cart.ts`"), with redaction rules for commands and URLs. `post_progress` takes an optional list of plan steps, which cards show as progress.
 - Every tool declares a risk level. Each clank has a policy mapping tools to allow, ask, deny or off. Defaults come from the clank's priming doc; Settings override them. Approval prompts can widen a rule to a command or a host for the whole project.
 - Outbound actions are not tools. Clanks can't push, open PRs, merge, post or send. The orchestrator pushes Forge's branch and opens its pull request when Forge submits on a connected repo, and does everything else only when you approve, so no model output, injected or not, can trigger them. Integration operations that spend money, publish or contact people are tools, but locked to asking every time.
 - `web_search` uses a backend you configure: a self-hosted SearXNG, or a Brave or Tavily key. Without one it runs the search in the built-in browser, where you can watch it.
@@ -564,6 +615,7 @@ Files, git, browser, design and model calls stay in the orchestrator either way,
 - Clanks can't write outside their worktree: paths are resolved, symlinks included, and checked on every file tool call.
 - Prompt injection is assumed. Content a clank reads (web pages, repo files, emails, designs, other clanks' outputs) can never grant permissions. Approvals are decided only in the UI, and outbound actions are not tools.
 - Integrations only call the hosts their manifest declares. Credentials are injected by the orchestrator and redacted from logs, and outbound operations and any change in live mode ask every time.
+- Only you write instructions: your profile, `CLANKS.md` and the priming docs. Project notes and memory are information, labelled that way in prompts, and a clank's notes stay provisional until its ticket is approved. A clank only ever sees the context of the project it's working in.
 - Routines are created and activated only in the UI. Scheduled actions run only frozen, approved payloads, checked by hash, inside their grace window, and are executed by the orchestrator with no model involved.
 - Marketplace packages are checksum-verified and previewed in full before install, can't grant themselves permissions above ask, and never change prompts or permissions without your review. MCP servers are flagged as running code.
 - Browser tabs are isolated per run, can't upload files and can't type into password fields.
@@ -574,6 +626,8 @@ Files, git, browser, design and model calls stay in the orchestrator either way,
 - Unit tests (Vitest) for the state machine, scheduler, permission policy, prompt assembly and provider adapters.
 - A fake provider that replays recorded model responses, so agent loops are tested deterministically and offline.
 - Model manager tests against a local HTTP fixture: resume, checksum failure, cancel, disk full. A CI job pulls a tiny GGUF model and runs a real `llama-server` on CPU.
+- Context: layer order and budgets, per-clank `CLANKS.md` sections, the note lifecycle, and isolation between projects and between clanks.
+- Live board: event sequences to board state (bounces, restarts, crashes), live label redaction, and a replay of 500 tickets and 20 concurrent runs.
 - Workflow engine: routes for every output type, custom checker placement, bounce targets, route restarts and the loop limit.
 - Worktree, checkpoint and rewind tests against fixture repos.
 - Integrations: manifest validation, OpenAPI-to-tool generation, auth and redaction, and host and risk enforcement against a mock API server.
@@ -597,8 +651,8 @@ The first steps, in the order they unblock each other:
 7. Worktrees and checkpoints; the diff editor and terminal panes.
 8. Browser pane, browser controller and browser tools.
 9. Projects (GitHub sign-in, crew and models per project), specs with Scribe, the board, Atlas's ticket breakdown.
-10. Workflow engine: routes, checkers, bounces and the loop limit; Gauge; Atlas sign-off; memory.
-11. Scheduler with model-aware slots, parallel runs, pull requests on GitHub, optional Docker sandbox.
+10. Workflow engine: routes, checkers, bounces and the loop limit; Gauge; Atlas sign-off; project context and clank memory; your profile.
+11. Scheduler with model-aware slots, parallel runs, pull requests on GitHub, optional Docker sandbox; the live board's run status, live lines, crew strip, By clank view, Needs you and Home.
 12. Studio: design format, renderer, editor, tokens, design tools; then Prism.
 13. Quill, Scout and Buzz outputs, custom clanks and the library, GitLab, exports.
 14. Integrations: the declarative runtime, connections, risk levels, MCP integrations and the starter set.
@@ -618,5 +672,5 @@ The first steps, in the order they unblock each other:
 - **Marketplace review.** How listing review scales: maintainers only, trusted community reviewers, or automated checks with a reviewed badge for the rest.
 - **Package licences.** Which open licences to accept, especially for prompt text (MIT, Apache-2.0, CC BY 4.0).
 - **Routines.** Posting without per-item approval, X API access, third-party triggers and waking from sleep: see [ROUTINES.md](ROUTINES.md#open-questions).
-- **Memory recall.** Full-text search can miss questions phrased differently from the record. Decide when to add embeddings from the local runtime.
+- **Recall.** Full-text search can miss notes and memories phrased differently from the question. Decide when to add embeddings from the local runtime.
 - **Multi-user.** Whether shared boards for small teams are in scope, and if so whether sync is a self-hosted server or peer-to-peer.

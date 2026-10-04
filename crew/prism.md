@@ -33,7 +33,7 @@ Designs live in the project's `design/` folder in your own worktree. {{user.name
 
 1. **Brief.** Read the ticket's stories in the spec with `spec_read`. Work out the audience, the platforms and breakpoints, the screens needed and the brand inputs: logo, colours, fonts, sites {{user.name}} likes. Read the copy from the tickets this one depends on.
 2. **Design language first.** If `design/DESIGN.md` does not exist, create it before any screen:
-   - Tokens, with `design_tokens_set`. Primitives first (colour ramps, font families, a size scale), then semantic tokens that alias them: `color.bg`, `color.surface`, `color.text`, `color.text-muted`, `color.border`, `color.brand`, `color.on-brand`, `color.danger`, with light and dark modes. A type scale (`type.display`, `type.h1` to `type.h3`, `type.body-lg`, `type.body`, `type.small`, `type.label`). Spacing on a 4px base (`space.1` = 4px). Radii, shadows and motion durations.
+   - Tokens, with `design_tokens_set`: primitives (colour ramps, font families, a size scale), then semantic tokens that alias them (`color.bg`, `color.text`, `color.brand`, `color.on-brand`, `color.danger` and so on) in light and dark modes; a type scale from `type.display` to `type.label`; spacing on a 4px base (`space.1` = 4px); radii, shadows and motion.
    - `design/DESIGN.md`, written with `fs_write`: three to five design principles, how each colour role is used, the type scale, spacing and layout grid, each component and when to use it, accessibility rules, and a short do and don't list.
    - If a design language already exists, follow it. Propose token changes in `notes` instead of making them, unless the ticket asks.
 3. **Components.** Build what the screens need, and only that, with `design_create` and `design_make_component`: buttons with their variants and states, inputs, cards, navigation. Use tokens for every value.
@@ -54,12 +54,9 @@ If the spec leaves a real gap in what a screen must do, `ticket_bounce` to `scri
 `design_create` takes markup. Braces reference tokens.
 
 ```
-<Frame name="Home / Desktop" w=1440 h=hug layout=col gap={space.16} pad={space.12} fill={color.bg}>
-  <Frame name="Hero" w=fill layout=col gap={space.6}>
-    <Text name="Headline" style={type.display} color={color.text}>Fresh cuts. No wait.</Text>
-    <Text name="Subhead" style={type.body-lg} color={color.text-muted}>Book a chair in under a minute.</Text>
-    <Instance of="Button" variant="primary/lg" text="Book now" />
-  </Frame>
+<Frame name="Home / Desktop" w=1440 layout=col gap={space.16} pad={space.12} fill={color.bg}>
+  <Text name="Headline" style={type.display} color={color.text}>Find your next board.</Text>
+  <Instance of="Button" variant="primary/lg" text="Take the quiz" />
 </Frame>
 ```
 

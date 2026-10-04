@@ -78,7 +78,8 @@ Every project gets its own crew, and an idea becomes an approved spec and a boar
 - New project flow: name it, pick a workspace (sign in with GitHub and pick or create a repo, or use a local folder), pick the crew (Atlas is always in), pick one model for the crew or one per clank.
 - Spec flow: Atlas talks it through in chat and briefs Scribe; Scribe writes user stories, acceptance criteria and edge cases; Atlas signs it off; you approve it. Specs are versioned (spec v2).
 - Atlas turns each approved spec version into tickets that carry their story ids and criteria, with design tickets ahead of the UI work that needs them.
-- Board with Backlog, Build, QA + review, Ready for you and Done, kept live from the orchestrator. Drag, reassign or add your own cards.
+- Tickets pass through only the stages they need: setup, config and backend work goes straight to Forge, and only UI work waits for a design. Work you ask for directly ("set up a Next.js app for the website") becomes a ticket straight away, without waiting for the spec.
+- The [live board](BOARD.md): Backlog, Build, QA + review, Ready for you and Done, updated as events happen, with counts, the activity feed and the ticket drawer. Drag to prioritise or reassign, or add your own cards.
 - Ticket detail: stories, acceptance criteria, output type, route, assignee, linked chat, activity.
 - Chat and board stay in sync: Atlas answers "what's the status?" from the board.
 
@@ -88,19 +89,23 @@ Every project gets its own crew, and an idea becomes an approved spec and a boar
 
 A real team, not a swarm: clanks hand work to each other in order and push back when it's wrong.
 
-- Workflow engine: each ticket's route is its maker, then the checkers for its type, then Atlas, then you.
+- Workflow engine: each ticket's route is its maker, then the checkers for its type, then Atlas, then you. Required and optional checks per project; optional ones can be skipped on a ticket, with a reason.
+- Assigned and open tickets: assign a ticket to a clank, or leave it open and the first free clank that makes its type picks it up, preferring the one that built what it depends on. Reassign anything at any time.
 - Forge builds tickets in parallel, each in its own worktree, and the app pushes the branch and opens a pull request on GitHub.
 - Gauge runs the build, tests and browser checks against every acceptance criterion, in its own worktree of the PR branch.
 - Atlas signs off every ticket against the spec and the rest of the project.
 - Bounce-backs with reasons: Forge sends spec gaps to Scribe, Gauge sends bugs to Forge, Atlas can send anything back to anyone. A ticket that keeps looping comes to you, with its history on the ticket.
-- Memory per clank per project: chats, run summaries and decisions with their reasons. Ask Forge why it picked a library and it answers from its own record.
+- [Context](CONTEXT.md): a project context shared by every clank in the project (project facts, decisions, conventions and names, written by you and the crew), and a private memory per clank per project (its chats, run summaries and decisions with reasons). Ask Forge why it picked a library and it answers from its own record.
+- Your profile, `## For <clank>` sections in `CLANKS.md`, and the Context tab with a Preview of exactly what a clank sees.
 - Scheduler: claims tickets whose dependencies are done, within concurrency and budget limits, and shares loaded models between runs; a run waits when its model can't be loaded yet.
-- **Watch** on any card opens that run's workbench; switch between running clanks.
+- The board comes alive with the crew: a status and a live line on every card ("Running `npm test`", "Checking AC-4.2"), progress from each clank's plan, the crew strip with "● 3 clanks working", the By clank view and **Needs you**.
+- **Watch** on any card opens that run's workbench in follow mode; switch between running clanks.
+- Home: everything that needs you, every clank working now, what's coming up and how hard your machine is working, across all projects.
 - Ready for you: approve (you merge the PR), request changes with comments, or reject.
 - Optional Docker sandbox for shell commands when Docker is installed.
 - Budgets per project and per clank, in tokens, time or money, with automatic pause when hit.
 
-**Done when:** the surf shop's first tickets run end to end on a local model with several Forges in parallel, at least one Gauge bounce is fixed without you, and you only touch it to merge.
+**Done when:** the surf shop's first tickets run end to end on a local model with several Forges in parallel, at least one Gauge bounce is fixed without you, you follow it all from the live board, and you only touch it to merge.
 
 ## Milestone 7: Studio and Prism
 

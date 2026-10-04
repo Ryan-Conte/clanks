@@ -31,7 +31,30 @@ Clankers hand work to each other in order, and push back when what they were han
 
 **Bounce-backs:** Forge sends spec gaps to Scribe, Gauge sends bugs to Forge, and Atlas can send anything back to anyone. Every bounce carries a reason, so the whole history lives on the ticket. If a ticket keeps looping, it comes to you.
 
-The board shows it all: Backlog, Build, QA + review, Ready for you, Done. You can drag cards, reassign them or add your own.
+**Not every ticket walks the whole chain.** "Set up a Next.js app for the website" goes straight to Forge. Only UI work waits for Prism's design, and work you ask for directly doesn't wait for the spec. Tickets can be assigned to a clank or left open for the first free clank that can do them, and you can reassign anything.
+
+## The live board
+
+The board is where you watch the crew work: every ticket, the clank on it, and what that clank is doing right now.
+
+```
+┌────────────────────┐
+│ CLK-104         PR │
+│ AU shipping rates  │
+│ ● Forge  3/5 steps │
+│ Running npm test   │
+└────────────────────┘
+```
+
+- **Live.** Cards move through Backlog, Build, QA + review, Ready for you and Done as the work moves. Each shows its clank, its status and a live line from what the clank is doing this second.
+- **The crew at a glance.** "● 3 clanks working", every clank's avatar with its current tickets, and a **By clank** view with one lane per bot.
+- **A running feed.** "Gauge › bounced CLK-103 to Forge: AC-4 failed", "Atlas › signed off CLK-101, ready for you". Click a line to see that moment.
+- **Watch anything.** Open any card to follow its work live in the diff editor, browser, terminal or Studio.
+- **Needs you.** Everything waiting on you in one list: sign-offs, approvals, questions and scheduled posts.
+- **Yours to steer.** Drag cards to prioritise, reassign, start or stop them, or add your own. Approving always opens the approval card; nothing ships on a drag.
+- **Home** shows the same overview across every project: what needs you, who's working, what's coming up and how hard your machine is working.
+
+The full spec is in [docs/BOARD.md](docs/BOARD.md).
 
 ## Meet the crew
 
@@ -52,7 +75,7 @@ Every clank also gets the shared rules in [CREW.md](crew/CREW.md). You can edit 
 
 **Need a role that isn't on the list?** Create a custom clank with a name, a role prompt, a model and the tools it can use, then give it a place in the workflow. Custom clanks are saved to your library for your other projects, and you can share them for free on the marketplace. The [template](crew/custom.md) is what the app starts from, and [Sentinel](crew/examples/sentinel.md), a security checker between QA and Atlas, is a worked example.
 
-**Each clank keeps its own memory per project:** its chats, notes and the calls it made and why. Ask Forge why it picked a library and it answers from its own record.
+**Shared context, and a memory of its own.** Every clank in a project shares that project's context: its facts, decisions, conventions and names, written by you and the crew. Each clank also keeps its own memory per project: its chats, notes and the calls it made and why. Ask Forge why it picked a library and it answers from its own record. See [docs/CONTEXT.md](docs/CONTEXT.md).
 
 ## Integrations and the marketplace
 
@@ -112,12 +135,13 @@ Chat on the left, the work on the right, much like Claude's desktop app. Open an
 - A spec you approve before anything is built, and a workflow with QA, sign-off and bounce-backs.
 - Several Forges in parallel, each in its own git worktree, with optional Docker isolation for commands.
 - Pull requests on GitHub (GitLab later), signed off by Atlas and merged by you.
+- A live board that shows every clank working, with an activity feed, a By clank view and a Home overview across projects.
 - A workbench to watch and steer: diff editor, browser, terminal, Studio and an activity timeline.
 - Outputs beyond code: designs, copy, docs, emails, research and launch plans.
 - Integrations for third-party APIs, from a manifest or an MCP server, with keys in your keychain and approval for anything outbound.
 - A free marketplace for clanks, integrations, crews and routines, with everything visible before you install.
 - Routines: scheduled and event-driven work, with posts and sends approved ahead of time and sent at the exact time.
-- Memory per clank per project, so every decision has a reason on record.
+- A project context the whole crew shares, plus a memory per clank per project, so every decision has a reason on record.
 - Per-clank budgets, token and time tracking, and a full log of every tool call.
 - Everything stored locally in SQLite. Secrets in your OS keychain.
 
@@ -151,6 +175,8 @@ pnpm dev
 ## Docs
 
 - [Roadmap](docs/ROADMAP.md): milestones from first chat to a full crew with its own models, browser, design tool, integrations and marketplace.
+- [Context and memory](docs/CONTEXT.md): what each clank knows, what the whole crew shares, and who can change it.
+- [Live board](docs/BOARD.md): the full spec for the board, the activity feed and Home.
 - [Routines](docs/ROUTINES.md): the full spec for scheduled and event-driven work and timed posts.
 - [Buildout plan](docs/PLAN.md): architecture, workflow, data model, model runtime, integrations, marketplace, workbench, Studio and the order things get built.
 - [The crew](crew/README.md): the priming docs for each premade clank, the custom-clank template, and how to write your own.

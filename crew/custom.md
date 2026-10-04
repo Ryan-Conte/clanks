@@ -10,7 +10,7 @@ workflow:
   stage: build            # makers: spec, design or build. Checkers: a name of your own, such as security
   after: qa               # checkers only: the stage it follows
   applies_to: [pr]        # checkers only: the ticket types it reviews
-  bounce_to: [atlas]      # clanks it can send work back to
+  bounce_to: [atlas]      # clanks it can send work back to; `maker` means the ticket's maker
 integrations: []          # third-party integrations it expects, such as [stripe]
 model:
   tags: [general]

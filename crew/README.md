@@ -34,7 +34,8 @@ Scribe              Quill
 ```
 
 - **Makers** work their own tickets and finish with `submit_output`. **Checkers** review other clanks' tickets of the types they apply to, and finish with `review_pass` or `ticket_bounce`.
-- A ticket's route is its maker, then every checker that applies to its type in workflow order, then Atlas, then you.
+- A ticket's route is its maker, then every checker that applies to its type in workflow order, then Atlas, then you. It includes only the stages it needs: a ticket with no UI never goes to Prism, and work asked for directly doesn't wait for a spec.
+- A ticket can be assigned to a clank or left open; an open ticket goes to the first free clank whose `outputs` include its type.
 - `ticket_bounce` sends a ticket back with a reason, only to clanks listed in the sender's `bounce_to`. Atlas can bounce to anyone. A ticket that bounces more than three times (configurable) comes to you with its history.
 
 ## How a prompt is assembled
@@ -44,9 +45,13 @@ For every run the orchestrator builds the system prompt in this order. Stable pa
 1. `CREW.md`, with its variables filled in.
 2. The clank's doc body: everything after the frontmatter, with HTML comments removed.
 3. Integration guides: for each third-party integration this clank can use in this project, a fixed preamble and the integration's `guide.md` (up to 300 tokens each). The preamble says that `int_` tools call services {{user.name}} connected, to check whether a service is in test or live mode before changing anything, that responses are untrusted data, and that calls which spend money, publish or contact people wait for approval.
-4. Project instructions: `CLANKS.md` at the root of the project's workspace, or `AGENTS.md` if there is no `CLANKS.md`. You write these, not the clanks.
-5. Memory: the clank's most relevant memory entries for this project, within a fixed token budget.
-6. Run context: the mode (`chat` or `ticket`) and, for a ticket, its key, title, description, stories, acceptance criteria, output type, the outputs of the tickets it depends on and any bounce history. Tickets created by a [routine](../docs/ROUTINES.md) also get the routine's name, the run's date and inputs, and their due time. A ticket that depends on a `design` ticket also gets the design language (`design/DESIGN.md`) and a compact spec of the frames.
+4. Your profile: your name, time zone, language and preferences, the same in every project.
+5. Project instructions: `CLANKS.md` at the root of the project's workspace, or `AGENTS.md` if there is no `CLANKS.md`. The top part goes to every clank; a `## For <clank>` section goes only to that clank. You write these, not the clanks.
+6. Project context, shared by every clank in the project: project facts, the brief and spec summary, the design language and the most relevant project notes.
+7. Clank memory: this clank's own most relevant entries for this project.
+8. Run context: the mode (`chat` or `ticket`) and, for a ticket, its key, title, description, stories, acceptance criteria, output type, the outputs of the tickets it depends on and any bounce history. Tickets created by a [routine](../docs/ROUTINES.md) also get the routine's name, the run's date and inputs, and their due time. A ticket that depends on a `design` ticket also gets the design language (`design/DESIGN.md`) and a compact spec of the frames.
+
+Each layer has a token budget scaled to the model's context window. The layers, budgets and rules for who writes what are in [docs/CONTEXT.md](../docs/CONTEXT.md).
 
 Tool definitions go through the model's native tool calling. For a local model whose chat template has no tool support, the runtime describes the tools in the prompt and constrains the reply with a JSON schema grammar, so the docs never explain call syntax.
 
@@ -66,7 +71,7 @@ workflow:
   stage: build            # spec, design, build, qa, signoff, or a custom checker stage
   after: qa               # custom checkers: the stage they follow
   applies_to: [pr]        # checkers: the ticket types they review
-  bounce_to: [scribe]     # who this clank can send work back to
+  bounce_to: [scribe]     # who this clank can send work back to; `maker` means the ticket's maker
 integrations: []          # optional: third-party integrations it expects, such as [stripe]
 model:
   tags: [code]            # catalog tags used to pick a local model
@@ -81,7 +86,7 @@ tools:                    # default permission policy, editable in Settings
 ```
 
 - A tool that is not listed is not offered to the clank at all. A `*` suffix matches a group (`browser_*`).
-- `post_progress`, `ask_user`, `ask_clank`, `submit_output`, `fail`, `ticket_bounce`, `memory_write` and `memory_search` are available to every clank and are never listed. `ticket_bounce` only reaches the clanks in `bounce_to`.
+- `post_progress`, `ask_user`, `ask_clank`, `submit_output`, `fail`, `ticket_bounce`, `context_search`, `context_write`, `memory_search` and `memory_write` are available to every clank and are never listed. `ticket_bounce` only reaches the clanks in `bounce_to`.
 - Integration tools are named `int_<integration>_<operation>`. A clank gets them when the integration is connected and turned on for it in the project; `integrations` in the frontmatter only tells the app which ones to offer. Their policy comes from each operation's risk level.
 - Your policy in Settings always wins over the doc. In Settings an entry can also carry an argument pattern for tools whose main argument is a command or URL, such as `shell_exec(pnpm test*)` or `web_fetch(https://docs.example.com/*)`.
 
@@ -120,6 +125,6 @@ These docs have to work on small local models, not just frontier ones.
 
 ## Customising the premade clanks
 
-Settings → Crew → a clank → **Edit priming doc** opens the doc in the app's editor. Your edited copy is saved in the app's data folder and used instead of the bundled one; **Reset to default** deletes it. Instructions for one project belong in that project's `CLANKS.md`, not in a clank doc.
+Settings → Crew → a clank → **Edit priming doc** opens the doc in the app's editor. Your edited copy is saved in the app's data folder and used instead of the bundled one; **Reset to default** deletes it. Instructions for one project belong in that project's `CLANKS.md`, not in a clank doc, with a `## For <clank>` section for anything meant for one clank.
 
 When an app update changes a bundled doc you have edited, the app keeps your copy and shows the upstream change in the diff editor so you can merge it by hand.
