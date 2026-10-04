@@ -1,48 +1,72 @@
 # Buildout plan
 
-This is the technical plan for clanks: what the pieces are, how they talk to each other, and the order to build them in. The [roadmap](ROADMAP.md) is the user-facing view of the same work.
+This is the technical plan for clanks: what the pieces are, how they talk to each other, and the order to build them in. The [roadmap](ROADMAP.md) is the user-facing view of the same work. The priming docs the clanks run on are in [crew/](../crew/README.md).
 
 ## Principles
 
-- **Local first.** The app works fully offline with a local model. No clanks account, no clanks server.
-- **Your keys, your infra.** Credentials live in the OS keychain and go straight to the provider. Workers run on your Docker or your Kubernetes cluster.
+- **Everything runs on your machine.** One Electron app holds the UI, the orchestrator, the model runtime, the workspaces, the diff editor, the browser and the design tool. It pulls and hosts its own models, so after the first download it works fully offline. No clanks account, no clanks server.
+- **Local models by default, cloud optional.** A clank can use a cloud model if you add a key. Keys live in the OS keychain and go straight to that provider.
+- **Watch everything.** Every file a clank changes shows up in the diff editor, every page it opens in the browser pane, every command in the terminal and every design change in Studio, as it happens. You can step in at any point.
 - **Chat first, board second.** Every action is reachable from chat. The board is a live view of shared state, not a separate workflow.
-- **Human in the loop by default.** Anything outbound (a push, a merge, an email, a paid API spend over budget) waits for approval unless you explicitly relax it.
-- **Everything is logged.** Every model call and tool call is recorded with inputs, outputs, tokens and cost, and is visible on the ticket.
-- **One language.** TypeScript across the app, orchestrator and worker runtime, so types are shared end to end.
+- **A real team, not a swarm.** Work moves through stages in order (Spec, Design, Build, QA, Sign-off), and each clank can push back on what it was handed, with a reason that stays on the ticket.
+- **Human in the loop by default.** You approve the spec before anything is built, and every ticket ends with you. Merges, emails, posts and spend over budget wait for your approval. Pushing a branch and opening a pull request on a repo you connected is part of building; merging stays yours. Approval can be given ahead of time for a post or send scheduled for later, but always for its exact content, account and time. Clanks have no tools for any of these; the orchestrator does them.
+- **Everything is logged.** Every model call and tool call is recorded with inputs, outputs, tokens, time and cost, and is visible on the ticket.
+- **Free to share.** Clanks, integrations and crews people build can be published to a free marketplace and installed by anyone, with no account and nothing hidden: you see every prompt and permission before you install.
+- **One language.** TypeScript across the app, orchestrator, tools and design engine, so types are shared end to end. Native code comes only from prebuilt dependencies (llama.cpp, SQLite, node-pty).
 
 ## Architecture
 
 ```
-┌──────────────────────────── Desktop app (Electron) ────────────────────────────┐
-│                                                                                │
-│  Renderer (React)                    Main process (Node)                       │
-│  ┌──────────────┐   typed IPC   ┌───────────────────────────────────────────┐ │
-│  │ Chat         │◄────────────► │ Orchestrator                              │ │
-│  │ Board        │               │  ├─ Conversation service                  │ │
-│  │ Ticket view  │               │  ├─ Planner (lead clank)                  │ │
-│  │ Settings     │               │  ├─ Scheduler + ticket state machine      │ │
-│  └──────────────┘               │  ├─ Agent runtime (in-process clanks)     │ │
-│                                 │  ├─ Provider registry ──► model APIs      │ │
-│                                 │  ├─ Tool registry + MCP client            │ │
-│                                 │  ├─ Runner (Docker | Kubernetes)          │ │
-│                                 │  └─ Store (SQLite) + Keychain             │ │
-│                                 └──────────────┬────────────────────────────┘ │
-└────────────────────────────────────────────────┼──────────────────────────────┘
-                                                 │ worker API (HTTP + SSE, per-run token)
-                        ┌────────────────────────┴───────────────────────┐
-                        ▼                                                ▼
-              ┌──────────────────┐                             ┌──────────────────┐
-              │ Docker container │                             │ K8s Pod / Job    │
-              │  worker runtime  │                             │  worker runtime  │
-              │  + ticket tools  │                             │  + ticket tools  │
-              └──────────────────┘                             └──────────────────┘
+┌──────────────────────────────── clanks desktop app (Electron) ────────────────────────────────┐
+│                                                                                               │
+│  App window                               Main process (Node)                                 │
+│  ┌──────────────────────────┐  typed IPC  ┌───────────────────────────────────────────────┐   │
+│  │ Chat                     │◄───────────►│ Orchestrator                                  │   │
+│  │ Board                    │             │  ├─ Conversation service + planner (Atlas)    │   │
+│  │ Routines                 │             │  ├─ Conversation service + planner (Atlas)    │   │
+│  │ Studio (design tool)     │             │  ├─ Scheduler + workflow: stages, bounces     │   │
+│  │ Workbench                │             │  ├─ Agent runtime + crew priming docs         │   │
+│  │  ├─ Diff editor          │             │  ├─ Tools: built-ins, MCP, integrations       │   │
+│  │  ├─ Terminal             │             │  ├─ Workspaces: worktrees, checkpoints        │   │
+│  │  ├─ Activity             │     CDP     │  ├─ Design engine: scene ops, tokens, lint    │   │
+│  │  └─ Browser pane ◄───────┼─────────────┤  ├─ Browser controller                        │   │
+│  │ Models                   │             │  ├─ Provider registry                         │   │
+│  │ Settings                 │             │  ├─ Model manager: catalog, pulls, store      │   │
+│  └──────────────────────────┘             │  └─ Store (SQLite) + memory + keychain        │   │
+│                                           └──────────┬───────────────────────┬────────────┘   │
+│                                                      │ HTTP on 127.0.0.1     │ pty or         │
+│                                                      ▼                       ▼ docker exec    │
+│                                           ┌──────────────────────┐  ┌──────────────────────┐  │
+│                                           │ llama-server         │  │ Commands             │  │
+│                                           │ one per loaded model │  │ host or Docker       │  │
+│                                           └──────────────────────┘  └──────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────────────────────────┘
+   Optional, outbound only: models, marketplace, cloud models, third-party APIs, GitHub, SMTP
 ```
 
-- The **renderer** is UI only. It never holds API keys and never calls a model directly.
-- The **orchestrator** owns all state and all model traffic. It starts in Electron's main process and is written so it can later run as a headless daemon (Milestone 6) with the desktop app as a client over the same API.
-- **Chat clanks** (the one you are talking to, and Atlas while planning) run in-process in the orchestrator.
-- **Worker clanks** run inside a sandbox per ticket run. The worker runtime is a small Node program that runs the agent loop, executes tools locally inside the sandbox, and streams events back. Model calls are proxied through the orchestrator so keys never enter the sandbox and budgets are enforced in one place.
+- The **app window** is a React renderer (chat, board, Studio, workbench panes, models, settings) plus the browser pane, which is a set of Electron `WebContentsView`s laid over the workbench. Neither holds keys or calls a model.
+- The **orchestrator** owns all state and all model traffic, in the main process. Heavy work (hashing downloads, computing diffs, rendering design frames, parsing large tool output) runs in worker threads or offscreen views so the window stays responsive. Its API is a tRPC router, so it can later be served over HTTP too.
+- **Every clank's agent loop runs in the orchestrator**, chat clanks and ticket workers alike. Isolation comes from the workspace (one git worktree per run), the permission policy and, optionally, Docker for shell commands. There is no separate worker program and no worker API.
+- **Models** run in `llama-server` child processes managed by the model manager, or at a cloud provider. Either way the orchestrator is the only thing that talks to them.
+- **Closing the window** leaves clanks in the tray, so running tickets and loaded models carry on. Quitting from the tray stops everything. Both are configurable.
+
+### App data
+
+```
+<app data>/
+  clanks.db                   SQLite: everything in the data model below
+  models/blobs/               GGUF files, named sha256-<digest>
+  models/manifests/           name:tag → blob, chat template, default parameters
+  runtime/                    llama-server builds downloaded for your GPU backend
+  worktrees/<project>/<key>/  one git worktree per ticket run
+  checkpoints/<project>.git   shadow git directories for checkpoints
+  artifacts/<ticket>/         notes, documents, email drafts, screenshots
+  crew/                       your clank library: edited and custom priming docs
+  browser/                    persistent browser sessions, only when enabled
+  logs/
+```
+
+The models folder can be moved to another drive in Settings.
 
 ## Repository layout
 
@@ -50,17 +74,24 @@ pnpm workspaces with Turborepo.
 
 ```
 apps/
-  desktop/            Electron app: main process bootstrap, preload, React renderer
+  desktop/            Electron app: main process bootstrap, preload, renderer, browser and offscreen views
 packages/
   core/               Shared types, zod schemas, ticket state machine, event types
-  orchestrator/       Conversation service, planner, scheduler, runners, store
-  providers/          Model provider interface and adapters
-  tools/              Built-in tools, permission model, MCP client
-  worker/             Worker runtime that runs inside a sandbox (published as a container image)
-  ui/                 Shared React components (chat, board, ticket cards)
-deploy/
-  docker/             Worker base images
-  helm/               Chart for the in-cluster gateway (Milestone 6)
+  orchestrator/       Conversation service, planner, scheduler, agent runtime, prompt assembly, store
+  models/             Model manager: catalog, pulls, blob store, hardware probe, llama-server supervisor, local API
+  providers/          Provider interface and adapters
+  tools/              Built-in tools, permission policy, MCP client
+  integrations/       Integration runtime: manifest schema, OpenAPI to tools, connections, auth, redaction
+  marketplace/        Marketplace client: index, install, verify, update, publish
+  routines/           Triggers, cron and time zones, runs, scheduled actions, OS launch helpers
+  workspace/          Worktrees, checkpoints, diffs, command execution (host and Docker)
+  browser/            Browser controller over CDP, page snapshots for the browser tools
+  design/             Design file format and schema, scene operations, tokens, markup parser, lint, exporters
+  studio/             Studio editor UI: canvas, panels, prototype player, visual diff
+  ui/                 Shared React components: chat, board, diff editor, terminal, activity
+crew/                 Priming docs for the premade clanks, the custom-clank template and examples, bundled into the app
+integrations/         First-party declarative integrations, bundled into the app
+scripts/              Build scripts, including fetching pinned llama.cpp builds per platform and backend
 docs/
 ```
 
@@ -68,62 +99,202 @@ docs/
 
 | Area | Choice | Why |
 | --- | --- | --- |
-| Desktop shell | Electron | Mature, cross-platform, Node in the main process means the orchestrator and app share one runtime and one language. Tauri was considered; it would split the orchestrator into Rust or a sidecar. |
+| Desktop shell | Electron | Cross-platform, Node in the main process so the orchestrator and app share one runtime, and a full Chromium we can reuse for the browser pane and the Studio renderer. Tauri was considered; it would split the orchestrator into Rust or a sidecar and has no embeddable Chromium on every platform. |
 | UI | React, Vite, Tailwind, TanStack Query, dnd-kit for the board | Matches the landing page stack and the ecosystem for chat and kanban UIs. |
+| Local inference | llama.cpp `llama-server`, bundled, one supervised child process per loaded model | Runs GGUF models on Metal, CUDA, Vulkan or CPU; speaks an OpenAI-compatible API with tool calling and grammars; parallel slots let several clanks share one loaded model. A child process means a native crash can't take the app down. In-process bindings (node-llama-cpp) were considered for that reason. |
+| Model format and source | GGUF from Hugging Face, plus a curated catalog | GGUF is what llama.cpp loads, comes pre-quantised and carries no executable code. Almost every open model is published in it. |
 | Storage | SQLite via better-sqlite3 + Drizzle | Single local file, fast, easy backups, typed schema and migrations. |
-| Secrets | OS keychain (Electron `safeStorage`, keytar fallback) | Keys never touch the DB or plain-text config. |
-| IPC | tRPC over Electron IPC (electron-trpc) | End-to-end types between renderer and orchestrator, and the same router can later be served over HTTP for headless mode. |
-| Models | Own thin provider interface; adapters built on official SDKs | Keeps streaming, tool calls and usage reporting consistent without locking into a framework. |
+| Memory | Per clank, per project, in SQLite with FTS5 full-text search | Each clank can answer "why did you do that?" from its own record, offline, with no extra service. Embeddings from the local runtime can be added later for fuzzier recall. |
+| Secrets | OS keychain (Electron `safeStorage`, keytar fallback) | Keys never touch the database or plain-text config. |
+| IPC | tRPC over Electron IPC (electron-trpc) | End-to-end types between renderer and orchestrator; the same router can serve the local API later. |
+| Models | Own thin provider interface; adapters on official SDKs | Keeps streaming, tool calls and usage reporting consistent without locking into a framework. |
 | Tools | Built-ins plus MCP | MCP gives access to the existing tool ecosystem with no custom glue. |
-| Sandboxes | Docker (dockerode) first, Kubernetes (@kubernetes/client-node) second | Docker is what most users have locally; K8s is the scale-out path the product promises. |
-| Validation | zod everywhere at boundaries | Model output, IPC payloads and worker events are all untrusted input. |
+| Integrations | Declarative manifests over OpenAPI, plus MCP servers | Most third-party APIs are already described by OpenAPI, so an integration can be data: no code to review or sandbox, with hosts and risks declared up front. MCP covers the rest and reuses an existing ecosystem. |
+| Routines | Own scheduler persisted in SQLite, cron with IANA time zones (croner), OS launch agents | Runs offline with no external scheduler, survives restarts and sleep, and can start the app before a run if it's closed. |
+| Marketplace | A public GitHub repo with a static index; publishing is a pull request | Free to run and to use, no clanks server or account, review happens in the open, and anyone can host another index in the same format. |
+| Workspaces | A git worktree per run; checkpoints in a shadow git directory | Parallel clanks never collide, every change is a diff, and rewinding never touches your repo's history. |
+| Diff editor | Monaco diff editor | VS Code's editor: side-by-side and inline diffs, an editable right-hand side, syntax highlighting for every language users will hit. CodeMirror 6's merge view was considered; lighter but less familiar. |
+| Browser | Electron `WebContentsView`, driven over CDP through `webContents.debugger` | Reuses the Chromium already in the app; what the clank sees is exactly what you see, and there's no second browser to download. Playwright was considered; it would run a browser outside the app window. |
+| Terminal | node-pty + xterm.js | Real PTYs so commands behave as in a normal terminal; xterm.js is the standard renderer. |
+| Design tool | Own editor (`packages/design`, `packages/studio`) over a JSON scene graph, rendered as DOM and CSS | Designs must be readable and writable as text by small models, diffable in git, and buildable as web code without translation. Penpot is open source but needs its own server stack to embed. Canvas renderers (Konva, PixiJS) would need their own layout and text engines and wouldn't match the browser. |
+| Design tokens | W3C Design Tokens Community Group format | A standard, tool-neutral JSON format with aliases and types; exports cleanly to CSS and Tailwind. |
+| Command sandbox | Host process by default, Docker optional | Works with nothing else installed; Docker adds isolation for unattended runs when it's available. |
+| Exports | Electron `printToPDF`, the `docx` library | PDF and DOCX without bundling pandoc. |
+| Validation | zod everywhere at boundaries | Model output, IPC payloads, tool arguments and design markup are all untrusted input. |
 
 ## Data model
 
 Stored in SQLite. Simplified:
 
-- **provider**: id, kind (`anthropic`, `openai`, `openai_compatible`, ...), base URL, keychain reference, enabled models.
-- **clank**: id, name, avatar, role, system prompt, provider + model, tool allowlist, permission policy, budget.
+- **provider**: id, kind (`builtin`, `openai_compatible`, `anthropic`, `openai`, `google`), base URL, keychain reference, enabled models.
+- **model**: id, name and tag, source (`catalog`, `huggingface`, `ollama_import`), repo and file, blob digest, size, quantisation, context length, capabilities (tools, vision), licence, pulled at, keep-loaded flag.
+- **clank**: id, name, avatar, role, kind (maker or checker), workflow placement (stage, after, applies to, bounce to), priming doc (bundled, edited, custom or from the marketplace), default model, tool policy, budget. Custom clanks live in the library and can join any project.
+- **integration**: id, kind (`declarative`, `mcp`), source (bundled or a marketplace package), version, enabled.
+- **connection**: id, integration, label, auth type, keychain reference, mode (`test`, `live`), scopes, connected at.
+- **project_integration**: project, connection, clanks allowed to use it.
+- **routine**, **routine_run**, **scheduled_action**: schedules, their runs, and approved actions waiting for their time. Fields are in [ROUTINES.md](ROUTINES.md#data-model).
+- **package**: id, kind (`clank`, `integration`, `crew`, `routine`), index, version, sha256, publisher, licence, pinned, installed at, status (`active`, `update_available`, `revoked`).
 - **conversation**: id, clank, title, project (optional), created/updated.
 - **message**: id, conversation, role, content parts (text, tool call, tool result, attachment), tokens, cost.
-- **project**: id, title, brief, workspace path or repo, status, budget.
-- **ticket**: id, project, key (`CLK-101`), title, description, acceptance criteria, output type (`mr`, `research`, `email`, `doc`, `other`), column, assignee clank, priority, created by (user or clank).
+- **project**: id, title, brief, workspace (a GitHub repo cloned locally, or a local folder), base branch, status, budget, bounce limit.
+- **project_clank**: project, clank, model override. The project's crew; Atlas is always in it.
+- **spec**: id, project, version, body, status (draft, signed off, approved), approved at. Stories and criteria are parsed out so tickets can reference them.
+- **ticket**: id, project, key (`CLK-101`), title, description, story ids, acceptance criteria, output type (`spec`, `design`, `pr`, `copy`, `doc`, `email`, `research`, `campaign`, `other`), route (the clanks it passes through), current stage, column, assignee clank, bounce count, priority, created by (user or clank).
 - **ticket_dependency**: ticket, depends on.
-- **run**: id, ticket, clank, runner (`inprocess`, `docker`, `k8s`), sandbox id, status, started/ended, tokens, cost.
-- **event**: id, run or conversation, type, payload, timestamp. Append-only; the activity log and the live board are both built from it.
-- **artifact**: id, ticket, run, kind, location (file, branch, PR URL, draft id), version.
+- **bounce**: id, ticket, from clank, to clank, reason, numbered issues, at.
+- **run**: id, ticket, clank, worktree path, branch, base commit, command sandbox (`host`, `docker`), status, started/ended, tokens, cost, wall time.
+- **checkpoint**: id, run, event, shadow commit, author (clank or user). One per tool call or user edit that changed files.
+- **memory**: id, project, clank, kind (`decision`, `note`, `run_summary`), body, ticket, run, created. Indexed with FTS5. You can read, edit and delete any entry.
+- **event**: id, run or conversation, type, payload, timestamp. Append-only; the activity log, the live board and the workbench timeline are all built from it. Large payloads (command output, screenshots, renders) are stored by reference.
+- **artifact**: id, ticket, run, kind (`spec`, `branch`, `design`, `note`, `doc`, `copy`, `email`, `campaign`, `file`, `screenshot`), location, version.
+- **review_comment**: id, run, anchor (file and line range, or design node and canvas position), body, status. Sent back to the clank on "Request changes".
 - **approval**: id, run, action, payload, status, decided by, decided at.
 
-## Ticket lifecycle
+## Projects, specs and the workflow
+
+### Starting a project
+
+1. **Name it**: a name and a line about what you're making.
+2. **Pick a workspace**: sign in with GitHub (OAuth device flow, token in the keychain) and pick or create a repo, which is cloned locally; or use a local folder for work without code.
+3. **Pick the crew**: tick clanks from the premade list or your library. Atlas is always in. Software projects default to Scribe, Prism, Forge and Gauge; Scout, Quill and Buzz are optional.
+4. **Pick the models**: one default for the crew, or a model per clank.
+
+Clanks can be added to a project at any time.
+
+### Spec
+
+Atlas talks the idea through with you and briefs Scribe with a `spec` ticket. Scribe writes the spec: user stories (US-4), acceptance criteria (AC-4.2) and edge cases. Atlas signs it off and you approve it; nothing is built before that. Each approval is a new version (spec v2). Atlas then turns the new or changed stories into tickets, each carrying its story ids and criteria. Clarifications Scribe makes when answering a bounce are added as minor revisions; anything that changes scope comes back to you.
+
+### Stages and routes
 
 ```
-Backlog ──► Ready ──► Doing ──► Review ──► Done
-              ▲         │         │
-              │         ▼         ▼
-              └──── Blocked ◄── Changes requested
+Spec ──► Design ──► Build ──► QA ──► [custom checks] ──► Sign-off ──► you
 ```
 
-- A ticket becomes **Ready** when all its dependencies are Done and it has an assignee or a role.
-- The **scheduler** claims Ready tickets in priority order, up to the concurrency limit per project and per runner, and starts a run.
-- A run moves the ticket to **Doing**. It ends in one of: output submitted (to **Review**), blocked on a question (to **Blocked**, with the question posted to chat), failed (back to Ready with the error, up to a retry limit), or budget exhausted (paused).
-- In **Review**, you approve (to **Done**, and outbound actions like merge or send happen now), request changes (back to Ready with your notes in context), or reject.
-- Tickets can be configured to let Atlas review first, so you only see work the lead has already checked.
+- Each clank's frontmatter says whether it is a **maker** (works its own tickets) or a **checker** (reviews other clanks' tickets of the types it applies to), and which stage it sits in.
+- A ticket's **route** is computed when it is created: its maker, then every checker that applies to its type in stage order, then Atlas. A `pr` goes Forge → Gauge → Atlas; a `design` goes Prism → Atlas; a `campaign` goes Buzz → Atlas. A custom checker such as Sentinel (`after: qa`, `applies_to: [pr]`) slots in automatically.
+- Tickets with a UI depend on a design ticket, so design runs first.
+- Checkers work in their own worktree of the maker's branch, so they test exactly what was submitted.
 
-The state machine lives in `packages/core` and is the only code allowed to change a ticket's column.
+### Bounces
+
+- Any clank can send a ticket back with `ticket_bounce`, a reason and numbered issues, to the clanks in its `bounce_to`. By default Forge and Prism bounce spec gaps to Scribe, Gauge bounces bugs to Forge and untestable criteria to Scribe, and Atlas can bounce anything to anyone.
+- A bounce to an earlier clank in the route restarts the route from there, so fixed work goes through every check again. A bounce to a clank outside the route, such as Scribe answering a spec gap, returns to the sender once it's resolved.
+- Every bounce is stored with its reason, so the whole history lives on the ticket.
+- After three bounces (configurable per project) the ticket stops looping and comes to you with its history.
+
+### The board
+
+```
+Backlog ──► Build ──► QA + review ──► Ready for you ──► Done
+              ▲            │                │
+              └── bounce ──┘                │
+              ▲                             │
+              └──── changes requested ──────┘
+```
+
+- **Backlog**: waiting on dependencies or a free slot.
+- **Build**: the ticket's maker is working on it, whether that's Scribe, Prism, Forge, Quill, Buzz or Scout.
+- **QA + review**: its checkers, then Atlas's sign-off.
+- **Ready for you**: signed off. You approve (to **Done**; merges and sends happen now), request changes with comments (back to its maker), or reject.
+- A ticket waiting on `ask_user` shows as blocked in whichever column it's in, with the question in chat.
+- The scheduler claims Backlog tickets whose dependencies are done, in priority order, within the limits per project, per clank and per loaded model.
+
+The workflow engine and ticket state machine live in `packages/core` and are the only code allowed to move a ticket.
 
 ## Agent runtime
 
-One loop shared by chat clanks and workers:
+One loop for every clank:
 
-1. Build context: clank system prompt, ticket or conversation, relevant artifacts, tool definitions.
-2. Call the model through the provider registry with streaming.
-3. For each tool call: check the permission policy (allow, ask, deny). "Ask" creates an approval and suspends the run until you answer.
-4. Execute the tool, record the event, feed the result back.
-5. Repeat until the clank calls a terminal tool: `submit_output`, `ask_user`, `create_ticket`, or `fail`.
+1. Build context: the system prompt from the crew docs (see below), the conversation or ticket, relevant artifacts, tool definitions.
+2. Call the model through the provider registry, streaming. On the built-in runtime this first reserves a slot on a loaded model, which may mean waiting for it to load.
+3. For each tool call: validate the arguments, then check the permission policy (allow, ask, deny). "Ask" creates an approval and suspends the run until you answer.
+4. Execute the tool, record the event, checkpoint the worktree if files changed, feed the result back.
+5. Repeat until the clank calls a finishing tool: `submit_output` (makers), `review_pass` (checkers), `ticket_bounce`, `ask_user` or `fail`.
 
-Planning is a specialisation of the same loop: Atlas gets board tools (`create_ticket`, `link_dependency`, `assign`, `update_ticket`) and a planning prompt. Its first pass is a proposal you edit in chat before anything is committed to the board.
+Planning is a specialisation of the same loop. Atlas gets board tools (`board_create_ticket`, `board_link_dependency`, `board_assign`, `board_update_ticket`) and runs when you approve a spec version, turning its stories into tickets. You can edit the board at any time.
 
-Context is kept small by giving workers the ticket, its acceptance criteria, the outputs of tickets it depends on, and nothing else. Long runs are summarised and checkpointed so they can be resumed after an app restart.
+Context is the scarce resource, especially on local models:
+
+- Makers get the ticket, its stories and acceptance criteria and the outputs of the tickets it depends on, never the chat that produced it. Checkers also get the maker's output and notes.
+- The clank's memory for the project is searched with the ticket's title and stories, and the best matches are added within a fixed budget. The clank can search further with `memory_search`.
+- Large tool results are truncated (head and tail, with a note of what was cut). The full result stays in the event log and can be read in pages.
+- Near the context limit, older turns are summarised. Runs are checkpointed so they resume after an app restart or a model crash.
+
+## Clanks and priming
+
+A clank is a priming doc plus settings. The docs for the default crew live in [`crew/`](../crew/README.md) and are written to the model, not about it.
+
+| Clank | Role | Kind | Makes |
+| --- | --- | --- | --- |
+| Atlas | Lead: talks to you, plans, writes tickets, signs off. Always in. | checker (sign-off) | |
+| Scribe | Business Analyst | maker (spec) | `spec` |
+| Prism | Designer, works in Studio | maker (design) | `design` |
+| Forge | Engineer | maker (build) | `pr` |
+| Gauge | QA | checker (qa) | |
+| Scout | Researcher (optional) | maker (build) | `research` |
+| Quill | Writer (optional) | maker (build) | `copy`, `doc`, `email` |
+| Buzz | Marketing (optional) | maker (build) | `campaign` |
+
+- `crew/CREW.md` holds the rules every clank shares: chat and ticket modes, how to work, when to ask, and how to treat untrusted content.
+- `crew/<clank>.md` is one file per clank: YAML frontmatter that configures the app (id, role, output types, workflow placement, model requirements, default tool policy) and is never sent to the model, then the prompt itself.
+- `crew/custom.md` is the template for custom clanks, and `crew/examples/sentinel.md` is a worked one: a security checker between QA and Atlas. Custom clanks are saved to your library and can join any project.
+
+The system prompt is assembled stable parts first, so llama.cpp's prompt cache and provider prompt caching hit on every turn:
+
+1. `CREW.md`, with variables filled in (`{{date}}`, `{{os}}`, `{{clank.name}}`, `{{user.name}}`, `{{crew}}` for the project's crew and `{{workflow}}` for its stages).
+2. The clank's doc body, with HTML comments removed.
+3. Integration guides: for each integration this clank can use in this project, a fixed preamble and the integration's `guide.md`.
+4. Project instructions: `CLANKS.md` at the workspace root, or `AGENTS.md` if there isn't one.
+5. Memory: the clank's most relevant entries for this project.
+6. Run context: the mode and, for a ticket, its key, title, description, stories, acceptance criteria, output type, dependency outputs and bounce history, plus the routine, run date and due time for tickets a routine created. A ticket that depends on a design also gets `design/DESIGN.md` and a spec of the relevant frames.
+
+The docs have to work on small local models. `CREW.md` plus any one clank doc stays under 2,500 tokens, names only real tools, and ends with the output contract that `submit_output` validates against; CI checks all three. Edited copies live in the app data folder and the bundled files are never modified. The format and writing rules are in [crew/README.md](../crew/README.md).
+
+Each doc's frontmatter declares `model.tags`, `model.needs`, `model.prefers` and `model.min_context`. When you create a project, the app matches those against the model catalog and your hardware to propose a model per clank, which you can change any time.
+
+### Memory
+
+Each clank keeps its own memory per project: its chats, a summary of every run, and the decisions it records with `memory_write`, each with the reason. Ask Forge why it picked a library and it answers from its own record with `memory_search`. Memory lives in SQLite with full-text search, stays on your machine, and is visible and editable in the clank's profile. Atlas can also search the rest of the crew's memory when it signs off.
+
+## Local models
+
+clanks downloads and runs models itself, with a llama.cpp runtime bundled inside the app. A fresh install needs nothing else: no Ollama, no separate model server, no command line. Models are pulled straight from Hugging Face into clanks' own store and run by clanks' own runtime. The experience will feel familiar to anyone who has used Ollama (short names, pull, a local store, models loaded on demand and unloaded when idle), but nothing depends on it.
+
+**Runtime.** llama.cpp's `llama-server`, pinned to a tested release and shipped as prebuilt binaries per platform and GPU backend: Metal on Apple Silicon; CPU and Vulkan on Windows and Linux, with CUDA builds downloaded on first run when an NVIDIA GPU is found. The model manager starts one `llama-server` per loaded model as a child process on 127.0.0.1, on a random port, with a per-launch API key, and uses its OpenAI-compatible API. If it crashes, the supervisor restarts it and the affected runs resume from their last checkpoint.
+
+**Catalog.** A versioned JSON file in `packages/models` lists recommended models by short name and tag (`name:tag`), with the Hugging Face repo and file, sha256, size, quantisation, context length, capabilities (tools, vision), licence and role tags (`code`, `general`, `reasoning`, `writing`, `design`, `long-context`) that the crew docs match against. The app ships with a copy and can refresh it from this repo. It is data, never code.
+
+**Pulling.**
+
+- Pull from the catalog by name, or from any Hugging Face GGUF repo as `hf.co/<owner>/<repo>:<quant>`. Files come straight from Hugging Face.
+- Before downloading, the manager reads the GGUF header over HTTP range requests (`@huggingface/gguf`) for layer count, context length and chat template, and estimates whether the model fits: weights plus KV cache at the clank's context plus overhead, against detected memory. The UI shows "fits on GPU", "partly on GPU" or "too large".
+- Downloads are chunked and parallel, resume across restarts, are verified by sha256 and stored content-addressed. Two tags that point at the same file share one blob.
+- Only GGUF is accepted. No pickle files, nothing executable from a model repo.
+- Gated repos use a Hugging Face token from the keychain.
+- Optional: if Ollama models are already on disk, clanks can reuse their GGUF files (hard-linked where possible) instead of downloading them again. Ollama doesn't need to be running, and clanks never calls it.
+
+**Hardware probe.** At startup the manager asks the bundled llama.cpp build which devices it sees and how much memory each has (`--list-devices`), and reads system RAM. Apple Silicon counts as unified memory. The result picks the backend build and sets the memory budget, which you can override.
+
+**Scheduling.**
+
+- A model loads when a run first needs it and unloads after an idle timeout (default 10 minutes, or "keep loaded" per model).
+- Runs on the same model share one process through `llama-server`'s parallel slots with continuous batching. The context size is set at load time from the slot count and each clank's `min_context`; changing the slot count reloads the model between runs.
+- If a model doesn't fit next to what's loaded, idle models are evicted least recently used first. If it still doesn't fit, the run waits and its ticket shows "waiting for model".
+- On small machines, onboarding picks one model for the whole crew so nothing swaps.
+
+**Tool calling.** `llama-server` runs with the model's own chat template (`--jinja`), which gives native tool calls for most current instruct models. For models without them, the adapter describes the tools in the prompt and constrains the reply with a JSON schema grammar, so output is always parseable. A malformed call is returned to the model once as a tool error; a second one fails the run.
+
+**Local API (optional, off by default).** clanks can serve its models to other apps on 127.0.0.1: OpenAI-compatible `/v1/models` and `/v1/chat/completions`, plus the common Ollama endpoints (`/api/tags`, `/api/chat`, `/api/generate`, `/api/pull`, `/api/ps`) so editors and scripts that speak Ollama can point at clanks instead. Requests go through the same scheduler, so they queue behind crew runs rather than fight them for memory.
+
+**Starting points per machine.** Rough targets, to be validated against the crew docs before release:
+
+| Machine | Default setup |
+| --- | --- |
+| 16 GB RAM, no usable GPU | One small model (about 4B to 8B, Q4) for the whole crew, one worker at a time. |
+| 8 to 12 GB VRAM, or 16 to 24 GB unified memory | One 8B to 14B model for the crew, two parallel slots. |
+| 16 to 24 GB VRAM, or 32 to 64 GB unified memory | A 30B-class model (mixture-of-experts preferred for speed) for Atlas, Scribe, Forge and Prism; a smaller one for Gauge, Scout, Quill and Buzz. A vision-capable model for Prism and Gauge if one fits. |
+| 48 GB+ VRAM, or 96 GB+ unified memory | A model per clank, three or four parallel workers. |
 
 ## Providers
 
@@ -136,66 +307,316 @@ interface Provider {
 }
 ```
 
-Adapters, in order: Anthropic, OpenAI, OpenAI-compatible (Ollama, vLLM, LM Studio, OpenRouter, llama.cpp server), Google. Models without native tool calling get a JSON-mode fallback so local models still work as workers. Pricing tables live in config so cost tracking works per model.
+Adapters, in order:
+
+1. **Built-in runtime.** Calls the bundled `llama-server` that clanks' model manager started, over its local HTTP API, with slot reservation and the grammar fallback for tool calls. The default, and the only one a fresh install uses.
+2. **Cloud (optional).** Anthropic, OpenAI, Google and OpenRouter, for clanks you choose to run on a cloud model with your own key.
+3. **External servers (optional).** Any OpenAI-compatible server you already run elsewhere, such as vLLM on another machine, LM Studio or Ollama. Never needed.
+
+Usage is recorded for every call. Cloud calls are priced from tables in config; local calls record tokens, tokens per second and wall time. Budgets can be set in tokens, time or money.
 
 ## Tools and permissions
 
-- Built-ins: `fs.read`, `fs.write`, `fs.list`, `shell.exec`, `git.*`, `web.fetch`, `web.search`, `board.*`, `artifact.save`.
-- MCP servers can be attached per clank; their tools appear alongside built-ins.
-- Every tool declares a risk level. Each clank has a policy mapping tools to allow, ask or deny, with sensible defaults (reads allowed, writes inside the workspace allowed, shell and network asked, anything outbound always asked).
-- Outbound integrations (push, open PR, merge, send email) are separate tools so they can be gated individually.
+| Group | Tools | Default policy |
+| --- | --- | --- |
+| Files | `fs_read`, `fs_list`, `fs_search`, `fs_write`, `fs_edit` | Reads allowed. Writes allowed inside the run's worktree, impossible outside it. |
+| Shell | `shell_exec`, `shell_start`, `shell_output`, `shell_stop` | Ask, with "always allow this command in this project". |
+| Git | `git_status`, `git_diff`, `git_log`, `git_commit` | Allowed, on the run's own branch. There are no push, merge or branch-switching tools. |
+| Web | `web_search`, `web_fetch` | Ask, except for Scout. |
+| Browser | `browser_open`, `browser_navigate`, `browser_read`, `browser_click`, `browser_type`, `browser_press`, `browser_scroll`, `browser_screenshot`, `browser_console`, `browser_back`, `browser_close` | Per clank. |
+| Design | `design_read`, `design_create`, `design_update`, `design_delete`, `design_tokens_set`, `design_make_component`, `design_link`, `design_render`, `design_lint` | Prism has all of them. Forge and Gauge get `design_read` and `design_render`; Atlas, Scribe, Quill and Buzz get `design_read`. |
+| Board | `board_list`, `board_get_ticket`, `board_create_ticket`, `board_update_ticket`, `board_link_dependency`, `board_assign` | Atlas. Makers get `board_create_ticket`, which files a proposal for Atlas; Scribe gets `board_update_ticket` to fix criteria. |
+| Spec | `spec_read`, `spec_write` | Most clanks read the approved spec; Scribe writes drafts. |
+| Review | `review_pass` | Checkers: Gauge, Atlas and custom checkers. |
+| Crew | `post_progress`, `ask_clank`, `ask_user`, `submit_output`, `fail`, `ticket_bounce` | Every clank. `ticket_bounce` reaches only the clanks in its `bounce_to`. |
+| Memory | `memory_write`, `memory_search` | Every clank, on its own memory. Atlas can search the whole crew's. |
+| Artifacts | `artifact_save` | Allowed. |
+| Routines | `routine_list`, `routine_get`, `routine_propose` | Atlas and Buzz. `routine_propose` only drafts; you activate. |
+| Integrations | `int_<integration>_<operation>`, generated from each connected integration | By risk level: read allowed, write asks, outbound asks every time. Granted per project and per clank. |
 
-## Sandboxes and runners
+- Tool names are `snake_case` with a group prefix because provider APIs reject dots in tool names.
+- MCP servers can be attached per clank. Their tools appear alongside the built-ins with an `mcp_<server>_` prefix.
+- Every tool declares a risk level. Each clank has a policy mapping tools to allow, ask, deny or off. Defaults come from the clank's priming doc; Settings override them. Approval prompts can widen a rule to a command or a host for the whole project.
+- Outbound actions are not tools. Clanks can't push, open PRs, merge, post or send. The orchestrator pushes Forge's branch and opens its pull request when Forge submits on a connected repo, and does everything else only when you approve, so no model output, injected or not, can trigger them. Integration operations that spend money, publish or contact people are tools, but locked to asking every time.
+- `web_search` uses a backend you configure: a self-hosted SearXNG, or a Brave or Tavily key. Without one it runs the search in the built-in browser, where you can watch it.
 
-**Docker runner (Milestone 4).** One container per run from a worker base image (Node + git + common toolchains, with per-clank image overrides). The workspace is a volume or a fresh clone. Network is off by default and enabled per clank. The container gets a short-lived run token and the orchestrator's worker API URL, nothing else.
+## Integrations
 
-**Kubernetes runner (Milestone 6).** Each run is a Job in a namespace you choose, using your kubeconfig. Because the desktop app is usually not reachable from the cluster, a small gateway Deployment (Helm chart in `deploy/helm`) runs in-cluster; the desktop app holds an outbound connection to it and workers talk to the gateway. In headless mode the orchestrator runs in-cluster and the gateway is not needed.
+Integrations connect clanks to third-party APIs: payments, stores, analytics, docs, trackers, chat, email services and hosting. Settings → Integrations lists what's installed. You connect an account with an API key or OAuth, then turn it on per project and per clank.
 
-**Worker API.** HTTP + server-sent events, authenticated by the per-run token: fetch ticket context, proxy model calls, post events, request approvals, submit artifacts. Workers never see provider keys or other tickets.
+There are two kinds:
+
+- **Declarative (preferred).** A manifest plus a trimmed OpenAPI document. The orchestrator turns each listed operation into a tool, signs requests with the credential from the keychain, and only calls the hosts the manifest declares. No code from the package runs.
+- **MCP server.** For services that need logic a manifest can't express. These run code on your machine, so the app says so before you install one, pins its version and checksum, and can run it in Docker when Docker is available.
+
+A declarative manifest:
+
+```yaml
+id: stripe
+name: Stripe
+summary: Products, prices, customers and checkout sessions.
+hosts: [api.stripe.com]
+auth:
+  type: api_key              # api_key, oauth2 (PKCE) or basic
+  header: Authorization
+  format: "Bearer {secret}"
+  modes:                     # optional: tell test credentials from live ones
+    test: { prefix: sk_test_ }
+    live: { prefix: sk_live_ }
+openapi: openapi.yaml        # only the operations listed below are used
+operations:
+  - { id: list_products,  op: "GET /v1/products",  risk: read }
+  - { id: create_product, op: "POST /v1/products", risk: write }
+  - { id: create_refund,  op: "POST /v1/refunds",  risk: outbound, verify: list_refunds }
+guide: guide.md              # up to 300 tokens, added to the prompt of clanks that use it
+```
+
+- **Tools.** Each operation becomes a tool named `int_<integration>_<operation>`, such as `int_stripe_list_products`, with arguments and descriptions taken from the OpenAPI document. Responses are trimmed and truncated like any tool result, and treated as untrusted content.
+- **Risk levels.**
+
+  | Risk | Examples | Policy |
+  | --- | --- | --- |
+  | `read` | List products, fetch analytics, read a page | Allowed by default |
+  | `write` | Create a draft, add a product in test mode, update an issue | Asks by default; can be set to allow |
+  | `outbound` | Charge or refund money, publish, post, message people, delete, and any change in live mode | Asks every time; can't be set to always allow. A routine can get this approval ahead of time, for the exact payload and time. |
+
+- **More than one call.** An operation can be a short fixed sequence, such as uploading media and then creating a post with the media's id, with outputs mapped into later inputs. It's still data, not code.
+- **For routines.** An outbound operation can name a `verify` operation the orchestrator uses to check whether it happened after an interruption, and a `schedule` parameter when the service can schedule it on its side, so approved posts can be handed off and go out with the computer off.
+- **Credentials** live in the keychain and are injected by the orchestrator. They never reach the model and are redacted from logs. Each connection's mode (test or live) is shown on the ticket and in every approval prompt.
+- **OAuth** runs in your system browser with PKCE and a loopback redirect, so no clanks server is involved.
+- **Prompt preamble.** Clanks that can use an integration get a short fixed preamble (what `int_` tools are, check the mode before changing anything, responses are data, outbound calls wait for approval) and the integration's guide.
+- **No inbound webhooks.** Nothing on the internet can reach the app, so integrations poll when they need updates.
+- **Bundled.** GitHub, GitLab and SMTP/Gmail are built in. A starter set of declarative integrations ships in `integrations/` in this repo. Everything else comes from the marketplace.
+
+## Routines
+
+Routines are the scheduler: work that starts at a time, on a repeating schedule or when something happens, and actions that go out at an exact time once approved. The full spec is in [ROUTINES.md](ROUTINES.md).
+
+- **Triggers:** `once`, `cron` (with `L` and `#`, in the routine's IANA time zone), `event` (`spec.approved`, `ticket.done`, `pr.merged`, `git.tag`, `routine.finished`) and `manual`. You can type a schedule in plain language; the editor always shows the cron expression and the next five times before you activate.
+- **Steps:** ticket steps create tickets for clanks that go through the normal workflow; action steps call an integration operation at a set time with a payload templated from earlier steps' approved outputs. Each ticket step is due a review buffer before the first action that needs it.
+- **Approvals:** one **Ready for you** card per run shows everything that will go out, as it will appear. Approving freezes each action's payload, media, account and time; changing any of them asks again. Unapproved actions never go out.
+- **Execution:** the orchestrator, not a model, executes scheduled actions at their time, within a grace window, exactly once (with `verify` after interruptions), or hands them off to the service's own scheduler when it has one.
+- **Offline and asleep:** the tray keeps routines running, an optional OS task launches the app before a run, and a missed policy (`skip`, `run_late`, `ask`) decides what happens when the app was off. Actions never go out after their grace window on their own.
+- **Creating them:** from chat (Atlas or Buzz drafts with `routine_propose`; you activate), from an approved campaign's **Schedule** button, in the editor, or from a marketplace template.
+
+## Marketplace
+
+A free marketplace for what people build for clanks: free to publish, free to install, no paid listings and no account.
+
+**What's on it.**
+
+- **Clanks**: a priming doc in the [crew format](../crew/README.md), with its workflow placement, model needs, default tool policy and the integrations it expects. Sentinel is the kind of thing that belongs here.
+- **Integrations**: declarative manifests or MCP servers.
+- **Crews**: a set of clanks, their workflow and the integrations they expect, for a kind of project, such as "Shopify store" or "podcast launch".
+- **Routines**: templates such as "weekly competitor digest" or "release notes and announcement", installed as inactive drafts.
+
+**How it works.**
+
+- The marketplace is a public GitHub repo (proposed: `clanks-marketplace`). Each package is a folder with a `package.yaml` (kind, id, version, publisher, licence, requirements) and its files. CI validates every submission and builds a static `index.json` with a sha256 for every version.
+- The app fetches the index. Browsing needs the network; installed packages work offline. There's no account, no tracking and no install counts.
+- More indexes can be added in Settings, such as a team's private one, in the same format.
+
+**Installing.** Before you install, the app shows the full priming doc, the tools and permissions a package asks for, the hosts an integration calls and whether it runs code. Packages are checked against the index's checksum and installed into your library. A marketplace clank can't raise its own permissions: anything above read starts at ask, whatever its frontmatter says.
+
+**Updates.** Prompts and permissions never change without you. An update shows the priming doc's diff in the diff editor and highlights new tools, hosts or permissions; accept it or stay on the pinned version. Packages revoked in the index are disabled with a notice.
+
+**Publishing.** **Publish** on a clank's profile or an integration's settings validates the package (schema, token budget, tool names, and a scan for secrets and personal data), asks you for an open licence, and, once you confirm, opens a pull request to the marketplace repo from your GitHub account. Maintainers review each listing, and reviewed packages get a badge.
+
+## The workbench
+
+The main window is chat on the left and the workbench on the right. The workbench follows the run you are looking at: the clank you're chatting with, or any ticket's run opened with **Watch** from the board. Its panes are tabs: Diff, Browser, Terminal, Studio and Activity.
+
+### Workspaces and checkpoints
+
+- A project points at a folder. Code and design projects need a git repo; clanks offers to `git init` one.
+- Each ticket run gets its own worktree (`git worktree add`) on a new branch `clanks/<ticket key>` off the project's base branch, kept in the app data folder. Parallel clanks never see each other's half-finished edits. Checkers get their own worktree of the maker's branch.
+- After every tool call that changes files, the orchestrator records a checkpoint: a commit in a shadow git directory (`--git-dir` in app data, `--work-tree` the run's worktree). Checkpoints never touch your repo's history or refs. The clank's own `git_commit`s go on the run branch as normal.
+- Notes, documents and email drafts are written to the ticket's artifact folder and versioned there.
+
+### Diff editor
+
+Monaco's diff editor, wired to the run:
+
+- A tree of changed files with added and removed line counts; side-by-side or inline.
+- Live: the diff updates as the clank writes, and the editor follows the file being edited unless you pin another.
+- Compare the run with its base, or any two checkpoints. A step scrubber walks the run one tool call at a time.
+- Accept or reject per hunk or per file. Rejecting reverts it in the worktree and tells the clank, with your reason if you give one.
+- Edit the right-hand side directly. Your edits are recorded as a user checkpoint and the clank is told which lines you changed.
+- Comment on a line or a range. Comments collect into a review that **Request changes** sends back with the ticket.
+- **Rewind** restores the worktree to a checkpoint and cuts the run's context back to that point.
+
+It is also the review surface for pull requests and for comparing versions of specs, documents and priming docs.
+
+### Browser
+
+- A pane of tabs, each a `WebContentsView` with `sandbox` and `contextIsolation` on, no preload and no Node. Each run gets its own tabs, labelled with the clank and ticket.
+- The browser controller drives tabs over the Chrome DevTools Protocol through `webContents.debugger`: navigation, input events, the accessibility tree, screenshots and console messages.
+- `browser_read` returns a compact text snapshot: title, URL and the accessibility tree with numbered refs, such as `[12] button "Book now"`. `browser_click` and `browser_type` take a ref. Text-first works for local models without vision; vision models can also use `browser_screenshot`.
+- Sessions are isolated. Each run starts with a fresh in-memory partition. A clank can be given a persistent partition for sites you want it to stay signed in to. Your own browser's cookies and passwords are never involved.
+- You watch live. A banner shows which clank is driving. **Take over** pauses the clank's browser tools (they return "user has control") so you can sign in, dismiss something or steer. **Hand back** resumes.
+- Guard rails: per-clank site allow and deny lists checked on every navigation; `browser_type` refuses password fields; downloads are blocked unless approved; no file uploads; new windows open as tabs.
+- Forge uses the same pane to preview its dev server, so you see the site being built.
+
+### Terminal
+
+Every `shell_exec` and `shell_start` runs in a pty and streams to an xterm.js tab for that run. You can stop any process. **Open shell here** gives you your own terminal in the run's worktree; clanks can't see or use it.
+
+### Activity
+
+A timeline of the run: model turns, tool calls with inputs, outputs and duration, approvals and checkpoints. Selecting a step moves the other panes to that moment: the diff at that checkpoint, the page as it looked at that step, the command's output, the design as it was.
+
+## Studio
+
+Studio is the design tool built into clanks, in the spirit of Figma: an infinite canvas where Prism maps user flows, wireframes, builds the design system and screens, and makes social graphics and mock-ups, and where you can design by hand alongside it. It is a top-level view of its own and a workbench pane when you're watching Prism.
+
+### Design files
+
+A design lives in the project's `design/` folder, so it gets the same worktrees, checkpoints and review as code:
+
+```
+design/
+  DESIGN.md                   the design language: principles, usage rules, do and don't
+  tokens.tokens.json          design tokens
+  site.design/
+    document.json             pages, frame order, prototype links
+    pages/<page id>.json      one file per page: its node tree
+    components/<id>.json      one file per component set, with variants and properties
+  assets/                     images and fonts the design uses
+```
+
+Files are pretty-printed JSON with stable ids and sorted keys so git diffs stay readable. The schema lives in `packages/design` and is versioned with migrations.
+
+### Model
+
+- A scene graph of nodes: frame, text, rectangle, ellipse, line, image, vector (SVG), icon, component and instance.
+- Frames have auto layout: direction, gap, padding, alignment, wrap and hug, fill or fixed sizing. It maps one-to-one onto CSS flexbox. Children can opt out with absolute position and constraints.
+- Any style property can be a token reference. Lint flags raw values.
+- Components have variants and typed properties (text, boolean, instance swap). Instances carry overrides.
+
+### Tokens and the design language
+
+- Tokens in the W3C Design Tokens Community Group format: colour, typography, spacing, sizing, radius, shadow, opacity and motion. Semantic tokens alias primitives (`color.text` → `color.neutral.900`), and modes cover light, dark and any you add.
+- Exported on demand as CSS custom properties, a Tailwind theme or plain JSON.
+- `DESIGN.md` is the written half: principles, how each colour role and type style is used, spacing and layout grid, each component and when to use it, accessibility rules, do and don't. It is what Forge and Quill get when their tickets depend on a design.
+
+### Renderer
+
+Frames render as real DOM and CSS in a sandboxed view: auto layout as flexbox, tokens as CSS variables, text with the browser's own text engine. Pan and zoom sit on top. What you see in Studio is what a browser will draw, so Forge's build can match it and exporting to code is a mapping rather than a translation. Frames off-screen are drawn from cached bitmaps so large files stay fast.
+
+### Editor
+
+The same editor for you and for Prism:
+
+- Pages, frames with device and social-media presets, shapes, text, images, SVG import, a built-in icon set (Lucide), a set of open-licence fonts and a greyscale wireframe kit.
+- Selection and multi-select, resize handles, snapping and smart guides, align and distribute, grouping, undo and redo, Figma-style shortcuts.
+- Layers, properties, tokens, components and assets panels. Inspect mode shows the CSS and token names for any selection.
+- Prototype mode: link elements to frames and click through flows in a player. Flow view lays the same links out as a user-flow diagram.
+- Comments pinned to the canvas.
+
+### Working with a clank
+
+Every change, yours or Prism's, is an operation on one log: create, update, delete, move, token change. Prism's operations stream into the canvas as it works, and the viewport can follow it. If you change a node while Prism is working, Prism is told on its next tool call, and its later updates to that node are checked against your edit instead of overwriting it.
+
+The design tools:
+
+- `design_read` returns a compact text tree of a file, page, frame or component (ids, names, layout, token references) and the token list. This is how text-only local models see a design.
+- `design_create` inserts JSX-like markup under a parent node (see [Prism's doc](../crew/prism.md) for an example). Building a whole section in one call keeps small models efficient.
+- `design_update` and `design_delete` act on node ids. `design_tokens_set` creates or changes tokens. `design_make_component` turns a node into a component or adds variants. `design_link` adds prototype links.
+- `design_render` renders a frame to PNG in an offscreen view, for vision models and for the activity timeline.
+- `design_lint` returns problems as text: raw values that should be tokens, contrast below WCAG AA, overflowing or clipped text, tap targets under 44px, overlapping siblings, detached instances and unnamed layers. Text-only models design against the linter.
+
+### Review and hand-off
+
+- A design output is reviewed in Studio. Visual diff compares two checkpoints side by side or as an overlay with an opacity slider, and lists property-level changes, such as `Button/primary` fill `color.brand` → `color.brand-strong`. The diff editor shows the raw JSON if you want it.
+- Canvas comments collect into **Request changes**, the same as line comments on code.
+- A ticket that depends on a design gets `DESIGN.md`, the tokens and a compact spec of its frames in its run context. Forge can also `design_read` and `design_render` to compare a frame with a `browser_screenshot` of its page.
+- Exports: PNG, SVG and PDF per frame; tokens as CSS, Tailwind or JSON; components as React and CSS starting points.
+
+## Command sandbox
+
+Shell commands run in one of two places, set per project and per clank:
+
+- **Host (default).** A child process in the run's worktree, through a pty. The environment is scrubbed (no provider keys, no clanks secrets), commands have a timeout and an output cap, and the permission policy asks before anything not allowed. Works with nothing else installed.
+- **Docker (optional).** When Docker is available, the run gets a container from a base image (Node, Python, git and common toolchains, overridable per clank) with the worktree bind-mounted, no other host mounts and the network off unless granted. Commands run through `docker exec`. Recommended for unattended runs and untrusted repos.
+
+Files, git, browser, design and model calls stay in the orchestrator either way, so the workbench sees everything and a container never sees a key.
 
 ## Outputs
 
-| Output type | Delivered as | Approval step |
-| --- | --- | --- |
-| MR | Branch pushed and PR/MR opened via GitHub or GitLab API; CI status mirrored on the ticket | Merge |
-| Research | Markdown note with sources, rendered in the ticket | Accept |
-| Doc | Markdown, exported to DOCX/PDF (pandoc in the worker image) | Accept |
-| Email | Draft stored in the app | Send, via your SMTP or Gmail connection |
-| Other | Files saved as artifacts | Accept |
+| Output type | Made by | Delivered as | On approval |
+| --- | --- | --- | --- |
+| Spec | Scribe | Versioned Markdown spec in the project's Spec tab | Becomes the approved version, and Atlas creates tickets from it |
+| Design | Prism | Design files, tokens and `DESIGN.md` on the run branch, reviewed in Studio | Merged into the base branch; exports on demand |
+| PR | Forge | A branch pushed to your connected repo with a pull request opened (a local branch for folder projects), reviewed in the diff editor, CI status mirrored on the ticket | You merge it, in the app or on GitHub |
+| Copy, Doc | Quill | Markdown rendered in the ticket; docs export to PDF (`printToPDF`) and DOCX (`docx`) | Accepted, or committed to the repo if the ticket names a path |
+| Email | Quill | Draft stored in the app | Sent through your SMTP or Gmail connection |
+| Campaign | Buzz | Plan, calendar and post drafts rendered in the ticket | Accepted. Posts with a time and an account can be scheduled; clanks posts them at that time once you approve (see Routines). |
+| Research | Scout | Markdown note with sources and screenshots of key pages | Accepted |
+| Other | Custom clanks | Files saved as artifacts | Accepted |
 
 ## Security
 
-- Keys in the OS keychain only; the renderer runs with context isolation and no Node integration.
-- All model output and worker traffic is validated with zod before it touches state.
-- Sandboxes run unprivileged, with no host mounts beyond the workspace and no network unless granted.
-- Prompt injection is assumed: content a worker reads (web pages, repo files, emails) can never grant itself new permissions; approvals are decided only in the UI.
+- The GitHub token is stored in the keychain and limited to the repos you pick. Pushes only go to `clanks/*` branches, never to the default branch.
+- Keys and tokens live in the OS keychain only. The renderer, browser pane and Studio renderer run with context isolation, sandboxing and no Node integration.
+- Model output, tool arguments, design markup and IPC payloads are validated with zod before they touch state.
+- `llama-server` listens only on 127.0.0.1, on a random port, with a per-launch API key. The optional local API is off by default and loopback-only.
+- Models are GGUF only and verified by sha256. llama.cpp builds are pinned and checksummed at build time, and runtime downloads are verified the same way.
+- Clanks can't write outside their worktree: paths are resolved, symlinks included, and checked on every file tool call.
+- Prompt injection is assumed. Content a clank reads (web pages, repo files, emails, designs, other clanks' outputs) can never grant permissions. Approvals are decided only in the UI, and outbound actions are not tools.
+- Integrations only call the hosts their manifest declares. Credentials are injected by the orchestrator and redacted from logs, and outbound operations and any change in live mode ask every time.
+- Routines are created and activated only in the UI. Scheduled actions run only frozen, approved payloads, checked by hash, inside their grace window, and are executed by the orchestrator with no model involved.
+- Marketplace packages are checksum-verified and previewed in full before install, can't grant themselves permissions above ask, and never change prompts or permissions without your review. MCP servers are flagged as running code.
+- Browser tabs are isolated per run, can't upload files and can't type into password fields.
 - Budgets are enforced in the orchestrator, which is the only path to a model.
 
 ## Testing
 
-- Unit tests (Vitest) for the state machine, scheduler, permission policy and provider adapters.
+- Unit tests (Vitest) for the state machine, scheduler, permission policy, prompt assembly and provider adapters.
 - A fake provider that replays recorded model responses, so agent loops are tested deterministically and offline.
-- Integration tests for the Docker runner in CI.
-- Playwright tests for the Electron app's main flows: add a provider, chat, plan a project, approve an output.
+- Model manager tests against a local HTTP fixture: resume, checksum failure, cancel, disk full. A CI job pulls a tiny GGUF model and runs a real `llama-server` on CPU.
+- Workflow engine: routes for every output type, custom checker placement, bounce targets, route restarts and the loop limit.
+- Worktree, checkpoint and rewind tests against fixture repos.
+- Integrations: manifest validation, OpenAPI-to-tool generation, auth and redaction, and host and risk enforcement against a mock API server.
+- Routines: cron and time zones on a fake clock, missed runs across sleep and shutdown, and scheduled actions against a mock integration (hash checks, retries, unknown outcomes).
+- Marketplace: index parsing, checksum failures, install, update diffs, revocation and publish validation.
+- Browser tools tested against local fixture pages in a real Electron window.
+- Design engine: schema migrations, the operation log, the markup parser and lint rules, plus renderer screenshot tests.
+- Crew docs, the custom template and examples: frontmatter schema including workflow placement, token budget, tool names checked against the registry, and golden runs on the fake provider.
+- Playwright tests for the app's main flows: pull a model, chat, approve a spec, watch a run in the diff editor and browser, edit a design alongside Prism, approve an output.
 
 ## Build order
 
 The first steps, in the order they unblock each other:
 
-1. Monorepo, Electron + React shell, CI with lint, typecheck and tests.
+1. Monorepo, Electron + React shell, tray, CI with lint, typecheck and tests.
 2. `core` types and the SQLite store with migrations.
-3. Provider interface, Anthropic and OpenAI-compatible adapters, fake provider.
-4. Chat UI with streaming against one clank. **First demo.**
-5. Tool registry, permission policy, approval prompts, activity log.
-6. Projects and tickets, the board view, Atlas planning tools.
-7. Scheduler and the in-process runner (workers without sandboxes, for fast iteration).
-8. Worker runtime package, worker API, Docker runner.
-9. GitHub integration and the review flow.
-10. Remaining outputs, then the Kubernetes runner and headless mode.
+3. Model manager (hardware probe, catalog, pulls, blob store, `llama-server` supervisor), the provider interface with the built-in runtime adapter, and a fake provider. **First demo: a fresh install pulls a model and answers a prompt, with nothing else installed.**
+4. Crew doc loader and prompt assembly; chat UI streaming against a clank on the built-in runtime. **Second demo: chat with Atlas offline on a model clanks pulled itself.**
+5. Optional adapters: cloud providers and external OpenAI-compatible servers.
+6. Tool registry, permission policy, approval prompts, activity log.
+7. Worktrees and checkpoints; the diff editor and terminal panes.
+8. Browser pane, browser controller and browser tools.
+9. Projects (GitHub sign-in, crew and models per project), specs with Scribe, the board, Atlas's ticket breakdown.
+10. Workflow engine: routes, checkers, bounces and the loop limit; Gauge; Atlas sign-off; memory.
+11. Scheduler with model-aware slots, parallel runs, pull requests on GitHub, optional Docker sandbox.
+12. Studio: design format, renderer, editor, tokens, design tools; then Prism.
+13. Quill, Scout and Buzz outputs, custom clanks and the library, GitLab, exports.
+14. Integrations: the declarative runtime, connections, risk levels, MCP integrations and the starter set.
+15. Marketplace: index, install and update flow, publishing from the app.
+16. Routines: triggers, runs, ticket and action steps, approvals ahead of time, scheduled action execution, missed-run handling, OS launch tasks, the Schedule view.
 
 ## Open questions
 
 - **License.** MIT or Apache-2.0 for adoption, or AGPL to keep forks open.
-- **Headless mode timing.** Whether to pull the daemon forward if long-running projects are the main use case.
+- **Starter models.** Which models go in the catalog for each hardware tier, and how often to re-pick them. Needs the evaluation harness (see the roadmap) run against the crew docs.
+- **GPU builds.** CUDA builds of llama.cpp are large. Download on first run as planned, or ship a separate installer for NVIDIA machines.
+- **Windows sandboxing.** There is no lightweight equivalent of Seatbelt or bubblewrap, so host commands on Windows rely on the permission policy alone. Decide whether Docker or WSL should be the default there.
+- **Ollama API scope.** How much of Ollama's API to mirror (`/api/embed`, `/api/create` with Modelfiles) beyond the common subset.
+- **Studio scope.** Where to draw the line before the first release: pen tool, boolean operations and Figma import are listed under Later.
+- **Running off the laptop.** The earlier plan had a Kubernetes runner and a headless daemon. Both are parked under Later; revisit if long-running projects need a machine that stays on.
+- **Starter integrations.** Which declarative integrations ship bundled. Candidates: Stripe, Shopify, Notion, Linear, Slack, Google Analytics, Vercel.
+- **Marketplace review.** How listing review scales: maintainers only, trusted community reviewers, or automated checks with a reviewed badge for the rest.
+- **Package licences.** Which open licences to accept, especially for prompt text (MIT, Apache-2.0, CC BY 4.0).
+- **Routines.** Posting without per-item approval, X API access, third-party triggers and waking from sleep: see [ROUTINES.md](ROUTINES.md#open-questions).
+- **Memory recall.** Full-text search can miss questions phrased differently from the record. Decide when to add embeddings from the local runtime.
 - **Multi-user.** Whether shared boards for small teams are in scope, and if so whether sync is a self-hosted server or peer-to-peer.
-- **Default local model.** Which local model to recommend for workers so the out-of-box experience is good without a cloud key.
