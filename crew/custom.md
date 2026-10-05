@@ -4,6 +4,7 @@ id: my-clank              # lowercase, unique in your library
 name: My Clank
 role: Role                # one or two words, shown in the roster
 summary: One sentence the rest of the crew sees in the roster.
+avatar: slate             # violet, rose, fuchsia, amber, lime, emerald, sky, yellow, orange, cyan, red or slate
 outputs: [doc]            # what it makes; leave empty for a checker
 workflow:
   kind: maker             # maker: works its own tickets. checker: reviews other clanks' tickets

@@ -10,7 +10,7 @@ Everything runs on your own computer. clanks downloads open models and runs them
 
 There is no clanks account and no clanks cloud. Local models need nothing else. If you want, a clank can use a cloud model with your own API key (Anthropic, OpenAI, Google, OpenRouter) instead, or a model server you already run elsewhere (vLLM, LM Studio, Ollama). Keys stay in your OS keychain and go straight to the provider you chose.
 
-> Status: pre-alpha. [Milestone 1](docs/ROADMAP.md#milestone-1-pull-and-run-models) is in: the app sizes up your machine, pulls models from its catalog or Hugging Face, and runs them on its own bundled llama.cpp, offline. The crew can't chat or do work yet; that starts with Milestone 2. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
+> Status: pre-alpha. [Milestone 2](docs/ROADMAP.md#milestone-2-chat-with-a-clank) is in: you can chat with any of the eight premade clanks, offline, on a model clanks pulled and runs itself, or on a cloud model or model server of your own. Each clank works from its priming doc, which you can edit in the app, and from a folder's `CLANKS.md`. Chats are saved on your machine. The crew can't use tools or do work on tickets yet; that starts with Milestone 3. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
 
 ## Every project gets its own crew
 

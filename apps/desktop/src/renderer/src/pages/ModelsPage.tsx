@@ -3,6 +3,7 @@ import { CatalogPanel } from '../components/models/CatalogPanel';
 import { LibraryPanel } from '../components/models/LibraryPanel';
 import { LoadedPanel } from '../components/models/LoadedPanel';
 import { MachinePanel } from '../components/models/MachinePanel';
+import { OllamaPanel } from '../components/models/OllamaPanel';
 import { PullPanel } from '../components/models/PullPanel';
 import { StoragePanel } from '../components/models/StoragePanel';
 import { TryPanel } from '../components/models/TryPanel';
@@ -38,6 +39,7 @@ export function ModelsPage() {
           tryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }}
       />
+      <OllamaPanel />
       <div ref={tryRef}>
         <TryPanel model={tryModel} onModel={setTryModel} />
       </div>

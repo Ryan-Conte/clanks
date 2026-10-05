@@ -220,3 +220,153 @@ export function ChipIcon() {
     </svg>
   );
 }
+
+function Icon({ children, size = 16 }: { children: ReactNode; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function ChatIcon() {
+  return (
+    <Icon>
+      <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11A1.5 1.5 0 0 1 2.5 9.5z" />
+    </Icon>
+  );
+}
+
+export function UsersIcon() {
+  return (
+    <Icon>
+      <circle cx="6" cy="5.5" r="2.25" />
+      <path d="M2 13c.4-2.2 2-3.5 4-3.5s3.6 1.3 4 3.5m1-9.2a2.25 2.25 0 0 1 0 4.4m1 1.6c1.1.5 1.8 1.6 2 3.2" />
+    </Icon>
+  );
+}
+
+export function PlusIcon() {
+  return (
+    <Icon>
+      <path d="M8 3v10M3 8h10" />
+    </Icon>
+  );
+}
+
+export function FolderIcon() {
+  return (
+    <Icon>
+      <path d="M2 4.5a1.5 1.5 0 0 1 1.5-1.5h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" />
+    </Icon>
+  );
+}
+
+export function TrashIcon() {
+  return (
+    <Icon>
+      <path d="M2.5 4.5h11m-8.5 0V3h6v1.5m-7 0 .6 8.2a1.5 1.5 0 0 0 1.5 1.3h3.8a1.5 1.5 0 0 0 1.5-1.3l.6-8.2" />
+    </Icon>
+  );
+}
+
+export function PencilIcon() {
+  return (
+    <Icon>
+      <path d="m10.5 3 2.5 2.5L6 12.5H3.5V10z" />
+    </Icon>
+  );
+}
+
+export function CopyIcon() {
+  return (
+    <Icon>
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+    </Icon>
+  );
+}
+
+export function CheckIcon() {
+  return (
+    <Icon>
+      <path d="m3 8.5 3 3 7-7" />
+    </Icon>
+  );
+}
+
+export function RetryIcon() {
+  return (
+    <Icon>
+      <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.5h-2.5" />
+    </Icon>
+  );
+}
+
+export function XIcon() {
+  return (
+    <Icon>
+      <path d="m4 4 8 8m0-8-8 8" />
+    </Icon>
+  );
+}
+
+export function LayersIcon() {
+  return (
+    <Icon>
+      <path d="M8 2.5 14 5.5 8 8.5 2 5.5zM2 8.5l6 3 6-3M2 11l6 3 6-3" />
+    </Icon>
+  );
+}
+
+export function ArrowUpIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M8 13V3M8 3L3.5 7.5M8 3l4.5 4.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function StopIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="9" height="9" rx="2" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** A small square button holding just an icon. */
+export function IconButton({
+  label,
+  children,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      {...props}
+      className={`grid size-7 shrink-0 place-items-center rounded-lg text-dim transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40 ${className}`}
+    >
+      {children}
+    </button>
+  );
+}

@@ -25,6 +25,14 @@ import { ModelsError } from './errors';
 import { autoSlots, estimateFit } from './fit';
 import { type ProbeResult, probeHardware } from './hardware';
 import { HuggingFaceClient } from './huggingface';
+import {
+  type ImportProgress,
+  type OllamaModel,
+  findOllamaDir,
+  importOllamaModel,
+  ollamaModelDirs,
+  scanOllama,
+} from './ollama';
 import { PullManager } from './pulls';
 import { type ModelPlan, resolveModelRef } from './resolve';
 import {
@@ -62,6 +70,26 @@ export interface ModelManagerOptions {
   spawn?: typeof spawn;
   connections?: number;
   retryDelayMs?: (attempt: number) => number;
+  /** Where to look for Ollama's models. Tests point it at a fixture. */
+  ollamaDirs?: () => string[];
+}
+
+/** A model in Ollama's folder that clanks can reuse. */
+export interface OllamaItem {
+  /** Ollama's name for it. */
+  name: string;
+  /** The id it gets, or has, in clanks. */
+  id: ModelId;
+  size: number;
+  vision: boolean;
+  imported: boolean;
+}
+
+/** An import from Ollama under way, or one that failed. */
+export interface ImportStatus extends ImportProgress {
+  name: string;
+  id: ModelId;
+  error: string | null;
 }
 
 export interface CatalogItem extends CatalogEntry {
@@ -92,6 +120,7 @@ export class ModelManager extends EventEmitter<{ change: [] }> {
   private install: RuntimeInstallStatus | null = null;
   private installController: AbortController | null = null;
   private moving: ModelStorage['move'] = null;
+  private readonly importing = new Map<string, ImportStatus>();
   private closed = false;
   private readonly resolved = new Map<string, { plan: ModelPlan; at: number }>();
 
@@ -287,6 +316,76 @@ export class ModelManager extends EventEmitter<{ change: [] }> {
 
   pull(ref: string): PullStatus {
     return this.pulls.pull(ref);
+  }
+
+  /** Ollama's models on this machine, if it has any. Ollama needn't be running. */
+  async ollama(): Promise<{ dir: string; models: OllamaItem[] } | null> {
+    const dir = await findOllamaDir(this.options.ollamaDirs?.() ?? ollamaModelDirs());
+    if (!dir) return null;
+    const models = await scanOllama(dir);
+    return {
+      dir,
+      models: models.map((m) => ({
+        name: m.name,
+        id: m.id,
+        size: m.size,
+        vision: m.projector !== null,
+        imported: this.options.repo.getModel(m.id) !== undefined,
+      })),
+    };
+  }
+
+  imports(): ImportStatus[] {
+    return [...this.importing.values()];
+  }
+
+  /**
+   * Reuses a model from Ollama's folder instead of downloading it again: its file is linked into
+   * the store, or copied when it's on another drive, and checked by sha256.
+   */
+  async importOllama(name: string): Promise<ModelRecord> {
+    const dir = await findOllamaDir(this.options.ollamaDirs?.() ?? ollamaModelDirs());
+    const model: OllamaModel | undefined = dir
+      ? (await scanOllama(dir)).find((m) => m.name === name)
+      : undefined;
+    if (!model) throw new ModelsError(`Ollama has no model called ${name}`);
+    if (this.options.repo.getModel(model.id)) throw new ModelsError(`${name} is already in clanks`);
+    const current = this.importing.get(name);
+    if (current && current.state !== 'failed')
+      throw new ModelsError(`${name} is already being imported`);
+
+    const status: ImportStatus = {
+      name,
+      id: model.id,
+      state: 'linking',
+      doneBytes: 0,
+      totalBytes: model.size,
+      error: null,
+    };
+    this.importing.set(name, status);
+    this.emit('change');
+    try {
+      const record = await importOllamaModel(model, this.store, (progress) => {
+        Object.assign(status, progress);
+        this.emit('change');
+      });
+      const saved: ModelRecord = { ...record, keepLoaded: false, pulledAt: new Date() };
+      this.options.repo.putModel(saved);
+      this.importing.delete(name);
+      return saved;
+    } catch (error) {
+      Object.assign(status, { state: 'failed', error: describe(error) });
+      throw error;
+    } finally {
+      this.emit('change');
+    }
+  }
+
+  dismissImport(name: string): void {
+    if (this.importing.get(name)?.state === 'failed') {
+      this.importing.delete(name);
+      this.emit('change');
+    }
   }
 
   setKeepLoaded(id: ModelId, keepLoaded: boolean): void {

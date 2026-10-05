@@ -65,7 +65,7 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
   worktrees/<project>/<key>/  one git worktree per ticket run
   checkpoints/<project>.git   shadow git directories for checkpoints
   artifacts/<ticket>/         notes, documents, email drafts, screenshots
-  crew/                       your clank library: edited and custom priming docs
+  crew/                       your clank library: edited priming docs (<id>.md) and custom clanks
   browser/                    persistent browser sessions, only when enabled
   chromium/                   the app window's own Chromium caches and storage
   logs/
@@ -112,7 +112,7 @@ docs/
 | Context and memory | A project context shared by the crew and a private memory per clank, in SQLite with FTS5 full-text search | Every clank knows the project's facts and decisions, each can answer "why did you do that?" from its own record, and it all works offline with no extra service. Embeddings from the local runtime can be added later. |
 | Secrets | OS keychain through Electron `safeStorage`: values are encrypted with a key the keychain holds (Keychain, DPAPI, libsecret or KWallet) and kept in their own file | Keys never touch the database or plain-text config. keytar was the planned fallback, but it's archived and needs the same Linux keyring, so there is none: without a keyring, clanks refuses to save secrets rather than keep them in plain text. Local models need no keys. |
 | IPC | tRPC over Electron IPC, through a small adapter of our own (queries, mutations and subscriptions) | End-to-end types between renderer and orchestrator; the same router can serve the local API later. electron-trpc was the plan, but it and its forks target tRPC v10 and are unmaintained. |
-| Models | Own thin provider interface; adapters on official SDKs | Keeps streaming, tool calls and usage reporting consistent without locking into a framework. |
+| Models | Own thin provider interface. Anthropic through its official SDK; everything that speaks the OpenAI API (the built-in runtime, OpenAI, Google's compatibility endpoint, OpenRouter, external servers) through one small streaming client | Keeps streaming, tool calls and usage reporting consistent without locking into a framework. One client covers the OpenAI-style providers' small differences (reasoning fields, how a reply's length is capped) in a few flags. |
 | Tools | Built-ins plus MCP | MCP gives access to the existing tool ecosystem with no custom glue. |
 | Integrations | Declarative manifests over OpenAPI, plus MCP servers | Most third-party APIs are already described by OpenAPI, so an integration can be data: no code to review or sandbox, with hosts and risks declared up front. MCP covers the rest and reuses an existing ecosystem. |
 | Routines | Own scheduler persisted in SQLite, cron with IANA time zones (croner), OS launch agents | Runs offline with no external scheduler, survives restarts and sleep, and can start the app before a run if it's closed. |
@@ -131,16 +131,16 @@ docs/
 
 Stored in SQLite. Simplified:
 
-- **provider**: id, kind (`builtin`, `openai_compatible`, `anthropic`, `openai`, `google`), base URL, keychain reference, enabled models.
-- **model**: id, name and tag, source (`catalog`, `huggingface`, `ollama_import`), repo and file, blob digest, size, quantisation, context length, capabilities (tools, vision), licence, pulled at, keep-loaded flag.
-- **clank**: id, name, avatar, role, kind (maker or checker), workflow placement (stage, after, applies to, bounce to), priming doc (bundled, edited, custom or from the marketplace), default model, tool policy, budget. Custom clanks live in the library and can join any project.
+- **provider**: id, kind (`openai_compatible`), name, base URL, keychain reference. The model servers you added; the built-in runtime is always there, and a cloud provider (Anthropic, OpenAI, Google, OpenRouter) is on when its key is in the keychain.
+- **model**: id, name and tag, source (`catalog`, `huggingface`, `ollama`), repo and file, blob digest, size, quantisation, context length, capabilities (tools, vision), licence, pulled at, keep-loaded flag.
+- **clank**: id, name, avatar (a colour from the clanks.si palette), role, kind (maker or checker), workflow placement (stage, after, applies to, bounce to), priming doc (bundled, edited, custom or from the marketplace), default model, tool policy, budget. Custom clanks live in the library and can join any project.
 - **integration**: id, kind (`declarative`, `mcp`), source (bundled or a marketplace package), version, enabled.
 - **connection**: id, integration, label, auth type, keychain reference, mode (`test`, `live`), scopes, connected at.
 - **project_integration**: project, connection, clanks allowed to use it.
 - **routine**, **routine_run**, **scheduled_action**: schedules, their runs, and approved actions waiting for their time. Fields are in [ROUTINES.md](ROUTINES.md#data-model).
 - **package**: id, kind (`clank`, `integration`, `crew`, `routine`), index, version, sha256, publisher, licence, pinned, installed at, status (`active`, `update_available`, `revoked`).
-- **conversation**: id, clank, title, project (optional), created/updated.
-- **message**: id, conversation, role, content parts (text, tool call, tool result, attachment), tokens, cost.
+- **conversation**: id, clank, title, folder (optional, until projects: its `CLANKS.md` or `AGENTS.md` is followed), project (optional), created/updated.
+- **message**: id, conversation, position, role, content parts (text, tool call, tool result, attachment), reasoning, status (`streaming`, `done`, `cancelled`, `failed`), the provider and model that wrote it, tokens, speed, time, finish reason, cost.
 - **project**: id, title, brief, workspace (a GitHub repo cloned locally, or a local folder), base branch, status, budget, bounce limit, required checks per output type.
 - **project_clank**: project, clank, model override. The project's crew; Atlas is always in it.
 - **spec**: id, project, version, body, status (draft, signed off, approved), approved at. Stories and criteria are parsed out so tickets can reference them.
@@ -327,7 +327,7 @@ clanks downloads and runs models itself, with a llama.cpp runtime bundled inside
 - Downloads are chunked and parallel, resume across restarts, are verified by sha256 and stored content-addressed. Two tags that point at the same file share one blob.
 - Only GGUF is accepted. No pickle files, nothing executable from a model repo.
 - Gated repos use a Hugging Face token from the keychain.
-- Optional: if Ollama models are already on disk, clanks can reuse their GGUF files (hard-linked where possible) instead of downloading them again. Ollama doesn't need to be running, and clanks never calls it.
+- Optional: if Ollama models are already on disk, clanks can reuse their GGUF files (hard-linked where possible, copied otherwise, and checked by sha256 either way) instead of downloading them again. They're named `ollama/<name>:<tag>`, so they never clash with the catalog. Ollama doesn't need to be running, and clanks never calls it.
 
 **Hardware probe.** At startup the manager asks the bundled llama.cpp build which devices it sees and how much memory each has (`--list-devices`), and reads system RAM. Apple Silicon counts as unified memory. The result picks the backend build and sets the memory budget, which you can override.
 
@@ -340,7 +340,7 @@ clanks downloads and runs models itself, with a llama.cpp runtime bundled inside
 
 **Tool calling.** `llama-server` runs with the model's own chat template (`--jinja`), which gives native tool calls for most current instruct models. For models without them, the adapter describes the tools in the prompt and constrains the reply with a JSON schema grammar, so output is always parseable. A malformed call is returned to the model once as a tool error; a second one fails the run.
 
-**Local API (optional, off by default).** clanks can serve its models to other apps on 127.0.0.1: OpenAI-compatible `/v1/models` and `/v1/chat/completions`, plus the common Ollama endpoints (`/api/tags`, `/api/chat`, `/api/generate`, `/api/pull`, `/api/ps`) so editors and scripts that speak Ollama can point at clanks instead. Requests go through the same scheduler, so they queue behind crew runs rather than fight them for memory.
+**Local API (optional, off by default).** clanks can serve its models to other apps on 127.0.0.1: OpenAI-compatible `/v1/models` and `/v1/chat/completions`, plus the common Ollama endpoints (`/api/tags`, `/api/chat`, `/api/generate`, `/api/pull`, `/api/ps`) so editors and scripts that speak Ollama can point at clanks instead. It listens on Ollama's port, 11434, unless you pick another, and says so if that's taken. Requests go through the same scheduler, so they queue behind crew runs rather than fight them for memory. It answers only requests addressed to a loopback host, so a website can't reach it by rebinding a hostname, and refuses requests from web pages' origins.
 
 **Starting points per machine.** Rough targets, to be validated against the crew docs before release:
 
@@ -365,8 +365,8 @@ interface Provider {
 Adapters, in order:
 
 1. **Built-in runtime.** Calls the bundled `llama-server` that clanks' model manager started, over its local HTTP API, with slot reservation and the grammar fallback for tool calls. The default, and the only one a fresh install uses.
-2. **Cloud (optional).** Anthropic, OpenAI, Google and OpenRouter, for clanks you choose to run on a cloud model with your own key.
-3. **External servers (optional).** Any OpenAI-compatible server you already run elsewhere, such as vLLM on another machine, LM Studio or Ollama. Never needed.
+2. **Cloud (optional).** Anthropic, OpenAI, Google and OpenRouter, for clanks you choose to run on a cloud model with your own key. Anthropic goes through its official SDK, with adaptive thinking where the model has it and prompt caching on; the others through the OpenAI-style client, Google by way of its compatibility endpoint. Model lists come from each provider with your key.
+3. **External servers (optional).** Any OpenAI-compatible server you already run elsewhere, such as vLLM on another machine, LM Studio or Ollama. Never needed. A server is checked by listing its models before it's saved.
 
 Usage is recorded for every call. Cloud calls are priced from tables in config; local calls record tokens, tokens per second and wall time. Budgets can be set in tokens, time or money.
 

@@ -1,6 +1,36 @@
 import { z } from 'zod';
 import { modelIdSchema, runtimeBackendSchema } from './models';
 
+function isTimeZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What every clank in every project knows about the user. It goes into each clank's prompt, so it's
+ * kept short: about 300 tokens at most.
+ */
+export const userProfileSchema = z.object({
+  /** What the clanks call the user. Empty is "the user". */
+  name: z.string().trim().max(60),
+  /** An IANA zone such as `Australia/Sydney`. Empty uses this computer's. */
+  timeZone: z
+    .string()
+    .trim()
+    .max(64)
+    .refine((zone) => zone === '' || isTimeZone(zone), 'Unknown time zone'),
+  /** Language and spelling, such as "Australian English". */
+  language: z.string().trim().max(60),
+  /** How the user likes replies, and things never to do. */
+  preferences: z.string().trim().max(1000),
+});
+
+export type UserProfile = z.infer<typeof userProfileSchema>;
+
 /** App settings, stored one row per key. */
 export const settingsSchema = z.object({
   /** Closing the window keeps clanks running in the tray. When false, closing the window quits. */
@@ -24,6 +54,10 @@ export const settingsSchema = z.object({
   /** Overrides for how much GPU and system memory models may use, in MiB. Null is automatic. */
   gpuBudgetMiB: z.number().int().min(0).nullable(),
   systemBudgetMiB: z.number().int().min(0).nullable(),
+  profile: userProfileSchema,
+  /** Serve pulled models to other apps on 127.0.0.1, with OpenAI- and Ollama-style endpoints. */
+  localApiEnabled: z.boolean(),
+  localApiPort: z.number().int().min(1024).max(65535),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -39,6 +73,10 @@ export const defaultSettings: Settings = {
   runtimeBackend: 'auto',
   gpuBudgetMiB: null,
   systemBudgetMiB: null,
+  profile: { name: '', timeZone: '', language: '', preferences: '' },
+  localApiEnabled: false,
+  // Ollama's port, so tools that speak Ollama find clanks with no setup.
+  localApiPort: 11434,
 };
 
 export const settingsPatchSchema = settingsSchema.partial().strict();

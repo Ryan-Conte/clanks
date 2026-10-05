@@ -11,6 +11,19 @@ export class ProviderRegistry {
     this.providers.set(provider.id, provider);
   }
 
+  /** Swaps in a new provider under the same id, for a server whose address changed. */
+  replace(provider: Provider): void {
+    this.providers.set(provider.id, provider);
+  }
+
+  unregister(id: string): void {
+    this.providers.delete(id);
+  }
+
+  has(id: string): boolean {
+    return this.providers.has(id);
+  }
+
   get(id: string): Provider {
     const provider = this.providers.get(id);
     if (!provider) throw new ProviderError(`There's no provider ${id}`);

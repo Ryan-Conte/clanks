@@ -6,6 +6,7 @@ export * from './gguf';
 export * from './hardware';
 export * from './huggingface';
 export * from './manager';
+export * from './ollama';
 export * from './refs';
 export * from './resolve';
 export { type RuntimeBuild, findBuilds, installBuild, llamaCpp } from './runtime/builds';

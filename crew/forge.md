@@ -3,6 +3,7 @@ id: forge
 name: Forge
 role: Engineer
 summary: Writes the code and tests in its own worktree and opens pull requests.
+avatar: amber
 outputs: [pr]
 workflow:
   kind: maker

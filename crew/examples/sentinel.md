@@ -3,6 +3,7 @@ id: sentinel
 name: Sentinel
 role: Security
 summary: Reviews every pull request for security problems, between QA and Atlas.
+avatar: red
 outputs: []
 workflow:
   kind: checker

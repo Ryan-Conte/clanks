@@ -49,7 +49,8 @@ export interface ChatUsage {
   durationMs: number;
 }
 
-export type FinishReason = 'stop' | 'length' | 'tool_calls' | 'cancelled';
+/** `refusal`: the provider's safety checks declined to answer. */
+export type FinishReason = 'stop' | 'length' | 'tool_calls' | 'cancelled' | 'refusal';
 
 /** What a provider streams back. Exactly one `done` ends a successful stream. */
 export type ChatEvent =

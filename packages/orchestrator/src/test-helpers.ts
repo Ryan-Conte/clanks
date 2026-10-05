@@ -9,6 +9,9 @@ import type { SecretCipher } from './secrets';
 
 export const migrationsFolder = fileURLToPath(new URL('../drizzle', import.meta.url));
 
+/** The priming docs that ship with the app. */
+export const crewFolder = fileURLToPath(new URL('../../../crew', import.meta.url));
+
 /** A fresh temporary folder, removed after the current test. */
 export function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'clanks-test-'));
@@ -64,6 +67,7 @@ export function startTestOrchestrator(options: Partial<OrchestratorOptions> = {}
   const orchestrator = startOrchestrator({
     dataDir: join(tempDir(), 'clanks'),
     migrationsFolder,
+    bundledCrewDir: crewFolder,
     cipher: fakeCipher(),
     appInfo: {
       name: 'clanks',

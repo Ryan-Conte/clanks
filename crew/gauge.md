@@ -3,6 +3,7 @@ id: gauge
 name: Gauge
 role: QA
 summary: Runs the build, tests and browser checks, and validates every ticket against the spec.
+avatar: lime
 outputs: []
 workflow:
   kind: checker

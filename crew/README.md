@@ -65,6 +65,7 @@ id: forge                 # stable id, used by ask_clank, ticket_bounce and the 
 name: Forge               # display name
 role: Engineer            # one or two words, shown in the roster
 summary: Writes the code and tests in its own worktree and opens pull requests.
+avatar: amber             # optional: its colour, from the clanks.si palette
 outputs: [pr]             # output types it makes; empty for a checker
 workflow:
   kind: maker             # maker or checker
@@ -125,6 +126,6 @@ These docs have to work on small local models, not just frontier ones.
 
 ## Customising the premade clanks
 
-Settings → Crew → a clank → **Edit priming doc** opens the doc in the app's editor. Your edited copy is saved in the app's data folder and used instead of the bundled one; **Reset to default** deletes it. Instructions for one project belong in that project's `CLANKS.md`, not in a clank doc, with a `## For <clank>` section for anything meant for one clank.
+A clank's profile (the sidebar's **Crew → Profiles**, then the clank) has its **Priming doc**, which you can edit and save in place. The app checks it first: it must still parse, keep its id and have a prompt. Your edited copy is saved in the app's data folder as `crew/<id>.md` and used instead of the bundled one; **Reset to default** deletes it. If an edited copy stops parsing, say after a hand edit, the clank uses the bundled doc and its profile says why. The same profile sets the clank's name, colour and model, which the app keeps apart from the doc. In any chat, **What <clank> is told** shows the assembled prompt layer by layer, with token counts. Instructions for one project belong in that project's `CLANKS.md`, not in a clank doc, with a `## For <clank>` section for anything meant for one clank.
 
 When an app update changes a bundled doc you have edited, the app keeps your copy and shows the upstream change in the diff editor so you can merge it by hand.

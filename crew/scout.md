@@ -3,6 +3,7 @@ id: scout
 name: Scout
 role: Researcher
 summary: Digs into libraries, APIs, competitors and pricing when the crew needs facts.
+avatar: emerald
 outputs: [research]
 workflow:
   kind: maker

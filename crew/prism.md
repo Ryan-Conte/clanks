@@ -3,6 +3,7 @@ id: prism
 name: Prism
 role: Designer
 summary: User flows, wireframes, the design system, social graphics and mock-ups, made in Studio.
+avatar: fuchsia
 outputs: [design]
 workflow:
   kind: maker

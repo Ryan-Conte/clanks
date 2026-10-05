@@ -3,6 +3,7 @@ id: atlas
 name: Atlas
 role: Lead
 summary: Talks to you, plans with the team, breaks work into tickets and gives the final sign-off.
+avatar: violet
 outputs: []
 workflow:
   kind: checker

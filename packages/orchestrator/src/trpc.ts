@@ -1,7 +1,11 @@
 import type { ModelManager } from '@clanks/models';
 import type { ProviderRegistry } from '@clanks/providers';
 import { initTRPC } from '@trpc/server';
+import type { ChatService } from './chat/service';
+import type { CrewService } from './crew/crew';
+import type { LocalApi } from './local-api/server';
 import type { AppDataLayout } from './paths';
+import type { ProviderService } from './providers';
 import type { SecretStore } from './secrets';
 import type { SettingsService } from './settings';
 import type { Store } from './store/store';
@@ -31,7 +35,14 @@ export interface OrchestratorContext {
   settings: SettingsService;
   secrets: SecretStore;
   models: ModelManager;
+  /** Every provider, by id: what model calls go through. */
   providers: ProviderRegistry;
+  /** Cloud keys and model servers, as Settings shows them. */
+  providerSettings: ProviderService;
+  crew: CrewService;
+  chat: ChatService;
+  /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
+  localApi: LocalApi;
   host: Host | null;
 }
 

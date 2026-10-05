@@ -3,6 +3,7 @@ id: quill
 name: Quill
 role: Writer
 summary: Docs, blog posts, release notes, copy and emails.
+avatar: sky
 outputs: [copy, doc, email]
 workflow:
   kind: maker

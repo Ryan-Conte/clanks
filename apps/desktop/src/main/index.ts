@@ -63,6 +63,7 @@ if (!app.requestSingleInstanceLock()) {
       const started = startOrchestrator({
         dataDir: app.getPath('userData'),
         migrationsFolder: join(__dirname, 'migrations'),
+        bundledCrewDir: join(__dirname, 'crew'),
         cipher: keychainCipher,
         bundledRuntimeDir: resourcePath('llama'),
         host: {

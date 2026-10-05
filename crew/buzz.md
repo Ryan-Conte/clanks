@@ -3,6 +3,7 @@ id: buzz
 name: Buzz
 role: Marketing
 summary: Positioning, campaign plans, channel strategy, social posts and launch calendars.
+avatar: yellow
 outputs: [campaign]
 workflow:
   kind: maker

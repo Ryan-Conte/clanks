@@ -15,6 +15,7 @@
   --color-accent-2: #7ce7d2;
 
   --animate-pulse-dot: pulse-dot 2.4s ease-in-out infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 
   @keyframes pulse-dot {
     0%,
@@ -23,6 +24,17 @@
     }
     50% {
       opacity: 1;
+    }
+  }
+
+  @keyframes rise {
+    0% {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 }
@@ -56,7 +68,120 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-pulse-dot {
+  .animate-pulse-dot,
+  .animate-rise {
     animation: none;
   }
+}
+
+/* Replies, rendered from Markdown. */
+.markdown {
+  @apply text-[14px] leading-relaxed break-words text-white/90;
+}
+.markdown > * + * {
+  margin-top: 0.8em;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  @apply font-semibold tracking-tight text-white;
+  margin-top: 1.2em;
+}
+.markdown h1 {
+  font-size: 1.35em;
+}
+.markdown h2 {
+  font-size: 1.2em;
+}
+.markdown h3 {
+  font-size: 1.05em;
+}
+.markdown strong {
+  @apply font-semibold text-white;
+}
+.markdown ul {
+  @apply list-disc pl-5;
+}
+.markdown ol {
+  @apply list-decimal pl-5;
+}
+.markdown li + li,
+.markdown li > ul,
+.markdown li > ol {
+  margin-top: 0.3em;
+}
+.markdown li::marker {
+  @apply text-dim;
+}
+.markdown a {
+  @apply text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent;
+}
+.markdown :not(pre) > code {
+  @apply rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.87em] text-white;
+}
+.markdown blockquote {
+  @apply border-l-2 border-line pl-4 text-dim;
+}
+.markdown hr {
+  @apply border-line;
+}
+.markdown table {
+  @apply w-full border-collapse text-[13px];
+}
+.markdown th,
+.markdown td {
+  @apply border border-line px-3 py-1.5 text-left align-top;
+}
+.markdown th {
+  @apply bg-white/[0.04] font-medium text-white;
+}
+
+/* Code, in the clanks.si palette. */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-type,
+.hljs-doctag {
+  color: var(--color-accent);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-template-tag {
+  color: var(--color-accent-2);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-bullet {
+  @apply text-amber-300;
+}
+.hljs-title,
+.hljs-section,
+.hljs-name {
+  @apply text-sky-300;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-selector-class,
+.hljs-selector-id {
+  @apply text-pink-300;
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  @apply text-dim italic;
+}
+.hljs-addition {
+  @apply bg-accent-2/10 text-accent-2;
+}
+.hljs-deletion {
+  @apply bg-rose-400/10 text-rose-300;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
 }

@@ -1,6 +1,9 @@
 import type { Settings, SettingsPatch } from '@clanks/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
+import { LocalApiPanel } from '../components/settings/LocalApiPanel';
+import { ProfilePanel } from '../components/settings/ProfilePanel';
+import { CloudPanel, ServersPanel } from '../components/settings/ProvidersPanels';
 import { Button, Dot, ErrorText, Panel, Row, Toggle, inputClass } from '../components/ui';
 import { formatTokens } from '../lib/format';
 import { BACKEND_NAMES, useModels } from '../lib/models';
@@ -13,12 +16,16 @@ export function SettingsPage() {
     <div className="relative mx-auto flex max-w-3xl flex-col gap-8 px-10 py-12">
       <header className="flex flex-col gap-2">
         <h1 className="text-3xl font-semibold tracking-[-0.03em]">Settings</h1>
-        <p className="text-dim">How clanks runs on this machine.</p>
+        <p className="text-dim">Who you are, and how clanks runs on this machine.</p>
       </header>
-      <AppPanel />
-      <BackgroundPanel />
+      <ProfilePanel />
       <ModelSettingsPanel />
+      <CloudPanel />
+      <ServersPanel />
+      <LocalApiPanel />
       <HuggingFacePanel />
+      <BackgroundPanel />
+      <AppPanel />
     </div>
   );
 }

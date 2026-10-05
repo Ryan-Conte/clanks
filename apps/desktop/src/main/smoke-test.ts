@@ -6,7 +6,8 @@ const TIMEOUT_MS = 60_000;
 /**
  * `--smoke-test`: proves a build works end to end, then quits. The window must load, React must
  * mount, its tRPC calls must make it through the preload bridge to the orchestrator and the
- * migrated database, and the bundled llama.cpp build must start and report this machine's devices.
+ * migrated database, the crew's bundled priming docs must load, and the bundled llama.cpp build
+ * must start and report this machine's devices.
  * CI runs this against the packaged app on every platform, with `--screenshot=<file>` to keep a
  * picture of the window.
  */
@@ -30,16 +31,19 @@ export async function runSmokeTest(window: BrowserWindow, screenshot?: string): 
   for (;;) {
     if (window.isDestroyed()) throw new Error('The window closed');
     if (!window.webContents.isLoading()) {
-      const text = (await window.webContents.executeJavaScript(
-        `document.querySelector('[data-testid="hardware"] dl')?.innerText ?? ''`,
-      )) as string;
-      if (text) {
+      const [text, crew] = (await window.webContents.executeJavaScript(
+        `[document.querySelector('[data-testid="hardware"] dl')?.innerText ?? '',
+          document.querySelector('[data-testid="crew"]')?.innerText ?? '']`,
+      )) as [string, string];
+      if (text && crew.includes('Atlas')) {
         if (screenshot) await saveScreenshot(window, screenshot);
         return text.trim().replace(/\s*\n\s*/g, ' | ');
       }
     }
     if (Date.now() > deadline) {
-      throw new Error(`The app didn't show this machine's hardware within ${TIMEOUT_MS / 1000}s`);
+      throw new Error(
+        `The app didn't show this machine's hardware and the crew within ${TIMEOUT_MS / 1000}s`,
+      );
     }
     await sleep(250);
   }

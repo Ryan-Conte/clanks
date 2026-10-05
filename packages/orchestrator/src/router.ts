@@ -11,20 +11,11 @@ import { ModelsError, parseModelRef } from '@clanks/models';
 import { BUILTIN_PROVIDER, ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { userProcedure as modelProcedure } from './procedures';
+import { chatRouter } from './routers/chat';
+import { crewRouter } from './routers/crew';
+import { providersRouter } from './routers/providers';
 import { type OrchestratorContext, createCallerFactory, publicProcedure, router } from './trpc';
-
-/** Errors the model manager means for the user, such as a full drive, go to the window as they are. */
-const modelProcedure = publicProcedure.use(async ({ next }) => {
-  const result = await next();
-  if (!result.ok && result.error.cause instanceof ModelsError) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: result.error.cause.message,
-      cause: result.error.cause,
-    });
-  }
-  return result;
-});
 
 /** Everything the Models screen shows that changes as it happens. */
 function modelsSnapshot(ctx: OrchestratorContext) {
@@ -33,6 +24,7 @@ function modelsSnapshot(ctx: OrchestratorContext) {
     hardware: models.hardware(),
     runtime: models.runtime(),
     pulls: models.pulls.list(),
+    imports: models.imports(),
     library: models.library(),
     catalog: models.catalog(),
     recommended: models.recommended(),
@@ -61,6 +53,10 @@ function applySettings(ctx: OrchestratorContext, patch: SettingsPatch): void {
 }
 
 export const appRouter = router({
+  crew: crewRouter,
+  chat: chatRouter,
+  providers: providersRouter,
+
   app: router({
     info: publicProcedure.query(({ ctx }) => ({
       ...ctx.appInfo,
@@ -71,11 +67,19 @@ export const appRouter = router({
 
   settings: router({
     get: publicProcedure.query(({ ctx }) => ctx.settings.get()),
-    update: publicProcedure.input(settingsPatchSchema).mutation(({ ctx, input }) => {
+    update: publicProcedure.input(settingsPatchSchema).mutation(async ({ ctx, input }) => {
       const next = ctx.settings.update(input);
       applySettings(ctx, input);
+      if ('localApiEnabled' in input || 'localApiPort' in input) {
+        await ctx.localApi.apply(next.localApiEnabled, next.localApiPort);
+      }
       return next;
     }),
+  }),
+
+  localApi: router({
+    /** Whether other apps can reach the models, and where. */
+    status: publicProcedure.query(({ ctx }) => ctx.localApi.status()),
   }),
 
   // The window can save, check and delete a secret, but never read one back:
@@ -149,9 +153,22 @@ export const appRouter = router({
       .input(z.string())
       .mutation(({ ctx, input }) => ctx.models.pulls.dismiss(input)),
 
+    /** Models in Ollama's folder that clanks can reuse instead of downloading. */
+    ollama: modelProcedure.query(({ ctx }) => ctx.models.ollama()),
+    importOllama: modelProcedure
+      .input(z.string().min(1).max(300))
+      .mutation(async ({ ctx, input }) => {
+        await ctx.models.importOllama(input);
+      }),
+    dismissImport: modelProcedure
+      .input(z.string())
+      .mutation(({ ctx, input }) => ctx.models.dismissImport(input)),
+
     remove: modelProcedure.input(modelIdSchema).mutation(async ({ ctx, input }) => {
       await ctx.models.remove(input);
       if (ctx.settings.get().crewModel === input) ctx.settings.update({ crewModel: null });
+      // Clanks that ran on it go back to the crew's model.
+      ctx.crew.clearModel(BUILTIN_PROVIDER, input);
     }),
     setKeepLoaded: modelProcedure
       .input(z.object({ id: modelIdSchema, keepLoaded: z.boolean() }))

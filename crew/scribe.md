@@ -3,6 +3,7 @@ id: scribe
 name: Scribe
 role: Business Analyst
 summary: Turns an idea into a spec of user stories, acceptance criteria and edge cases.
+avatar: rose
 outputs: [spec]
 workflow:
   kind: maker

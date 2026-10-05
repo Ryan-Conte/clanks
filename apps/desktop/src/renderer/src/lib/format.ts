@@ -35,3 +35,30 @@ export function formatRate(tokensPerSecond: number | null): string {
     ? '–'
     : `${tokensPerSecond.toFixed(tokensPerSecond < 10 ? 1 : 0)} tok/s`;
 }
+
+/** Counts with thousands separators: 12,480. */
+export function formatCount(n: number): string {
+  return Math.round(n).toLocaleString('en');
+}
+
+/** A short duration: 0.8 s, 12 s, 2 min 5 s. */
+export function formatSeconds(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1)} s`;
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
+}
+
+/** How long ago, briefly: now, 5m, 3h, 2d, then the date. */
+export function formatAgo(date: Date, now = Date.now()): string {
+  const minutes = Math.floor((now - +date) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}

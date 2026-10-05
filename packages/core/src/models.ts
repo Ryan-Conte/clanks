@@ -1,14 +1,15 @@
 import { z } from 'zod';
 
 /**
- * A pulled model's id: `name:tag` for catalog models (`qwen3.5:9b`), or
- * `hf.co/<owner>/<repo>:<quant>` for a model pulled straight from Hugging Face.
+ * A pulled model's id: `name:tag` for catalog models (`qwen3.5:9b`),
+ * `hf.co/<owner>/<repo>:<quant>` for a model pulled straight from Hugging Face, or
+ * `ollama/[<namespace>/]<name>:<tag>` for one reused from Ollama's models folder.
  */
 export const modelIdSchema = z
   .string()
   .max(200)
   .regex(
-    /^(?:[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*|hf\.co\/[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*:[\w.-]+)$/,
+    /^(?:[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*|hf\.co\/[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*:[\w.-]+|ollama\/(?:[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*:[\w.-]+)$/,
     'Use name:tag, or hf.co/<owner>/<repo>:<quant>',
   );
 
@@ -104,7 +105,7 @@ export type Catalog = z.infer<typeof catalogSchema>;
 /** A model in the local store. */
 export interface ModelRecord {
   id: ModelId;
-  source: 'catalog' | 'huggingface';
+  source: 'catalog' | 'huggingface' | 'ollama';
   title: string;
   repo: string;
   revision: string;

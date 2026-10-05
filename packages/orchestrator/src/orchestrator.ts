@@ -1,6 +1,11 @@
-import { ModelManager, type ModelManagerOptions } from '@clanks/models';
+import { ModelManager, type ModelManagerOptions, parseModelRef } from '@clanks/models';
 import { ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
+import { ChatService } from './chat/service';
+import { ChatStore } from './chat/store';
+import { CrewService } from './crew/crew';
+import { LocalApi } from './local-api/server';
 import { type AppDataLayout, appDataLayout, ensureAppDataLayout } from './paths';
+import { ProviderService, type ProviderServiceOptions } from './providers';
 import { type AppRouter, appRouter } from './router';
 import { type SecretCipher, SecretStore } from './secrets';
 import { SettingsService } from './settings';
@@ -17,6 +22,8 @@ export interface OrchestratorOptions {
   dataDir: string;
   /** Folder holding the SQL migrations, shipped next to the main bundle. */
   migrationsFolder: string;
+  /** The crew's priming docs, shipped next to the main bundle. */
+  bundledCrewDir: string;
   cipher: SecretCipher;
   appInfo: AppInfo;
   /** The llama.cpp builds shipped with the app, one folder per backend. */
@@ -24,6 +31,8 @@ export interface OrchestratorOptions {
   host?: Host;
   /** Tests swap in their own Hugging Face, builds and hardware probe. */
   models?: Partial<ModelManagerOptions>;
+  /** Tests point the cloud providers at stand-ins. */
+  cloud?: Pick<ProviderServiceOptions, 'endpoints' | 'fetch'>;
 }
 
 export interface Orchestrator {
@@ -74,6 +83,44 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     }),
   );
 
+  const providerSettings = new ProviderService({
+    db: store.db,
+    secrets,
+    registry: providers,
+    ...options.cloud,
+  });
+
+  const crew = new CrewService({
+    bundledDir: options.bundledCrewDir,
+    editedDir: paths.crew,
+    db: store.db,
+  });
+
+  const chat = new ChatService({
+    store: new ChatStore(store.db),
+    crew,
+    providers,
+    providerInfo: providerSettings,
+    settings,
+    library: () => models.library(),
+  });
+  chat.recover();
+
+  const localApi = new LocalApi({
+    providers,
+    models: {
+      library: () => models.library(),
+      loaded: () => models.runtime().loaded,
+      pull: (ref) => {
+        parseModelRef(ref);
+        return models.pull(ref);
+      },
+      pulls: () => models.pulls.list(),
+    },
+  });
+  const { localApiEnabled, localApiPort } = settings.get();
+  void localApi.apply(localApiEnabled, localApiPort);
+
   const context: OrchestratorContext = {
     appInfo: options.appInfo,
     paths,
@@ -82,6 +129,10 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     secrets,
     models,
     providers,
+    providerSettings,
+    crew,
+    chat,
+    localApi,
     host: options.host ?? null,
   };
   const ready = models.start();
@@ -94,6 +145,8 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     router: appRouter,
     ready,
     close: () => {
+      void localApi.stop();
+      chat.close();
       models.close();
       store.close();
     },

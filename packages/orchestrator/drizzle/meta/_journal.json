@@ -15,6 +15,13 @@
       "when": 1791160864351,
       "tag": "0001_models",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791164238608,
+      "tag": "0002_chat",
+      "breakpoints": true
     }
   ]
 }
