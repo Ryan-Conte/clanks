@@ -138,6 +138,8 @@ const request: ChatRequest = {
     },
     { role: 'tool', toolCallId: 'tu_1', content: '12:00' },
     { role: 'tool', toolCallId: 'tu_2', content: 'Perth' },
+    // Review notes the user left while the tools ran.
+    { role: 'user', content: 'Use Celsius.' },
   ],
   temperature: 0.3,
 };
@@ -199,6 +201,7 @@ describe('the Anthropic provider', () => {
           content: [
             { type: 'tool_result', tool_use_id: 'tu_1', content: '12:00' },
             { type: 'tool_result', tool_use_id: 'tu_2', content: 'Perth' },
+            { type: 'text', text: 'Use Celsius.' },
           ],
         },
       ],

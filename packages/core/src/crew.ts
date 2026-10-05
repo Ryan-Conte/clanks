@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { modelTagSchema } from './models';
 import { type ModelChoice, modelChoiceSchema } from './providers';
+import { type ToolOverrides, toolOverridesSchema } from './tools';
 
 /** What a ticket produces. A maker's `outputs` lists the ones it makes. */
 export const outputTypeSchema = z.enum([
@@ -125,6 +126,8 @@ export interface ClankOverrides {
   avatar: Avatar | null;
   /** Null runs it on the crew's model. */
   model: ModelChoice | null;
+  /** Tool policies that win over the doc's. */
+  tools: ToolOverrides;
 }
 
 export const clankProfilePatchSchema = z
@@ -132,6 +135,7 @@ export const clankProfilePatchSchema = z
     name: z.string().trim().min(1).max(40).nullable(),
     avatar: avatarSchema.nullable(),
     model: modelChoiceSchema.nullable(),
+    tools: toolOverridesSchema,
   })
   .partial()
   .strict();

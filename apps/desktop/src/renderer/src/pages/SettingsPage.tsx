@@ -4,6 +4,7 @@ import { type ReactNode, useState } from 'react';
 import { LocalApiPanel } from '../components/settings/LocalApiPanel';
 import { ProfilePanel } from '../components/settings/ProfilePanel';
 import { CloudPanel, ServersPanel } from '../components/settings/ProvidersPanels';
+import { McpPanel, RulesPanel, WebSearchPanel } from '../components/settings/ToolsPanels';
 import { Button, Dot, ErrorText, Panel, Row, Toggle, inputClass } from '../components/ui';
 import { formatTokens } from '../lib/format';
 import { BACKEND_NAMES, useModels } from '../lib/models';
@@ -22,6 +23,9 @@ export function SettingsPage() {
       <ModelSettingsPanel />
       <CloudPanel />
       <ServersPanel />
+      <McpPanel />
+      <WebSearchPanel />
+      <RulesPanel />
       <LocalApiPanel />
       <HuggingFacePanel />
       <BackgroundPanel />

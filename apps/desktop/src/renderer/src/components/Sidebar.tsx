@@ -86,9 +86,19 @@ export function Sidebar() {
                     live={conversation.replying}
                   />
                   <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-dim">
-                    {formatAgo(conversation.updatedAt)}
-                  </span>
+                  {conversation.asking ? (
+                    <span
+                      className="flex shrink-0 items-center gap-1 text-[10px] text-amber-200"
+                      title="Waiting for your approval"
+                    >
+                      <Dot tone="amber" live />
+                      needs you
+                    </span>
+                  ) : (
+                    <span className="shrink-0 font-mono text-[10px] text-dim">
+                      {formatAgo(conversation.updatedAt)}
+                    </span>
+                  )}
                 </button>
               </li>
             );

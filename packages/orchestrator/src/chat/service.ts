@@ -1,22 +1,37 @@
 import {
+  type ApprovalDecision,
   type ChatLiveEvent,
   type ChatMessage,
+  type ChatUsage,
   type Conversation,
   type ConversationSummary,
+  type FinishReason,
   type GgufFacts,
+  type MessagePart,
   type MessageRecord,
   type ModelChoice,
+  type ReviewNote,
+  type RunInfo,
   type Settings,
+  type ToolCall,
+  type ToolPart,
   estimateTokens,
+  textOf,
 } from '@clanks/core';
 import { BUILTIN_PROVIDER, ProviderError, type ProviderRegistry } from '@clanks/providers';
+import { type ToolContext, ToolArgumentsError, ToolFailure, type ToolResult } from '@clanks/tools';
+import { commandShell } from '@clanks/workspace';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { ActivityService } from '../activity/service';
 import type { CrewService } from '../crew/crew';
 import { readProjectInstructions } from '../crew/instructions';
-import { type AssembledPrompt, assemblePrompt } from '../crew/prompt';
+import { type AssembledPrompt, type RunContext, assemblePrompt } from '../crew/prompt';
+import type { TerminalService } from '../terminal/service';
+import type { Toolset, ToolService } from '../tools/service';
+import type { WorkspaceService } from '../workspace/service';
 import type { ChatStore } from './store';
 
 /** A chat problem worded for the user, such as no model to run on. */
@@ -38,8 +53,17 @@ export interface ChatServiceOptions {
     contextWindow(choice: ModelChoice): number;
   };
   settings: { get(): Settings };
-  /** Pulled models, for the crew's model and how much context each gets. */
-  library: () => { id: string; facts: GgufFacts; missing: boolean }[];
+  /** Pulled models, for the crew's model, how much context each gets and whether it calls tools. */
+  library: () => {
+    id: string;
+    facts: GgufFacts;
+    missing: boolean;
+    capabilities: { tools: boolean };
+  }[];
+  workspace: WorkspaceService;
+  terminal: TerminalService;
+  activity: ActivityService;
+  tools: ToolService;
   now?: () => Date;
   platform?: NodeJS.Platform;
   /** How often a reply being written is saved, so a crash keeps most of it. */
@@ -50,6 +74,8 @@ interface Run {
   controller: AbortController;
   message: MessageRecord;
   done: Promise<void>;
+  /** Tool calls waiting for the user, by call id. */
+  approvals: Map<string, (decision: ApprovalDecision) => void>;
 }
 
 /** The longest reply a local model is asked for: room enough for thinking and a long answer. */
@@ -59,11 +85,16 @@ const HISTORY_SHARE = 0.75;
 /** Context to assume when a provider doesn't say. */
 const DEFAULT_CLOUD_CONTEXT = 128_000;
 const DEFAULT_SERVER_CONTEXT = 32_768;
+/** One reply makes at most this many rounds of tool calls before it stops to check in. */
+const MAX_ROUNDS = 40;
+/** Earlier replies' tool results are cut to this in the history, to save room. */
+const OLD_RESULT_CHARS = 3000;
 
 /**
  * Chats with clanks. Replies are written here in the orchestrator, not in the window, so closing
- * or reloading the window never cuts one off. Emits `live` with each conversation's events and
- * `list` when the list of conversations changes.
+ * or reloading the window never cuts one off. A reply is a loop: the model answers, calls tools,
+ * reads their results and goes on until it answers without calling any. Emits `live` with each
+ * conversation's events and `list` when the list of conversations changes.
  */
 export class ChatService extends EventEmitter<{
   live: [conversationId: string, event: ChatLiveEvent];
@@ -84,6 +115,15 @@ export class ChatService extends EventEmitter<{
     for (const message of this.store.interrupted()) {
       this.store.updateMessage({
         ...message,
+        parts: message.parts.map((part) =>
+          part.type === 'tool' && !isSettled(part)
+            ? {
+                ...part,
+                status: 'cancelled',
+                result: part.result ?? 'clanks closed before this ran.',
+              }
+            : part,
+        ),
         status: 'failed',
         error: 'clanks closed before this reply finished.',
       });
@@ -91,25 +131,34 @@ export class ChatService extends EventEmitter<{
   }
 
   list(): ConversationSummary[] {
-    return this.store.conversations().map((c) => ({ ...c, replying: this.runs.has(c.id) }));
+    return this.store.conversations().map((c) => this.summary(c));
   }
 
   get(id: string): { conversation: ConversationSummary; messages: MessageRecord[] } {
     const conversation = this.require(id);
     // A reply being written is ahead of what's saved.
     const live = this.runs.get(id)?.message;
-    const messages = this.store.messages(id).map((m) => (live?.id === m.id ? { ...live } : m));
-    return { conversation: { ...conversation, replying: live !== undefined }, messages };
+    const messages = this.store
+      .messages(id)
+      .map((m) => (live?.id === m.id ? structuredClone(live) : m));
+    return { conversation: this.summary(conversation), messages };
   }
 
   /** The reply being written in a conversation right now, as far as it's got. */
   inFlight(id: string): MessageRecord | null {
     const run = this.runs.get(id);
-    return run ? { ...run.message } : null;
+    return run ? structuredClone(run.message) : null;
   }
 
-  /** Starts a chat with its first message, so empty chats never pile up. */
-  start(clankId: string, text: string): { conversation: Conversation; reply: MessageRecord } {
+  /**
+   * Starts a chat with its first message, so empty chats never pile up. It can be about a folder
+   * from the start.
+   */
+  start(
+    clankId: string,
+    text: string,
+    folder: string | null = null,
+  ): { conversation: Conversation; reply: MessageRecord } {
     const clank = this.options.crew.get(clankId);
     const choice = this.modelFor(clank.id);
     const now = this.now();
@@ -117,7 +166,7 @@ export class ChatService extends EventEmitter<{
       id: randomUUID(),
       clankId: clank.id,
       title: titleFrom(text),
-      folder: null,
+      folder: folder === null ? null : checkFolder(folder),
       createdAt: now,
       updatedAt: now,
     };
@@ -128,11 +177,39 @@ export class ChatService extends EventEmitter<{
     return { conversation, reply };
   }
 
+  /**
+   * Sends a message. Notes the user left in the diff editor since the clank last heard from them
+   * go with it, so they're never lost.
+   */
   send(conversationId: string, text: string): MessageRecord {
     const conversation = this.require(conversationId);
     this.assertIdle(conversationId);
     const choice = this.modelFor(conversation.clankId);
-    this.appendUser(conversationId, text);
+    const notes = this.options.workspace.pendingNotes(conversationId);
+    const content = notes.length > 0 ? `${text.trim()}\n\n${formatNotes(notes)}` : text;
+    this.appendUser(conversationId, content);
+    this.options.workspace.markSent(
+      conversationId,
+      notes.map((n) => n.id),
+    );
+    const updated = this.store.updateConversation(conversationId, { updatedAt: this.now() })!;
+    const reply = this.reply(updated, choice);
+    this.emit('list');
+    return reply;
+  }
+
+  /** Sends just the notes from the diff editor, as the user's next message. */
+  sendReview(conversationId: string): MessageRecord {
+    const notes = this.options.workspace.pendingNotes(conversationId);
+    if (notes.length === 0) throw new ChatError('There are no notes to send');
+    const conversation = this.require(conversationId);
+    this.assertIdle(conversationId);
+    const choice = this.modelFor(conversation.clankId);
+    this.appendUser(conversationId, formatNotes(notes));
+    this.options.workspace.markSent(
+      conversationId,
+      notes.map((n) => n.id),
+    );
     const updated = this.store.updateConversation(conversationId, { updatedAt: this.now() })!;
     const reply = this.reply(updated, choice);
     this.emit('list');
@@ -159,6 +236,13 @@ export class ChatService extends EventEmitter<{
     this.runs.get(conversationId)?.controller.abort();
   }
 
+  /** The user's answer to a tool call waiting for approval. */
+  decide(conversationId: string, toolCallId: string, decision: ApprovalDecision): void {
+    const resolve = this.runs.get(conversationId)?.approvals.get(toolCallId);
+    if (!resolve) throw new ChatError("That call isn't waiting for you any more");
+    resolve(decision);
+  }
+
   rename(conversationId: string, title: string): Conversation {
     this.require(conversationId);
     const updated = this.store.updateConversation(conversationId, { title: title.trim() })!;
@@ -167,21 +251,22 @@ export class ChatService extends EventEmitter<{
     return updated;
   }
 
-  /** Points the chat at a folder, whose CLANKS.md or AGENTS.md the clank then follows. */
+  /**
+   * Points the chat at a folder, whose CLANKS.md or AGENTS.md the clank then follows. The clank
+   * gets its own worktree of it, made in the background; the workbench shows how that went.
+   */
   setFolder(conversationId: string, folder: string | null): Conversation {
-    this.require(conversationId);
-    let path: string | null = null;
-    if (folder !== null) {
-      path = resolve(folder);
-      let isDirectory = false;
-      try {
-        isDirectory = statSync(path).isDirectory();
-      } catch {
-        // Missing: reported below.
-      }
-      if (!isDirectory) throw new ChatError(`${path} isn't a folder`);
-    }
+    const current = this.require(conversationId);
+    this.assertIdle(conversationId);
+    const path = folder === null ? null : checkFolder(folder);
     const updated = this.store.updateConversation(conversationId, { folder: path })!;
+    if (current.folder !== path) {
+      this.options.terminal.closeConversation(conversationId);
+      const work = path
+        ? this.options.workspace.ensure(conversationId)
+        : this.options.workspace.remove(conversationId);
+      void work.catch((error: unknown) => console.error('Preparing a workspace failed', error));
+    }
     this.emit('live', conversationId, { type: 'conversation', conversation: updated });
     this.emit('list');
     return updated;
@@ -193,14 +278,101 @@ export class ChatService extends EventEmitter<{
       run.controller.abort();
       await run.done;
     }
+    this.options.terminal.closeConversation(conversationId);
+    await this.options.workspace.remove(conversationId);
     this.store.deleteConversation(conversationId);
     this.emit('list');
   }
 
+  /**
+   * Puts the files back as they were at a checkpoint and cuts the chat back to that moment, so the
+   * clank forgets what it did after it.
+   */
+  async rewind(conversationId: string, checkpointId: string): Promise<void> {
+    this.require(conversationId);
+    this.assertIdle(conversationId);
+    const target = await this.options.workspace.rewind(conversationId, checkpointId);
+    const user = this.userName();
+    const message = target.messageId ? this.store.message(target.messageId) : undefined;
+    let keep: string | null = target.afterMessageId;
+    if (message && target.toolCallId) {
+      const index = message.parts.findIndex((p) => p.type === 'tool' && p.id === target.toolCallId);
+      if (index !== -1) {
+        const round = message.parts[index]!.round;
+        // Calls the model made alongside it need results, or the history won't parse.
+        const parts: MessagePart[] = message.parts
+          .filter((p, i) => i <= index || (p.type === 'tool' && p.round === round))
+          .map((p, i) =>
+            i > index && p.type === 'tool'
+              ? {
+                  ...p,
+                  status: 'cancelled',
+                  result: `${user} rewound the files to before this call, so it was undone.`,
+                }
+              : p,
+          );
+        parts.push({ type: 'note', round, text: 'Rewound to here.' });
+        const cut: MessageRecord = {
+          ...message,
+          parts,
+          content: textOf(parts),
+          status: 'done',
+          error: null,
+          finishReason: 'stop',
+        };
+        this.store.updateMessage(cut);
+        this.emit('live', conversationId, { type: 'message', message: cut });
+        keep = message.id;
+      }
+    }
+    if (keep) {
+      for (const id of this.store.deleteAfter(conversationId, keep)) {
+        this.emit('live', conversationId, { type: 'removed', messageId: id });
+      }
+    }
+    this.options.activity.append({
+      conversationId,
+      messageId: null,
+      kind: 'rewind',
+      title: `Rewound to: ${target.label}`,
+      input: null,
+      output: null,
+      status: 'ok',
+      toolCallId: null,
+      checkpointId: target.id,
+      sessionId: null,
+      startedAt: this.now(),
+      durationMs: null,
+    });
+    this.store.updateConversation(conversationId, { updatedAt: this.now() });
+    this.emit('list');
+  }
+
   /** What the clank in a conversation would be told right now: its assembled system prompt. */
-  preview(clankId: string, conversationId: string | null): AssembledPrompt {
-    const folder = conversationId ? this.require(conversationId).folder : null;
-    return this.prompt(clankId, folder);
+  async preview(clankId: string, conversationId: string | null): Promise<AssembledPrompt> {
+    const conversation = conversationId ? this.require(conversationId) : null;
+    const clank = this.options.crew.get(clankId);
+    const run = conversation ? this.options.workspace.run(conversation.id) : null;
+    const status = conversation
+      ? (await this.options.workspace.state(conversation.id)).status
+      : null;
+    const toolset = await this.options.tools.forChat(clank, {
+      workspace: run !== null || status === 'ready',
+    });
+    let choice: ModelChoice | null = null;
+    try {
+      choice = this.modelFor(clank.id);
+    } catch {
+      // No model yet: show what it would be told on one that calls tools.
+    }
+    return this.prompt(clank.id, conversation?.folder ?? null, {
+      run,
+      status,
+      tools: choice && !this.callsTools(choice) ? [] : [...toolset.specs.keys()],
+      shell: null,
+      toolsUnsupported: choice !== null && !this.callsTools(choice) && toolset.specs.size > 0,
+      problems: toolset.problems,
+    });
   }
 
   /**
@@ -211,7 +383,15 @@ export class ChatService extends EventEmitter<{
     this.closed = true;
     for (const run of this.runs.values()) {
       run.controller.abort();
-      this.store.updateMessage({ ...run.message, status: 'cancelled', finishReason: 'cancelled' });
+      run.message.parts = run.message.parts.map((part) =>
+        part.type === 'tool' && !isSettled(part) ? { ...part, status: 'cancelled' } : part,
+      );
+      this.store.updateMessage({
+        ...run.message,
+        content: textOf(run.message.parts),
+        status: 'cancelled',
+        finishReason: 'cancelled',
+      });
     }
   }
 
@@ -236,6 +416,15 @@ export class ChatService extends EventEmitter<{
     return { provider: BUILTIN_PROVIDER, model: crewModel };
   }
 
+  private summary(conversation: Conversation): ConversationSummary {
+    const run = this.runs.get(conversation.id);
+    return {
+      ...conversation,
+      replying: run !== undefined,
+      asking: run?.message.parts.some((p) => p.type === 'tool' && p.status === 'asking') ?? false,
+    };
+  }
+
   private requirePulled(model: string, who: string): void {
     const found = this.options.library().find((m) => m.id === model);
     if (!found || found.missing) {
@@ -246,11 +435,13 @@ export class ChatService extends EventEmitter<{
   }
 
   private appendUser(conversationId: string, text: string): MessageRecord {
+    const content = text.trim();
     const message: MessageRecord = {
       id: randomUUID(),
       conversationId,
       role: 'user',
-      content: text.trim(),
+      content,
+      parts: [{ type: 'text', round: 0, text: content }],
       reasoning: '',
       status: 'done',
       error: null,
@@ -272,6 +463,7 @@ export class ChatService extends EventEmitter<{
       conversationId: conversation.id,
       role: 'assistant',
       content: '',
+      parts: [],
       reasoning: '',
       status: 'streaming',
       error: null,
@@ -281,10 +473,10 @@ export class ChatService extends EventEmitter<{
       createdAt: this.now(),
     };
     this.store.appendMessage(message);
-    this.emit('live', conversation.id, { type: 'message', message: { ...message } });
+    this.emit('live', conversation.id, { type: 'message', message: structuredClone(message) });
 
     const controller = new AbortController();
-    const run: Run = { controller, message, done: Promise.resolve() };
+    const run: Run = { controller, message, done: Promise.resolve(), approvals: new Map() };
     this.runs.set(conversation.id, run);
     run.done = this.write(conversation, choice, history, run)
       // Only saving can fail here, such as when the app quits mid-reply.
@@ -293,7 +485,7 @@ export class ChatService extends EventEmitter<{
         this.runs.delete(conversation.id);
         this.emit('list');
       });
-    return { ...message };
+    return structuredClone(message);
   }
 
   private async write(
@@ -303,63 +495,212 @@ export class ChatService extends EventEmitter<{
     run: Run,
   ): Promise<void> {
     const { message, controller } = run;
+    const { signal } = controller;
     const flushMs = this.options.flushMs ?? 1000;
     let flushed = Date.now();
+    const flush = (force = false) => {
+      if (force || Date.now() - flushed >= flushMs) {
+        this.store.updateMessage(message);
+        flushed = Date.now();
+      }
+    };
     try {
       const clank = this.options.crew.get(conversation.clankId);
-      const prompt = this.prompt(clank.id, conversation.folder);
+      const { run: workspace, problem, status } = await this.prepareWorkspace(conversation);
+      const toolset = await this.options.tools.forChat(clank, { workspace: workspace !== null });
+      const callsTools = this.callsTools(choice);
+      const offered: Toolset = callsTools
+        ? toolset
+        : { specs: new Map(), levels: new Map(), definitions: [], problems: [] };
+      const shellName =
+        offered.specs.has('shell_exec') || offered.specs.has('shell_start')
+          ? (await commandShell()).name
+          : null;
+      const prompt = this.prompt(clank.id, conversation.folder, {
+        run: workspace,
+        status,
+        tools: [...offered.specs.keys()],
+        shell: shellName,
+        toolsUnsupported: !callsTools && toolset.specs.size > 0,
+        problems: [...toolset.problems, ...(problem ? [problem] : [])],
+      });
       const window = this.contextWindow(choice);
-      const turns = fitHistory(toTurns(history), window * HISTORY_SHARE - prompt.tokens);
-      const used = prompt.tokens + turns.reduce((sum, t) => sum + estimateTokens(t.content), 0);
-      const local = choice.provider === BUILTIN_PROVIDER;
-      const events = this.options.providers.stream(
-        choice.provider,
-        {
-          model: choice.model,
-          messages: [{ role: 'system', content: prompt.system }, ...turns],
-          temperature: clank.frontmatter.model.temperature,
-          // A local model's reply shares its slot with the prompt, so it gets what's left.
-          ...(local
-            ? { maxTokens: Math.max(512, Math.min(LOCAL_MAX_REPLY, Math.floor(window - used))) }
-            : {}),
-        },
-        controller.signal,
+      const toolTokens = estimateTokens(JSON.stringify(offered.definitions));
+      const maxChars = Math.max(4000, Math.min(40_000, Math.floor(window * 4 * 0.12)));
+      const turns = fitHistory(
+        toTurns(history),
+        window * HISTORY_SHARE - prompt.tokens - toolTokens,
       );
-      for await (const event of events) {
-        switch (event.type) {
-          case 'text':
-          case 'reasoning': {
-            const text = event.type === 'text' ? event.text : '';
-            const reasoning = event.type === 'reasoning' ? event.text : '';
-            message.content += text;
-            message.reasoning += reasoning;
-            this.emit('live', conversation.id, {
-              type: 'delta',
-              messageId: message.id,
-              text,
-              reasoning,
-            });
-            if (Date.now() - flushed >= flushMs) {
-              this.store.updateMessage(message);
-              flushed = Date.now();
+      const messages: ChatMessage[] = [{ role: 'system', content: prompt.system }, ...turns];
+      const local = choice.provider === BUILTIN_PROVIDER;
+      let malformed = 0;
+      const totals = {
+        prompt: 0,
+        completion: 0,
+        duration: 0,
+        speed: null as number | null,
+        promptSpeed: null as number | null,
+      };
+
+      for (let round = 0; ; round++) {
+        // Stopped while the workspace or tools were being got ready.
+        if (signal.aborted) {
+          message.status = 'cancelled';
+          message.finishReason = 'cancelled';
+          break;
+        }
+        compactTurns(messages, window * 0.85 - toolTokens);
+        const used = toolTokens + messages.reduce((sum, m) => sum + tokensOf(m), 0);
+        const started = this.now();
+        const calls: ToolCall[] = [];
+        let text = '';
+        let finish: FinishReason = 'stop';
+        let usage: ChatUsage | null = null;
+        const events = this.options.providers.stream(
+          choice.provider,
+          {
+            model: choice.model,
+            messages,
+            ...(offered.definitions.length > 0 ? { tools: offered.definitions } : {}),
+            temperature: clank.frontmatter.model.temperature,
+            // A local model's reply shares its slot with the prompt, so it gets what's left.
+            ...(local
+              ? { maxTokens: Math.max(512, Math.min(LOCAL_MAX_REPLY, Math.floor(window - used))) }
+              : {}),
+          },
+          signal,
+        );
+        for await (const event of events) {
+          switch (event.type) {
+            case 'text':
+            case 'reasoning': {
+              const delta = event.type === 'text' ? event.text : '';
+              const reasoning = event.type === 'reasoning' ? event.text : '';
+              if (delta) {
+                text += delta;
+                appendText(message, round, delta);
+              }
+              message.reasoning += reasoning;
+              this.emit('live', conversation.id, {
+                type: 'delta',
+                messageId: message.id,
+                round,
+                text: delta,
+                reasoning,
+              });
+              flush();
+              break;
             }
-            break;
+            case 'tool_call':
+              calls.push(event.call);
+              break;
+            case 'usage':
+              usage = event.usage;
+              break;
+            case 'done':
+              finish = event.finishReason;
+              break;
           }
-          case 'usage':
-            message.usage = event.usage;
-            break;
-          case 'done':
-            message.finishReason = event.finishReason;
-            message.status = event.finishReason === 'cancelled' ? 'cancelled' : 'done';
-            break;
-          case 'tool_call':
-            // Chats have no tools yet, so a model that calls one anyway gets nothing back.
-            break;
+        }
+        if (usage) {
+          totals.prompt += usage.promptTokens;
+          totals.completion += usage.completionTokens;
+          totals.duration += usage.durationMs;
+          totals.speed = usage.tokensPerSecond ?? totals.speed;
+          totals.promptSpeed = usage.promptTokensPerSecond ?? totals.promptSpeed;
+          message.usage = {
+            promptTokens: totals.prompt,
+            completionTokens: totals.completion,
+            tokensPerSecond: totals.speed,
+            promptTokensPerSecond: totals.promptSpeed,
+            durationMs: totals.duration,
+          };
+        }
+        message.content = textOf(message.parts);
+        this.options.activity.append({
+          conversationId: conversation.id,
+          messageId: message.id,
+          kind: 'model',
+          title:
+            calls.length > 0
+              ? `${choice.model} called ${calls.map((c) => c.name).join(', ')}`
+              : `${choice.model} ${finish === 'cancelled' ? 'was stopped' : 'answered'}`,
+          input: `${messages.length} messages, about ${used} tokens${round > 0 ? `, round ${round + 1}` : ''}`,
+          output:
+            [text.trim(), ...calls.map((c) => `${c.name}(${c.arguments})`)]
+              .filter(Boolean)
+              .join('\n\n') || null,
+          status: finish === 'cancelled' ? 'cancelled' : 'ok',
+          toolCallId: null,
+          checkpointId: null,
+          sessionId: null,
+          startedAt: started,
+          durationMs: usage?.durationMs ?? this.now().getTime() - started.getTime(),
+        });
+        if (finish === 'cancelled' || signal.aborted) {
+          message.status = 'cancelled';
+          message.finishReason = 'cancelled';
+          break;
+        }
+        if (calls.length === 0) {
+          message.finishReason = finish;
+          message.status = 'done';
+          break;
+        }
+
+        messages.push({ role: 'assistant', content: text, toolCalls: calls });
+        for (const call of calls) {
+          const outcome = signal.aborted
+            ? this.skipCall(conversation, message, call, round)
+            : await this.callTool({
+                conversation,
+                message,
+                run,
+                call,
+                round,
+                toolset: offered,
+                workspace,
+                clank,
+                maxChars,
+              });
+          if (outcome.malformed) malformed++;
+          messages.push({ role: 'tool', toolCallId: outcome.id, content: outcome.result });
+          flush(true);
+        }
+        if (malformed >= 2) {
+          throw new ChatError(
+            `${choice.model} wrote tool calls that don't fit their tools twice, so the reply stopped. A bigger model, or one made for tool use, may do better.`,
+          );
+        }
+        // Notes the user left in the diff editor meanwhile go to the clank before it goes on.
+        const notes = this.options.workspace.pendingNotes(conversation.id);
+        if (notes.length > 0 && !signal.aborted) {
+          const feedback = formatNotes(notes);
+          messages.push({ role: 'user', content: feedback });
+          this.addPart(conversation.id, message, { type: 'feedback', round, text: feedback });
+          this.options.workspace.markSent(
+            conversation.id,
+            notes.map((n) => n.id),
+          );
+        }
+        if (signal.aborted) {
+          message.status = 'cancelled';
+          message.finishReason = 'cancelled';
+          break;
+        }
+        if (round + 1 >= MAX_ROUNDS) {
+          this.addPart(conversation.id, message, {
+            type: 'note',
+            round,
+            text: `Stopped after ${MAX_ROUNDS} rounds of tool calls. Say "go on" to let ${clank.name} continue.`,
+          });
+          message.status = 'done';
+          message.finishReason = 'length';
+          break;
         }
       }
-      if (message.status === 'streaming') message.status = 'done';
     } catch (error) {
-      if (controller.signal.aborted) {
+      if (signal.aborted) {
         message.status = 'cancelled';
         message.finishReason = 'cancelled';
       } else {
@@ -373,23 +714,330 @@ export class ChatService extends EventEmitter<{
         }
       }
     }
+    message.content = textOf(message.parts);
     // Quitting saved it already, and the chat may have been deleted meanwhile.
     if (this.closed || !this.store.conversation(conversation.id)) return;
     this.store.updateMessage(message);
     this.store.updateConversation(conversation.id, { updatedAt: this.now() });
-    this.emit('live', conversation.id, { type: 'message', message: { ...message } });
+    this.emit('live', conversation.id, { type: 'message', message: structuredClone(message) });
   }
 
-  private prompt(clankId: string, folder: string | null): AssembledPrompt {
+  /** The chat's worktree, made now if it needs one, and why there isn't one if there isn't. */
+  private async prepareWorkspace(conversation: Conversation): Promise<{
+    run: RunInfo | null;
+    status: RunContext['workspaceStatus'];
+    problem: string | null;
+  }> {
+    if (!conversation.folder) return { run: null, status: null, problem: null };
+    try {
+      const run = await this.options.workspace.ensure(conversation.id);
+      if (run) return { run, status: 'ready', problem: null };
+      const state = await this.options.workspace.state(conversation.id);
+      return { run: null, status: state.status, problem: state.error };
+    } catch (error) {
+      return {
+        run: null,
+        status: 'error',
+        problem: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** Runs one tool call: checks it, asks the user if it must, runs it and records what happened. */
+  private async callTool(input: {
+    conversation: Conversation;
+    message: MessageRecord;
+    run: Run;
+    call: ToolCall;
+    round: number;
+    toolset: Toolset;
+    workspace: RunInfo | null;
+    clank: { id: string; name: string };
+    maxChars: number;
+  }): Promise<{ id: string; result: string; malformed: boolean }> {
+    const { conversation, message, run, call, round, toolset, workspace } = input;
+    const signal = run.controller.signal;
+    const user = this.userName();
+    const part: ToolPart = {
+      type: 'tool',
+      round,
+      id: call.id || `call_${randomUUID()}`,
+      name: call.name,
+      arguments: call.arguments,
+      label: call.name,
+      status: 'pending',
+      approval: null,
+      decidedBy: null,
+      reason: null,
+      result: null,
+      startedAt: this.now(),
+      endedAt: null,
+      checkpointId: null,
+      sessionId: null,
+    };
+    const index = this.addPart(conversation.id, message, part);
+    const update = () =>
+      this.emit('live', conversation.id, {
+        type: 'part',
+        messageId: message.id,
+        index,
+        part: { ...part },
+      });
+    const finish = (
+      status: ToolPart['status'],
+      result: string,
+      extra: { output?: string; malformed?: boolean } = {},
+    ) => {
+      part.status = status;
+      part.result = result;
+      part.endedAt = this.now();
+      update();
+      this.options.activity.append({
+        conversationId: conversation.id,
+        messageId: message.id,
+        kind: 'tool',
+        title: part.label,
+        input: prettyArguments(call.arguments),
+        output: extra.output ?? result,
+        status:
+          status === 'done'
+            ? 'ok'
+            : status === 'denied'
+              ? 'denied'
+              : status === 'cancelled'
+                ? 'cancelled'
+                : 'error',
+        toolCallId: part.id,
+        checkpointId: part.checkpointId,
+        sessionId: part.sessionId,
+        startedAt: part.startedAt!,
+        durationMs: part.endedAt.getTime() - part.startedAt!.getTime(),
+      });
+      return { id: part.id, result, malformed: extra.malformed ?? false };
+    };
+
+    const spec = toolset.specs.get(call.name);
+    if (!spec) {
+      const names = [...toolset.specs.keys()];
+      return finish(
+        'failed',
+        `There's no tool called ${call.name} here. ${names.length ? `Your tools: ${names.join(', ')}.` : 'You have no tools in this chat.'}`,
+        { malformed: true },
+      );
+    }
+    let args: unknown;
+    try {
+      const raw: unknown = call.arguments.trim() ? JSON.parse(call.arguments) : {};
+      args = spec.parse(raw);
+      part.label = spec.label(args);
+    } catch (error) {
+      const detail =
+        error instanceof SyntaxError
+          ? `they aren't valid JSON (${error.message})`
+          : (error as Error).message;
+      return finish(
+        'failed',
+        `The arguments don't fit ${call.name}: ${detail}. Call it again with arguments that do.`,
+        {
+          malformed: true,
+        },
+      );
+    }
+
+    const level = toolset.levels.get(call.name);
+    if (level === 'deny') {
+      part.decidedBy = 'policy';
+      return finish(
+        'denied',
+        `${user} doesn't let you use ${call.name}. Don't try again; do without it, or say what you need.`,
+      );
+    }
+    if (level === 'ask') {
+      const approval = { ...spec.approval(args), scope: workspace?.repoRoot ?? null };
+      const rule = approval.scope
+        ? this.options.tools.ruleFor(approval.scope, call.name, approval.subject)
+        : undefined;
+      if (rule) {
+        part.decidedBy = 'rule';
+      } else {
+        part.status = 'asking';
+        part.approval = approval;
+        update();
+        this.emit('list');
+        flushParts(this.store, message);
+        const decision = await this.waitFor(run, part.id, signal);
+        this.emit('list');
+        if (!decision) return finish('cancelled', 'Stopped before it ran.');
+        part.decidedBy = 'user';
+        if (decision.decision === 'deny') {
+          part.reason = decision.reason ?? null;
+          return finish(
+            'denied',
+            `${user} said no${decision.reason ? `: "${decision.reason}"` : '.'} Don't run it again or work around it. Do something else, or ask ${user} what they want.`,
+          );
+        }
+        if (decision.decision === 'always' && approval.scope) {
+          this.options.tools.addRule(approval.scope, call.name, decision.pattern);
+        }
+      }
+    } else {
+      part.decidedBy = 'policy';
+    }
+
+    part.status = 'running';
+    part.startedAt = this.now();
+    update();
+    const ctx: ToolContext = {
+      workspace: workspace
+        ? {
+            root: workspace.worktree,
+            cwd: workspace.cwd,
+            branch: workspace.branch,
+            baseCommit: workspace.baseCommit,
+          }
+        : null,
+      shell:
+        workspace && spec.needs.includes('shell')
+          ? await this.options.terminal.shellFor({
+              conversationId: conversation.id,
+              cwd: workspace.cwd,
+              toolCallId: part.id,
+              maxChars: input.maxChars,
+            })
+          : null,
+      web: this.options.tools.web(),
+      signal,
+      clank: input.clank,
+      maxChars: input.maxChars,
+    };
+    let result: ToolResult;
+    try {
+      result = await spec.run(args, ctx);
+    } catch (error) {
+      if (signal.aborted) result = { content: 'Stopped before it finished.', error: true };
+      else if (error instanceof ToolFailure || error instanceof ToolArgumentsError) {
+        result = { content: error.message, error: true };
+      } else {
+        console.error(`${call.name} failed`, error);
+        result = {
+          content: `It failed: ${error instanceof Error ? error.message : String(error)}`,
+          error: true,
+        };
+      }
+    }
+    part.sessionId = result.sessionId ?? null;
+    if (spec.mutates && workspace) {
+      try {
+        const made = await this.options.workspace.checkpoint(conversation.id, {
+          author: 'clank',
+          label: part.label,
+          messageId: message.id,
+          toolCallId: part.id,
+        });
+        part.checkpointId = made?.id ?? null;
+      } catch (error) {
+        console.error('Taking a checkpoint failed', error);
+      }
+    }
+    if (signal.aborted)
+      return finish('cancelled', result.content, {
+        ...(result.output ? { output: result.output } : {}),
+      });
+    return finish(result.error ? 'failed' : 'done', result.content, {
+      ...(result.output ? { output: result.output } : {}),
+    });
+  }
+
+  /** A call the model made that won't run, because the reply was stopped first. */
+  private skipCall(
+    conversation: Conversation,
+    message: MessageRecord,
+    call: ToolCall,
+    round: number,
+  ): { id: string; result: string; malformed: boolean } {
+    const id = call.id || `call_${randomUUID()}`;
+    this.addPart(conversation.id, message, {
+      type: 'tool',
+      round,
+      id,
+      name: call.name,
+      arguments: call.arguments,
+      label: call.name,
+      status: 'cancelled',
+      approval: null,
+      decidedBy: null,
+      reason: null,
+      result: 'Stopped before it ran.',
+      startedAt: null,
+      endedAt: null,
+      checkpointId: null,
+      sessionId: null,
+    });
+    return { id, result: 'Stopped before it ran.', malformed: false };
+  }
+
+  private addPart(conversationId: string, message: MessageRecord, part: MessagePart): number {
+    const index = message.parts.push(part) - 1;
+    this.emit('live', conversationId, {
+      type: 'part',
+      messageId: message.id,
+      index,
+      part: { ...part },
+    });
+    return index;
+  }
+
+  private waitFor(run: Run, callId: string, signal: AbortSignal): Promise<ApprovalDecision | null> {
+    return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve(null);
+        return;
+      }
+      const onAbort = () => {
+        run.approvals.delete(callId);
+        resolve(null);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      run.approvals.set(callId, (decision) => {
+        signal.removeEventListener('abort', onAbort);
+        run.approvals.delete(callId);
+        resolve(decision);
+      });
+    });
+  }
+
+  /** Whether the model can call tools. Cloud models and servers are assumed to. */
+  private callsTools(choice: ModelChoice): boolean {
+    if (choice.provider !== BUILTIN_PROVIDER) return true;
+    return this.options.library().find((m) => m.id === choice.model)?.capabilities.tools ?? false;
+  }
+
+  private prompt(
+    clankId: string,
+    folder: string | null,
+    tools: Omit<RunContext, 'mode' | 'folder' | 'workspace' | 'workspaceStatus'> & {
+      run: RunInfo | null;
+      status: RunContext['workspaceStatus'];
+    },
+  ): AssembledPrompt {
     const { crew } = this.options;
     const settings = this.options.settings.get();
+    const { run, status, ...rest } = tools;
     return assemblePrompt({
       rules: crew.rules(),
       clank: crew.get(clankId),
       crew: crew.list(),
       profile: settings.profile,
       instructions: folder ? readProjectInstructions(folder) : null,
-      run: { mode: 'chat', folder },
+      run: {
+        mode: 'chat',
+        folder,
+        workspace: run
+          ? { worktree: run.worktree, cwd: run.cwd, branch: run.branch, baseCommit: run.baseCommit }
+          : null,
+        workspaceStatus: status,
+        ...rest,
+      },
       now: this.now(),
       platform: this.options.platform ?? process.platform,
     });
@@ -406,6 +1054,10 @@ export class ChatService extends EventEmitter<{
     const reported = this.options.providerInfo.contextWindow(choice);
     if (reported > 0) return reported;
     return choice.provider.startsWith('server-') ? DEFAULT_SERVER_CONTEXT : DEFAULT_CLOUD_CONTEXT;
+  }
+
+  private userName(): string {
+    return this.options.settings.get().profile.name || 'The user';
   }
 
   private require(id: string): Conversation {
@@ -425,36 +1077,188 @@ export class ChatService extends EventEmitter<{
   }
 }
 
+/** A folder's full path, if it is one. */
+function checkFolder(folder: string): string {
+  const path = resolve(folder);
+  let isDirectory = false;
+  try {
+    isDirectory = statSync(path).isDirectory();
+  } catch {
+    // Missing: reported below.
+  }
+  if (!isDirectory) throw new ChatError(`${path} isn't a folder`);
+  return path;
+}
+
+function isSettled(part: ToolPart): boolean {
+  return ['done', 'failed', 'denied', 'cancelled'].includes(part.status);
+}
+
 /**
- * The conversation as a model sees it: what was said, without the thinking. Replies that failed
- * before saying anything are left out, and turns by the same speaker are joined, since some chat
- * templates insist the user and the model take turns.
+ * Adds streamed text to the reply: to its last part if that's this round's text, else a new one.
+ * `content` keeps up roughly as it streams, and is tidied when the reply ends.
+ */
+function appendText(message: MessageRecord, round: number, text: string): void {
+  const last = message.parts.at(-1);
+  if (last?.type === 'text' && last.round === round) {
+    last.text += text;
+  } else {
+    message.parts.push({ type: 'text', round, text });
+    if (message.content) message.content += '\n\n';
+  }
+  message.content += text;
+}
+
+/** Saves a reply's parts straight away, so a call waiting for approval survives a crash. */
+function flushParts(store: ChatStore, message: MessageRecord): void {
+  store.updateMessage({ ...message, content: textOf(message.parts) });
+}
+
+function prettyArguments(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw || '{}'), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+/** Rough tokens in a turn, tool calls included. */
+export function tokensOf(message: ChatMessage): number {
+  const calls =
+    message.role === 'assistant'
+      ? (message.toolCalls ?? []).reduce((sum, c) => sum + estimateTokens(c.name + c.arguments), 0)
+      : 0;
+  return estimateTokens(message.content) + calls;
+}
+
+/**
+ * The conversation as a model sees it: what was said and every tool call with its result, without
+ * the thinking or the app's notes. Replies that failed before saying anything are left out, and
+ * text turns by the same speaker are joined, since some chat templates insist the user and the
+ * model take turns. Earlier tool results are cut short to save room.
  */
 export function toTurns(history: MessageRecord[]): ChatMessage[] {
-  const turns: { role: 'user' | 'assistant'; content: string }[] = [];
-  for (const message of history) {
-    const content = message.content.trim();
-    if (!content) continue;
+  const turns: ChatMessage[] = [];
+  const say = (role: 'user' | 'assistant', content: string) => {
+    const text = content.trim();
+    if (!text) return;
     const last = turns.at(-1);
-    if (last?.role === message.role) last.content += `\n\n${content}`;
-    else turns.push({ role: message.role, content });
+    if (last && last.role === role && !(last.role === 'assistant' && last.toolCalls?.length)) {
+      last.content += `\n\n${text}`;
+    } else {
+      turns.push({ role, content: text });
+    }
+  };
+  for (const message of history) {
+    const parts: MessagePart[] =
+      message.parts ?? (message.content ? [{ type: 'text', round: 0, text: message.content }] : []);
+    if (message.role === 'user') {
+      say('user', textOf(parts) || message.content);
+      continue;
+    }
+    const rounds = [...new Set(parts.map((p) => p.round))].sort((a, b) => a - b);
+    for (const round of rounds) {
+      const inRound = parts.filter((p) => p.round === round);
+      const text = textOf(inRound);
+      const calls = inRound.filter((p): p is ToolPart => p.type === 'tool');
+      if (calls.length > 0) {
+        turns.push({
+          role: 'assistant',
+          content: text,
+          toolCalls: calls.map((c) => ({ id: c.id, name: c.name, arguments: c.arguments })),
+        });
+        for (const call of calls) {
+          const result = call.result ?? 'No result: the reply ended before it ran.';
+          turns.push({
+            role: 'tool',
+            toolCallId: call.id,
+            content:
+              result.length > OLD_RESULT_CHARS
+                ? `${result.slice(0, OLD_RESULT_CHARS)}\n\n[Cut short to save room. Call the tool again if you need it.]`
+                : result,
+          });
+        }
+      } else {
+        say('assistant', text);
+      }
+      for (const feedback of inRound.filter((p) => p.type === 'feedback'))
+        say('user', feedback.text);
+    }
   }
   return turns;
 }
 
 /**
  * Drops the oldest turns until the rest fit the budget. The latest message always goes, even if
- * it's too big on its own; the model then says so itself. The kept history starts with the user.
+ * it's too big on its own; the model then says so itself. The kept history starts with the user,
+ * so it never opens on a tool result whose call was dropped.
  */
 export function fitHistory(turns: ChatMessage[], budget: number): ChatMessage[] {
   let start = 0;
-  let total = turns.reduce((sum, t) => sum + estimateTokens(t.content), 0);
+  let total = turns.reduce((sum, t) => sum + tokensOf(t), 0);
   while (total > budget && start < turns.length - 1) {
-    total -= estimateTokens(turns[start]!.content);
+    total -= tokensOf(turns[start]!);
     start++;
   }
   while (start < turns.length - 1 && turns[start]!.role !== 'user') start++;
   return turns.slice(start);
+}
+
+/**
+ * Makes room in a reply that has grown near the context limit: tool results from all but the last
+ * two rounds are cut to their first lines, oldest first, until it fits.
+ */
+export function compactTurns(messages: ChatMessage[], budget: number): void {
+  let total = messages.reduce((sum, m) => sum + tokensOf(m), 0);
+  if (total <= budget) return;
+  const toolIndexes = messages.flatMap((m, i) => (m.role === 'tool' ? [i] : []));
+  // Keep the newest results whole: the model is working from them.
+  const assistantIndexes = messages.flatMap((m, i) => (m.role === 'assistant' ? [i] : []));
+  const protectFrom = assistantIndexes.at(-2) ?? messages.length;
+  for (const i of toolIndexes) {
+    if (total <= budget || i >= protectFrom) break;
+    const message = messages[i] as Extract<ChatMessage, { role: 'tool' }>;
+    if (message.content.length <= 400) continue;
+    const before = tokensOf(message);
+    message.content = `${message.content.slice(0, 300)}\n\n[Cut to make room. Call the tool again if you need it.]`;
+    total -= before - tokensOf(message);
+  }
+}
+
+/**
+ * The user's notes from the diff editor as a message to the clank, in their words: what they
+ * rejected, commented on or changed themselves.
+ */
+export function formatNotes(notes: ReviewNote[]): string {
+  const lines = (n: ReviewNote) =>
+    n.startLine === null
+      ? ''
+      : n.endLine !== null && n.endLine !== n.startLine
+        ? `lines ${n.startLine}–${n.endLine}`
+        : `line ${n.startLine}`;
+  const quote = (text: string) =>
+    text
+      .split('\n')
+      .map((line) => `       ${line}`)
+      .join('\n');
+  const items = notes.map((note, i) => {
+    const where = `\`${note.path}\``;
+    let item: string;
+    if (note.kind === 'reject') {
+      item = `I rejected your change to ${where} at ${lines(note)}, so it's back as it was.${note.body ? ` ${note.body}` : ''}`;
+      if (note.excerpt) item += `\n   You had written:\n${quote(note.excerpt)}`;
+    } else if (note.kind === 'comment') {
+      item = `About ${where}, ${lines(note)}: ${note.body}`;
+      if (note.excerpt) item += `\n${quote(note.excerpt)}`;
+    } else {
+      const ranges = note.body
+        ? `${/[,–]/.test(note.body) ? 'lines' : 'line'} ${note.body}`
+        : lines(note);
+      item = `I edited ${where} myself (${ranges}). Read it again before you change it.`;
+    }
+    return `${i + 1}. ${item}`;
+  });
+  return `My review notes from the diff editor:\n\n${items.join('\n')}`;
 }
 
 /** A chat's title from its first message: its opening words, on one line. */

@@ -7,6 +7,7 @@ import {
   type ClankSummary,
   avatarSchema,
   clankProfilePatchSchema,
+  toolOverridesSchema,
 } from '@clanks/core';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
@@ -130,6 +131,7 @@ export class CrewService extends EventEmitter<{ change: [] }> {
       name: values.name !== undefined ? values.name : current.name,
       avatar: values.avatar !== undefined ? values.avatar : current.avatar,
       model: values.model !== undefined ? values.model : current.model,
+      tools: values.tools !== undefined ? values.tools : current.tools,
     };
     const row = {
       id,
@@ -137,6 +139,7 @@ export class CrewService extends EventEmitter<{ change: [] }> {
       avatar: next.avatar,
       provider: next.model?.provider ?? null,
       model: next.model?.model ?? null,
+      tools: Object.keys(next.tools).length > 0 ? next.tools : null,
       updatedAt: new Date(),
     };
     this.options.db
@@ -195,10 +198,12 @@ export class CrewService extends EventEmitter<{ change: [] }> {
   private readOverrides(id: ClankId): ClankOverrides {
     const row = this.options.db.select().from(clankTable).where(eq(clankTable.id, id)).get();
     const avatar = avatarSchema.safeParse(row?.avatar);
+    const tools = toolOverridesSchema.safeParse(row?.tools ?? {});
     return {
       name: row?.name ?? null,
       avatar: avatar.success ? avatar.data : null,
       model: row?.provider && row.model ? { provider: row.provider, model: row.model } : null,
+      tools: tools.success ? tools.data : {},
     };
   }
 

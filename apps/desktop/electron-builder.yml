@@ -20,6 +20,9 @@ files:
 asarUnpack:
   - '**/*.node'
   - resources/**
+  # The terminal's native module starts helper programs, DLLs and a worker script, which the OS
+  # can't load from inside the asar archive.
+  - 'node_modules/@lydell/**'
 # better-sqlite3 ships N-API prebuilds that work in Electron as they are.
 npmRebuild: false
 

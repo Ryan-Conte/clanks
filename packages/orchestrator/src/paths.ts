@@ -15,9 +15,9 @@ export interface AppDataLayout {
   models: string;
   /** llama-server builds downloaded for this machine's GPU backend. */
   runtime: string;
-  /** One git worktree per ticket run, under <project>/<key>. */
+  /** One git worktree per run, under <repo>/<key>. */
   worktrees: string;
-  /** Shadow git directories for checkpoints, one per project. */
+  /** Shadow git directories for checkpoints, one per run. */
   checkpoints: string;
   /** Notes, documents, email drafts and screenshots, per ticket. */
   artifacts: string;

@@ -96,6 +96,7 @@ describe('chat router', () => {
     expect(events[0]).toEqual({
       type: 'delta',
       messageId: reply.id,
+      round: 0,
       text: 'or foam.',
       reasoning: '',
     });

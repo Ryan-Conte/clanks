@@ -1,12 +1,17 @@
 import type {
+  ActivityEvent,
   Avatar,
+  ChangedFile,
   ChatUsage,
   FinishReason,
   GgufFacts,
+  MessagePart,
   MessageStatus,
   ModelCapabilities,
   ModelFile,
   ModelTag,
+  ReviewNoteKind,
+  ToolOverrides,
 } from '@clanks/core';
 import type { PullRecord } from '@clanks/models';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
@@ -62,6 +67,8 @@ export const clank = sqliteTable('clank', {
   /** Its own model, at a provider. Both null runs it on the crew's model. */
   provider: text('provider'),
   model: text('model'),
+  /** Tool policies the user set, which win over the doc's. */
+  tools: text('tools', { mode: 'json' }).$type<ToolOverrides>(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
@@ -91,6 +98,8 @@ export const message = sqliteTable(
     position: integer('position').notNull(),
     role: text('role', { enum: ['user', 'assistant'] }).notNull(),
     content: text('content').notNull(),
+    /** Text, tool calls and notes in order. Null for messages saved before tools, which are text. */
+    parts: text('parts', { mode: 'json' }).$type<MessagePart[]>(),
     reasoning: text('reasoning').notNull().default(''),
     status: text('status').$type<MessageStatus>().notNull(),
     error: text('error'),
@@ -114,5 +123,123 @@ export const provider = sqliteTable('provider', {
   baseUrl: text('base_url').notNull(),
   /** The keychain entry for its API key, if it needs one. */
   secretRef: text('secret_ref'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+/**
+ * A clank's run on a copy of a repository: for now, one per chat about a folder in one. Tickets get
+ * runs of their own when the board arrives.
+ */
+export const run = sqliteTable('run', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id')
+    .notNull()
+    .unique()
+    .references(() => conversation.id, { onDelete: 'cascade' }),
+  clankId: text('clank_id').notNull(),
+  folder: text('folder').notNull(),
+  repoRoot: text('repo_root').notNull(),
+  worktree: text('worktree').notNull(),
+  branch: text('branch').notNull(),
+  baseCommit: text('base_commit').notNull(),
+  /** The shadow git folder its checkpoints are kept in. */
+  checkpointsDir: text('checkpoints_dir').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+/** The worktree after a tool call or a user edit that changed files. */
+export const checkpoint = sqliteTable(
+  'checkpoint',
+  {
+    id: text('id').primaryKey(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => run.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    commit: text('commit').notNull(),
+    author: text('author', { enum: ['base', 'clank', 'user'] }).notNull(),
+    label: text('label').notNull(),
+    messageId: text('message_id'),
+    toolCallId: text('tool_call_id'),
+    afterMessageId: text('after_message_id'),
+    files: text('files', { mode: 'json' }).$type<ChangedFile[]>().notNull(),
+    head: text('head'),
+    rewound: integer('rewound', { mode: 'boolean' }).notNull().default(false),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [uniqueIndex('checkpoint_run_seq').on(t.runId, t.seq)],
+);
+
+/** Feedback from the diff editor, for the clank. */
+export const reviewNote = sqliteTable(
+  'review_note',
+  {
+    id: text('id').primaryKey(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => run.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<ReviewNoteKind>().notNull(),
+    path: text('path').notNull(),
+    startLine: integer('start_line'),
+    endLine: integer('end_line'),
+    body: text('body').notNull(),
+    excerpt: text('excerpt').notNull(),
+    checkpointId: text('checkpoint_id'),
+    status: text('status', { enum: ['pending', 'sent'] }).notNull(),
+    /** When it went to the clank, so a rewind to before then can take it back. */
+    sentAt: integer('sent_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('review_note_run').on(t.runId)],
+);
+
+/** Append-only: what happened in a chat, step by step. The activity timeline is built from it. */
+export const event = sqliteTable(
+  'event',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => conversation.id, { onDelete: 'cascade' }),
+    messageId: text('message_id'),
+    kind: text('kind').$type<ActivityEvent['kind']>().notNull(),
+    title: text('title').notNull(),
+    input: text('input'),
+    output: text('output'),
+    status: text('status').$type<NonNullable<ActivityEvent['status']>>(),
+    toolCallId: text('tool_call_id'),
+    checkpointId: text('checkpoint_id'),
+    sessionId: text('session_id'),
+    startedAt: integer('started_at', { mode: 'timestamp_ms' }).notNull(),
+    durationMs: integer('duration_ms'),
+  },
+  (t) => [index('event_conversation').on(t.conversationId, t.id)],
+);
+
+/** "Always allow" rules from approval prompts, per project. */
+export const toolRule = sqliteTable(
+  'tool_rule',
+  {
+    id: text('id').primaryKey(),
+    scope: text('scope').notNull(),
+    tool: text('tool').notNull(),
+    pattern: text('pattern').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [uniqueIndex('tool_rule_scope_tool_pattern').on(t.scope, t.tool, t.pattern)],
+);
+
+/** MCP servers the user added. Their environment variables or headers are in the keychain. */
+export const mcpServer = sqliteTable('mcp_server', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  transport: text('transport', { enum: ['stdio', 'http'] }).notNull(),
+  command: text('command').notNull(),
+  args: text('args', { mode: 'json' }).$type<string[]>().notNull(),
+  url: text('url').notNull(),
+  /** The names of its secrets, so Settings can show them without reading the keychain. */
+  secretNames: text('secret_names', { mode: 'json' }).$type<string[]>().notNull(),
+  clanks: text('clanks', { mode: 'json' }).$type<string[]>().notNull(),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 });

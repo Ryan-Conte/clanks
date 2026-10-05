@@ -321,6 +321,14 @@ export function XIcon() {
   );
 }
 
+export function CodeIcon() {
+  return (
+    <Icon>
+      <path d="m5.5 4.5-3.5 3.5 3.5 3.5m5-7 3.5 3.5-3.5 3.5M9 3l-2 10" />
+    </Icon>
+  );
+}
+
 export function LayersIcon() {
   return (
     <Icon>

@@ -62,8 +62,8 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
   models/partial/             downloads in progress, one folder per pull
   models/links/               the shards of split models, linked under their original names
   runtime/                    llama.cpp builds downloaded for your GPU (CUDA), and running servers' PIDs
-  worktrees/<project>/<key>/  one git worktree per ticket run
-  checkpoints/<project>.git   shadow git directories for checkpoints
+  worktrees/<repo>/<key>/     one git worktree per run: a ticket's, or a chat's about a folder
+  checkpoints/<run>.git       a shadow git directory per run, for its checkpoints
   artifacts/<ticket>/         notes, documents, email drafts, screenshots
   crew/                       your clank library: edited priming docs (<id>.md) and custom clanks
   browser/                    persistent browser sessions, only when enabled
@@ -394,7 +394,7 @@ Usage is recorded for every call. Cloud calls are priced from tables in config; 
 - Every tool declares a short live label for the board ("Running `npm test`", "Editing `src/cart.ts`"), with redaction rules for commands and URLs. `post_progress` takes an optional list of plan steps, which cards show as progress.
 - Every tool declares a risk level. Each clank has a policy mapping tools to allow, ask, deny or off. Defaults come from the clank's priming doc; Settings override them. Approval prompts can widen a rule to a command or a host for the whole project.
 - Outbound actions are not tools. Clanks can't push, open PRs, merge, post or send. The orchestrator pushes Forge's branch and opens its pull request when Forge submits on a connected repo, and does everything else only when you approve, so no model output, injected or not, can trigger them. Integration operations that spend money, publish or contact people are tools, but locked to asking every time.
-- `web_search` uses a backend you configure: a self-hosted SearXNG, or a Brave or Tavily key. Without one it runs the search in the built-in browser, where you can watch it.
+- `web_search` uses a backend you configure: a self-hosted SearXNG, or a Brave or Tavily key. Without one it runs the search in the built-in browser, where you can watch it; until the browser arrives (Milestone 4), clanks without a backend get no search tool and fetch pages they know the address of.
 
 ## Integrations
 
@@ -486,7 +486,8 @@ The main window is chat on the left and the workbench on the right. The workbenc
 
 - A project points at a folder. Code and design projects need a git repo; clanks offers to `git init` one.
 - Each ticket run gets its own worktree (`git worktree add`) on a new branch `clanks/<ticket key>` off the project's base branch, kept in the app data folder. Parallel clanks never see each other's half-finished edits. Checkers get their own worktree of the maker's branch.
-- After every tool call that changes files, the orchestrator records a checkpoint: a commit in a shadow git directory (`--git-dir` in app data, `--work-tree` the run's worktree). Checkpoints never touch your repo's history or refs. The clank's own `git_commit`s go on the run branch as normal.
+- Until projects arrive, a chat about a folder in a git repository is a run of its own: its clank works in a worktree on `clanks/chat-<id>`, made from the folder's checked-out commit. Uncommitted changes in your checkout aren't in it, and nothing the clank does touches your checkout. Deleting the chat removes the worktree; work left in it is committed to the branch first, and the branch stays for you to merge or delete. A folder that isn't a repository yet can be made one from the workbench, which commits what's there.
+- After every tool call that changes files, the orchestrator records a checkpoint: a commit in a shadow git directory (`--git-dir` in app data, `--work-tree` the run's worktree). It borrows the repository's objects through git's alternates, so unchanged files cost nothing, and stores files byte for byte whatever `core.autocrlf` says. Checkpoints never touch your repo's history or refs. The clank's own `git_commit`s go on the run branch as normal.
 - Notes, documents and email drafts are written to the ticket's artifact folder and versioned there.
 
 ### Diff editor
@@ -495,11 +496,13 @@ Monaco's diff editor, wired to the run:
 
 - A tree of changed files with added and removed line counts; side-by-side or inline.
 - Live: the diff updates as the clank writes, and the editor follows the file being edited unless you pin another.
-- Compare the run with its base, or any two checkpoints. A step scrubber walks the run one tool call at a time.
+- Compare the run with its base, or any two checkpoints. A step scrubber walks the run one tool call at a time, showing what a step changed or everything up to it.
 - Accept or reject per hunk or per file. Rejecting reverts it in the worktree and tells the clank, with your reason if you give one.
 - Edit the right-hand side directly. Your edits are recorded as a user checkpoint and the clank is told which lines you changed.
 - Comment on a line or a range. Comments collect into a review that **Request changes** sends back with the ticket.
 - **Rewind** restores the worktree to a checkpoint and cuts the run's context back to that point.
+
+In a chat (Milestone 3), rejections, comments and edits become review notes. They go to the clank with your next message, or straight away with **Send to <clank>**; while it's working, they reach it after its current round of tool calls, as a message from you. Rejecting is per hunk so far, and comparing two arbitrary checkpoints waits for tickets. A rewind cuts the chat back to the moment of the checkpoint, and notes sent after that moment are pending again.
 
 It is also the review surface for pull requests and for comparing versions of specs, documents and priming docs.
 
@@ -515,7 +518,7 @@ It is also the review surface for pull requests and for comparing versions of sp
 
 ### Terminal
 
-Every `shell_exec` and `shell_start` runs in a pty and streams to an xterm.js tab for that run. You can stop any process. **Open shell here** gives you your own terminal in the run's worktree; clanks can't see or use it.
+Every `shell_exec` and `shell_start` streams to an xterm.js tab for that run. You can stop any process. Clanks' commands run with their output piped rather than in a pty: what the model reads stays plain text (Windows' ConPTY would wrap it in cursor movement), nothing can wait for keyboard input, and exit codes are exact. They run in bash, the one that comes with Git for Windows on Windows, so commands are the same on every platform. **Open shell here** gives you your own terminal in the run's worktree, a real pty (node-pty) running your usual shell; clanks can't see or use it.
 
 ### Activity
 

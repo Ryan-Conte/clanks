@@ -41,13 +41,19 @@ export function formatCount(n: number): string {
   return Math.round(n).toLocaleString('en');
 }
 
-/** A short duration: 0.8 s, 12 s, 2 min 5 s. */
+/** A short duration: 0.8 s, 12 s, 2 min 5 s, 3 h 38 min. */
 export function formatSeconds(ms: number): string {
   const seconds = ms / 1000;
   if (seconds < 10) return `${seconds.toFixed(1)} s`;
-  if (seconds < 60) return `${Math.round(seconds)} s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
+  // Rounded once, so 59.6 s never shows as "60 s".
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} s`;
+  const minutes = Math.floor(total / 60);
+  if (minutes >= 60) {
+    const rest = minutes % 60;
+    return rest ? `${Math.floor(minutes / 60)} h ${rest} min` : `${minutes / 60} h`;
+  }
+  const rest = total % 60;
   return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
 }
 

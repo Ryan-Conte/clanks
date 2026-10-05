@@ -268,7 +268,7 @@ describe('ChatService', () => {
     expect(system).toContain('Sam wrote these in `CLANKS.md` for this project.');
     expect(system).toContain('Prices include GST.');
     expect(system).not.toContain('Test on mobile.');
-    expect(chat.preview('forge', conversation.id).layers.map((l) => l.id)).toContain(
+    expect((await chat.preview('forge', conversation.id)).layers.map((l) => l.id)).toContain(
       'instructions',
     );
   });

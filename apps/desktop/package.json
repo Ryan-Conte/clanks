@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lydell/node-pty": "1.2.0-beta.15",
     "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
@@ -24,6 +25,8 @@
     "@clanks/models": "workspace:*",
     "@clanks/orchestrator": "workspace:*",
     "@clanks/providers": "workspace:*",
+    "@clanks/tools": "workspace:*",
+    "@clanks/workspace": "workspace:*",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@tailwindcss/vite": "^4.3.3",
@@ -35,9 +38,12 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "electron": "44.5.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "monaco-editor": "^0.57.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",

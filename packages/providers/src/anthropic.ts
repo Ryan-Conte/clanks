@@ -185,9 +185,16 @@ function toAnthropic(history: ChatMessage[]): {
       case 'system':
         system.push(message.content);
         break;
-      case 'user':
-        messages.push({ role: 'user', content: message.content });
+      case 'user': {
+        // Feedback that follows tool results joins their turn, since turns must alternate.
+        const last = messages.at(-1);
+        if (last?.role === 'user' && Array.isArray(last.content)) {
+          last.content.push({ type: 'text', text: message.content });
+        } else {
+          messages.push({ role: 'user', content: message.content });
+        }
         break;
+      }
       case 'assistant': {
         const content: Anthropic.ContentBlockParam[] = [];
         // Empty text blocks are refused.

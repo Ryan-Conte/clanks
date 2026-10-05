@@ -1,4 +1,4 @@
-import { STAGES, type UserProfile, estimateTokens } from '@clanks/core';
+import { STAGES, type UserProfile, type WorkspaceStatus, estimateTokens } from '@clanks/core';
 import type { Clank } from './crew';
 import { type ProjectInstructions, instructionsFor } from './instructions';
 
@@ -28,6 +28,18 @@ export interface RunContext {
   mode: 'chat';
   /** The folder the chat is about, if any. */
   folder: string | null;
+  /** The clank's own copy of the folder's repository, when it has one. */
+  workspace: { worktree: string; cwd: string; branch: string; baseCommit: string } | null;
+  /** Why a chat about a folder has no workspace. Null when it isn't about one. */
+  workspaceStatus: WorkspaceStatus | null;
+  /** The tools offered in this chat. */
+  tools: string[];
+  /** The shell commands run in, when the clank can run them. */
+  shell: string | null;
+  /** The model can't call tools, so none were offered. */
+  toolsUnsupported: boolean;
+  /** Tools that should be there and aren't, such as an MCP server that didn't start. */
+  problems: string[];
 }
 
 export interface PromptInput {
@@ -202,13 +214,53 @@ function profileText(profile: UserProfile, fill: (text: string) => string): stri
   return lines.join('\n');
 }
 
+const NO_FOLDER_REASONS: Partial<Record<WorkspaceStatus, string>> = {
+  not_repo:
+    "It isn't a git repository yet, so you can't work on its files. {{user.name}} can set up git for it in the workbench.",
+  no_commits:
+    "Its git repository has no commits yet, so you can't work on its files. {{user.name}} can commit once, or set it up in the workbench.",
+  no_git: "git isn't installed on this computer, so you can't work on its files.",
+  error: "Its workspace couldn't be made, so you can't work on its files.",
+};
+
 function runText(run: RunContext): string {
   const lines = ['## Run context', '', 'Mode: chat. You are talking with {{user.name}} directly.'];
-  if (run.folder) lines.push(`This chat is about the folder \`${run.folder}\`.`);
-  lines.push(
-    '',
-    "No tools are connected to this chat: you can't read files, run commands, browse, use the board or save notes. Never say you did. When an ask needs a tool, say so plainly, and help as far as you can in your reply.",
-  );
+  const ws = run.workspace;
+  if (run.folder && ws) {
+    const sub = ws.cwd !== ws.worktree;
+    lines.push(
+      `This chat is about the folder \`${run.folder}\`. You work in your own copy of it: a git worktree on the branch \`${ws.branch}\`, made from commit \`${ws.baseCommit.slice(0, 7)}\`. Paths in tools are relative to ${sub ? 'that folder in your copy' : 'your copy'}. Changes {{user.name}} hasn't committed aren't in it, and nothing you do touches their own checkout.`,
+    );
+  } else if (run.folder) {
+    lines.push(`This chat is about the folder \`${run.folder}\`.`);
+    const reason = run.workspaceStatus ? NO_FOLDER_REASONS[run.workspaceStatus] : undefined;
+    if (reason) lines.push(reason);
+  }
+
+  lines.push('');
+  if (run.toolsUnsupported) {
+    lines.push(
+      "The model you run on can't call tools, so no tools are connected to this chat: you can't read files, run commands, browse or save notes. Never say you did. When an ask needs a tool, say so plainly, and help as far as you can in your reply.",
+    );
+  } else if (run.tools.length === 0) {
+    lines.push(
+      "No tools are connected to this chat: you can't read files, run commands, browse, use the board or save notes. Never say you did. When an ask needs a tool, say so plainly, and help as far as you can in your reply.",
+    );
+  } else {
+    lines.push(`Your tools here: ${run.tools.map((t) => `\`${t}\``).join(', ')}.`);
+    if (run.shell) lines.push(`Commands run in ${run.shell}.`);
+    if (ws) {
+      lines.push(
+        '{{user.name}} watches your file changes in the diff editor and your commands in the terminal, and approves the calls that need it. They may reject a change with a note; fix what the note says.',
+      );
+    }
+    lines.push(
+      "This is a chat, not a ticket: when you're done, reply to {{user.name}} with what you did and what you found. Board, spec, progress and output tools aren't available here.",
+    );
+  }
+  if (run.problems.length > 0) {
+    lines.push('', `These tools aren't working right now: ${run.problems.join('; ')}.`);
+  }
   return lines.join('\n');
 }
 

@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 /**
  * Every built-in tool, by group. Priming docs may only name these, and CI checks that they do.
  * Integration (`int_<integration>_<operation>`) and MCP (`mcp_<server>_<tool>`) tools are generated
@@ -48,7 +50,9 @@ export const TOOL_GROUPS = {
   routines: ['routine_list', 'routine_get', 'routine_propose'],
 } as const;
 
-export type ToolName = (typeof TOOL_GROUPS)[keyof typeof TOOL_GROUPS][number];
+export type ToolGroup = keyof typeof TOOL_GROUPS;
+
+export type ToolName = (typeof TOOL_GROUPS)[ToolGroup][number];
 
 export const TOOL_NAMES: readonly ToolName[] = Object.values(TOOL_GROUPS).flat();
 
@@ -70,6 +74,14 @@ export function isToolName(name: string): name is ToolName {
   return (TOOL_NAMES as readonly string[]).includes(name);
 }
 
+/** The group a built-in tool belongs to. */
+export function toolGroupOf(name: string): ToolGroup | null {
+  for (const [group, names] of Object.entries(TOOL_GROUPS)) {
+    if ((names as readonly string[]).includes(name)) return group as ToolGroup;
+  }
+  return null;
+}
+
 /**
  * The tools a policy entry covers: an exact name, or a group with a `*` suffix such as `browser_*`.
  * Empty when the entry names nothing real.
@@ -81,4 +93,58 @@ export function toolsMatching(entry: string): ToolName[] {
     return TOOL_NAMES.filter((name) => name.startsWith(prefix));
   }
   return isToolName(entry) ? [entry] : [];
+}
+
+/**
+ * What happens when a clank calls a tool: it runs, it waits for the user's approval, or it's
+ * refused. `off` tools aren't offered to the clank at all.
+ */
+export const toolPolicyLevelSchema = z.enum(['allow', 'ask', 'deny', 'off']);
+
+export type ToolPolicyLevel = z.infer<typeof toolPolicyLevelSchema>;
+
+/** A tool's name: a built-in one, or a generated `mcp_<server>_<tool>`. */
+export const toolNameSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]{0,63}$/, 'Use a tool name such as fs_read');
+
+/** The user's policy for one clank's tools, which wins over its priming doc. */
+export const toolOverridesSchema = z.record(toolNameSchema, toolPolicyLevelSchema);
+
+export type ToolOverrides = z.infer<typeof toolOverridesSchema>;
+
+/** A tool as a clank's profile shows it. */
+export interface ClankToolPolicy {
+  name: string;
+  /** A built-in group, or `mcp` for a tool from an MCP server. */
+  group: ToolGroup | 'mcp';
+  description: string;
+  /** What actually applies: the user's choice if they made one, else the doc's. */
+  level: ToolPolicyLevel;
+  /** What the priming doc says, or `ask` for an attached MCP server's tools. */
+  defaultLevel: ToolPolicyLevel;
+  overridden: boolean;
+  /** Tools clanks can use already; the rest arrive in later milestones. */
+  available: boolean;
+}
+
+/**
+ * An "always allow" the user gave from an approval prompt, for one project. Until projects arrive,
+ * a project is the git repository a chat works in.
+ */
+export interface ToolRule {
+  id: string;
+  scope: string;
+  tool: string;
+  /** The command, URL or path it covers. `*` matches anything, including nothing. */
+  pattern: string;
+  createdAt: Date;
+}
+
+export const toolRulePatternSchema = z.string().trim().min(1).max(2000);
+
+/** Whether a rule's pattern covers a command, URL or path. Only `*` is special. */
+export function matchesPattern(pattern: string, subject: string): boolean {
+  const parts = pattern.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`^${parts.join('[\\s\\S]*')}$`).test(subject);
 }

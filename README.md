@@ -10,7 +10,7 @@ Everything runs on your own computer. clanks downloads open models and runs them
 
 There is no clanks account and no clanks cloud. Local models need nothing else. If you want, a clank can use a cloud model with your own API key (Anthropic, OpenAI, Google, OpenRouter) instead, or a model server you already run elsewhere (vLLM, LM Studio, Ollama). Keys stay in your OS keychain and go straight to the provider you chose.
 
-> Status: pre-alpha. [Milestone 2](docs/ROADMAP.md#milestone-2-chat-with-a-clank) is in: you can chat with any of the eight premade clanks, offline, on a model clanks pulled and runs itself, or on a cloud model or model server of your own. Each clank works from its priming doc, which you can edit in the app, and from a folder's `CLANKS.md`. Chats are saved on your machine. The crew can't use tools or do work on tickets yet; that starts with Milestone 3. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
+> Status: pre-alpha. [Milestone 3](docs/ROADMAP.md#milestone-3-tools-workspaces-and-the-diff-editor) is in: chat with any of the eight premade clanks, offline on a model clanks pulled itself or on a cloud model or server of your own, and point a chat at a folder to have the clank work on it. It reads, edits, searches and commits in its own git worktree and branch, runs commands you approve, fetches pages and uses tools from MCP servers you attach. You watch every change land in the diff editor beside the chat, every command in the terminal and every step on the activity timeline, and you can reject a change with a note, edit it yourself or rewind. Projects, specs and the board come with Milestone 5. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
 
 ## Every project gets its own crew
 
@@ -163,7 +163,7 @@ The reasoning behind each choice is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development
 
-You need Node 22.12 or later and pnpm 10 (`corepack enable` gives you the version the repo pins). Nothing else: the SQLite driver ships prebuilt binaries, Electron downloads itself on first run, and `pnpm dev` fetches the pinned llama.cpp builds for your platform (about 50 MB, checked by sha256) the first time.
+You need Node 22.12 or later and pnpm 10 (`corepack enable` gives you the version the repo pins). Nothing else: the SQLite driver and the terminal's pty ship prebuilt binaries, Electron downloads itself on first run, and `pnpm dev` fetches the pinned llama.cpp builds for your platform (about 50 MB, checked by sha256) the first time. For clanks to work on a folder, the app needs git on the `PATH`, as it does for anyone using it; on Windows its commands run in the bash that comes with Git for Windows.
 
 ```bash
 git clone https://github.com/Ryan-Conte/clanks

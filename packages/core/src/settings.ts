@@ -58,6 +58,20 @@ export const settingsSchema = z.object({
   /** Serve pulled models to other apps on 127.0.0.1, with OpenAI- and Ollama-style endpoints. */
   localApiEnabled: z.boolean(),
   localApiPort: z.number().int().min(1024).max(65535),
+  /**
+   * Where `web_search` searches. SearXNG is the user's own instance; Brave and Tavily use a key from
+   * the keychain. With none, clanks get no search tool.
+   */
+  webSearch: z.enum(['none', 'searxng', 'brave', 'tavily']),
+  /** A SearXNG instance's address, such as `http://localhost:8888`. */
+  searxngUrl: z
+    .string()
+    .trim()
+    .max(500)
+    .refine(
+      (url) => url === '' || /^https?:\/\/\S+$/i.test(url),
+      'Use an http:// or https:// address',
+    ),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -77,6 +91,8 @@ export const defaultSettings: Settings = {
   localApiEnabled: false,
   // Ollama's port, so tools that speak Ollama find clanks with no setup.
   localApiPort: 11434,
+  webSearch: 'none',
+  searxngUrl: '',
 };
 
 export const settingsPatchSchema = settingsSchema.partial().strict();

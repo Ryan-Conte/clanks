@@ -7,4 +7,4 @@ export const trpcClient = createTRPCClient<AppRouter>({
   links: [ipcLink(window.clanksIpc)],
 });
 
-export const { TRPCProvider, useTRPC } = createTRPCContext<AppRouter>();
+export const { TRPCProvider, useTRPC, useTRPCClient } = createTRPCContext<AppRouter>();

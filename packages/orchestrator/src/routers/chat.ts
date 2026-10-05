@@ -1,6 +1,7 @@
 import {
   type ChatLiveEvent,
   type ConversationSummary,
+  approvalDecisionSchema,
   clankIdSchema,
   conversationIdSchema,
   newConversationSchema,
@@ -63,7 +64,12 @@ export const chatRouter = router({
       if (conversationId !== input) return;
       // Deltas for the same reply are merged while they wait, so a slow window catches up.
       const last = queue.at(-1);
-      if (event.type === 'delta' && last?.type === 'delta' && last.messageId === event.messageId) {
+      if (
+        event.type === 'delta' &&
+        last?.type === 'delta' &&
+        last.messageId === event.messageId &&
+        last.round === event.round
+      ) {
         last.text += event.text;
         last.reasoning += event.reasoning;
       } else {
@@ -95,7 +101,13 @@ export const chatRouter = router({
   /** Starts a chat with its first message. */
   start: userProcedure
     .input(newConversationSchema)
-    .mutation(({ ctx, input }) => ctx.chat.start(input.clankId, input.text)),
+    .mutation(({ ctx, input }) => ctx.chat.start(input.clankId, input.text, input.folder ?? null)),
+
+  /** Asks for a folder for a chat that isn't saved yet. Resolves null if the user cancels. */
+  chooseFolder: userProcedure.mutation(async ({ ctx }) => {
+    if (!ctx.host) throw new ChatError("Picking a folder needs the app's file dialog");
+    return ctx.host.pickFolder({ title: 'Chat about a folder' });
+  }),
 
   send: userProcedure
     .input(sendMessageSchema)
@@ -108,6 +120,24 @@ export const chatRouter = router({
   stop: userProcedure
     .input(conversationIdSchema)
     .mutation(({ ctx, input }) => ctx.chat.stop(input)),
+
+  /** The user's answer to a tool call waiting for approval. */
+  decide: userProcedure
+    .input(
+      z.object({
+        conversationId: conversationIdSchema,
+        toolCallId: z.string().min(1).max(200),
+        decision: approvalDecisionSchema,
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      ctx.chat.decide(input.conversationId, input.toolCallId, input.decision),
+    ),
+
+  /** Sends the notes from the diff editor to the clank, as the user's next message. */
+  sendReview: userProcedure
+    .input(conversationIdSchema)
+    .mutation(({ ctx, input }) => ctx.chat.sendReview(input)),
 
   rename: userProcedure
     .input(z.object({ id: conversationIdSchema, title: z.string().trim().min(1).max(120) }))

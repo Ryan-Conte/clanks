@@ -7,7 +7,13 @@ import { crewFolder, migrationsFolder, tempDir } from '../test-helpers';
 import { type Clank, CrewService } from './crew';
 import { parseClankDoc } from './docs';
 import { instructionsFor } from './instructions';
-import { type PromptInput, assemblePrompt, crewRoster, workflowStages } from './prompt';
+import {
+  type PromptInput,
+  type RunContext,
+  assemblePrompt,
+  crewRoster,
+  workflowStages,
+} from './prompt';
 
 const profile: UserProfile = {
   name: 'Sam',
@@ -21,6 +27,21 @@ function crewService() {
   return new CrewService({ bundledDir: crewFolder, editedDir: tempDir(), db: store.db });
 }
 
+/** A chat's run context: no folder and no tools unless a test gives them. */
+function chat(overrides: Partial<RunContext> = {}): RunContext {
+  return {
+    mode: 'chat',
+    folder: null,
+    workspace: null,
+    workspaceStatus: null,
+    tools: [],
+    shell: null,
+    toolsUnsupported: false,
+    problems: [],
+    ...overrides,
+  };
+}
+
 function input(overrides: Partial<PromptInput> = {}): PromptInput {
   const crew = crewService();
   return {
@@ -29,7 +50,7 @@ function input(overrides: Partial<PromptInput> = {}): PromptInput {
     crew: crew.list(),
     profile,
     instructions: null,
-    run: { mode: 'chat', folder: null },
+    run: chat(),
     // 23:30 UTC is already the next day in Perth.
     now: new Date('2026-10-04T23:30:00Z'),
     platform: 'win32',
@@ -45,7 +66,7 @@ function sentinel(): Clank {
     id: 'sentinel',
     name: 'Sentinel',
     avatar: 'red',
-    overrides: { name: null, avatar: null, model: null },
+    overrides: { name: null, avatar: null, model: null, tools: {} },
     doc: 'bundled',
     docError: null,
   };
@@ -120,11 +141,44 @@ describe('assemblePrompt', () => {
   });
 
   it('says a chat has no tools, so the clank never claims to have used one', () => {
-    const run = assemblePrompt(input({ run: { mode: 'chat', folder: 'C:\\surf' } })).layers.at(-1)!;
+    const run = assemblePrompt(
+      input({ run: chat({ folder: 'C:\\surf', workspaceStatus: 'not_repo' }) }),
+    ).layers.at(-1)!;
     expect(run.id).toBe('run');
     expect(run.text).toContain('Mode: chat. You are talking with Sam directly.');
     expect(run.text).toContain('This chat is about the folder `C:\\surf`.');
+    expect(run.text).toContain("It isn't a git repository yet");
     expect(run.text).toContain('No tools are connected to this chat');
+  });
+
+  it('tells a clank with tools where its copy is and how it works', () => {
+    const run = assemblePrompt(
+      input({
+        run: chat({
+          folder: 'C:\\surf',
+          workspace: {
+            worktree: 'D:\\wt\\chat-1',
+            cwd: 'D:\\wt\\chat-1',
+            branch: 'clanks/chat-1',
+            baseCommit: 'abcdef1234567890',
+          },
+          workspaceStatus: 'ready',
+          tools: ['fs_read', 'shell_exec'],
+          shell: 'bash',
+          problems: ['GitHub: it failed to start'],
+        }),
+      }),
+    ).layers.at(-1)!;
+    expect(run.text).toContain(
+      'a git worktree on the branch `clanks/chat-1`, made from commit `abcdef1`',
+    );
+    expect(run.text).toContain('Your tools here: `fs_read`, `shell_exec`.');
+    expect(run.text).toContain('Commands run in bash.');
+    expect(run.text).toContain('Sam watches your file changes in the diff editor');
+    expect(run.text).toContain("These tools aren't working right now: GitHub: it failed to start.");
+    expect(run.text).not.toContain('No tools are connected');
+    const unsupported = assemblePrompt(input({ run: chat({ toolsUnsupported: true }) }));
+    expect(unsupported.layers.at(-1)!.text).toContain("The model you run on can't call tools");
   });
 
   it("adds the project's instructions for this clank, untemplated", () => {

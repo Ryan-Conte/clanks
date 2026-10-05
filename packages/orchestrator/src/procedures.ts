@@ -3,8 +3,10 @@ import { ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
 import { ChatError } from './chat/service';
 import { CrewDocError } from './crew/docs';
+import { McpError } from './mcp/service';
 import { SecretsUnavailableError } from './secrets';
 import { publicProcedure } from './trpc';
+import { WorkspaceError } from './workspace/service';
 
 /** Errors meant for the user, such as a full drive or a rejected key, rather than bugs. */
 export function isUserError(error: unknown): error is Error {
@@ -13,7 +15,9 @@ export function isUserError(error: unknown): error is Error {
     error instanceof ProviderError ||
     error instanceof ChatError ||
     error instanceof CrewDocError ||
-    error instanceof SecretsUnavailableError
+    error instanceof SecretsUnavailableError ||
+    error instanceof WorkspaceError ||
+    error instanceof McpError
   );
 }
 

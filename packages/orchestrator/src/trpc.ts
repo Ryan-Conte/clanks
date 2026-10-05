@@ -1,14 +1,19 @@
 import type { ModelManager } from '@clanks/models';
 import type { ProviderRegistry } from '@clanks/providers';
 import { initTRPC } from '@trpc/server';
+import type { ActivityService } from './activity/service';
 import type { ChatService } from './chat/service';
 import type { CrewService } from './crew/crew';
 import type { LocalApi } from './local-api/server';
+import type { McpService } from './mcp/service';
 import type { AppDataLayout } from './paths';
 import type { ProviderService } from './providers';
 import type { SecretStore } from './secrets';
 import type { SettingsService } from './settings';
 import type { Store } from './store/store';
+import type { TerminalService } from './terminal/service';
+import type { ToolService } from './tools/service';
+import type { WorkspaceService } from './workspace/service';
 
 export interface AppInfo {
   name: string;
@@ -41,6 +46,15 @@ export interface OrchestratorContext {
   providerSettings: ProviderService;
   crew: CrewService;
   chat: ChatService;
+  /** Each chat's worktree, checkpoints and review notes. */
+  workspace: WorkspaceService;
+  /** Commands clanks run and the user's own shells. */
+  terminal: TerminalService;
+  /** Every model and tool call, step by step. */
+  activity: ActivityService;
+  /** Tool policies, "always allow" rules and search. */
+  tools: ToolService;
+  mcp: McpService;
   /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
   localApi: LocalApi;
   host: Host | null;

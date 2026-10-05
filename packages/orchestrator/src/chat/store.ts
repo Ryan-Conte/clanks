@@ -1,9 +1,22 @@
-import type { Conversation, MessageRecord } from '@clanks/core';
-import { and, asc, desc, eq, max } from 'drizzle-orm';
+import type { Conversation, MessagePart, MessageRecord } from '@clanks/core';
+import { and, asc, desc, eq, gt, max } from 'drizzle-orm';
 import { conversation, message } from '../store/schema';
 import type { Db } from '../store/store';
 
 type MessageRow = typeof message.$inferSelect;
+
+/** Parts come back from JSON with their times as strings. */
+function reviveParts(parts: MessagePart[]): MessagePart[] {
+  return parts.map((part) =>
+    part.type === 'tool'
+      ? {
+          ...part,
+          startedAt: part.startedAt ? new Date(part.startedAt) : null,
+          endedAt: part.endedAt ? new Date(part.endedAt) : null,
+        }
+      : part,
+  );
+}
 
 function toRecord(row: MessageRow): MessageRecord {
   return {
@@ -11,6 +24,12 @@ function toRecord(row: MessageRow): MessageRecord {
     conversationId: row.conversationId,
     role: row.role,
     content: row.content,
+    // Messages saved before tools are their text.
+    parts: row.parts
+      ? reviveParts(row.parts)
+      : row.content
+        ? [{ type: 'text', round: 0, text: row.content }]
+        : [],
     reasoning: row.reasoning,
     status: row.status,
     error: row.error,
@@ -46,7 +65,7 @@ export class ChatStore {
   }
 
   deleteConversation(id: string): void {
-    // Messages go with it: the foreign key cascades.
+    // Messages, runs and events go with it: the foreign keys cascade.
     this.db.delete(conversation).where(eq(conversation.id, id)).run();
   }
 
@@ -58,6 +77,11 @@ export class ChatStore {
       .orderBy(asc(message.position))
       .all()
       .map(toRecord);
+  }
+
+  message(id: string): MessageRecord | undefined {
+    const row = this.db.select().from(message).where(eq(message.id, id)).get();
+    return row ? toRecord(row) : undefined;
   }
 
   lastMessage(conversationId: string): MessageRecord | undefined {
@@ -87,6 +111,7 @@ export class ChatStore {
         position,
         role: record.role,
         content: record.content,
+        parts: record.parts,
         reasoning: record.reasoning,
         status: record.status,
         error: record.error,
@@ -104,6 +129,7 @@ export class ChatStore {
       .update(message)
       .set({
         content: record.content,
+        parts: record.parts,
         reasoning: record.reasoning,
         status: record.status,
         error: record.error,
@@ -116,6 +142,23 @@ export class ChatStore {
 
   deleteMessage(id: string): void {
     this.db.delete(message).where(eq(message.id, id)).run();
+  }
+
+  /** Deletes every message after one, for a rewind. Returns their ids. */
+  deleteAfter(conversationId: string, messageId: string): string[] {
+    const row = this.db.select().from(message).where(eq(message.id, messageId)).get();
+    if (!row) return [];
+    const later = this.db
+      .select({ id: message.id })
+      .from(message)
+      .where(and(eq(message.conversationId, conversationId), gt(message.position, row.position)))
+      .all()
+      .map((r) => r.id);
+    this.db
+      .delete(message)
+      .where(and(eq(message.conversationId, conversationId), gt(message.position, row.position)))
+      .run();
+    return later;
   }
 
   /** Replies a crash or quit cut off. Their text so far stays. */

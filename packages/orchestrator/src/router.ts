@@ -15,6 +15,8 @@ import { userProcedure as modelProcedure } from './procedures';
 import { chatRouter } from './routers/chat';
 import { crewRouter } from './routers/crew';
 import { providersRouter } from './routers/providers';
+import { mcpRouter, toolsRouter } from './routers/tools';
+import { workspaceRouter } from './routers/workspace';
 import { type OrchestratorContext, createCallerFactory, publicProcedure, router } from './trpc';
 
 /** Everything the Models screen shows that changes as it happens. */
@@ -56,6 +58,9 @@ export const appRouter = router({
   crew: crewRouter,
   chat: chatRouter,
   providers: providersRouter,
+  workspace: workspaceRouter,
+  tools: toolsRouter,
+  mcp: mcpRouter,
 
   app: router({
     info: publicProcedure.query(({ ctx }) => ({

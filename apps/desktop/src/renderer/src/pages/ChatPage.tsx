@@ -4,16 +4,18 @@ import type {
   ConversationSummary,
   MessageRecord,
   ModelChoice,
+  WorkspaceState,
 } from '@clanks/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSubscription } from '@trpc/tanstack-react-query';
-import { type ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Composer } from '../components/chat/Composer';
 import { Message } from '../components/chat/Message';
 import { PromptPanel } from '../components/chat/PromptPanel';
 import {
   Button,
+  CodeIcon,
   ErrorText,
   FolderIcon,
   IconButton,
@@ -23,10 +25,12 @@ import {
   XIcon,
   inputClass,
 } from '../components/ui';
+import { Workbench } from '../components/workbench/Workbench';
 import { useClank, useClankModel, useProviders, whereItRuns } from '../lib/crew';
 import { useModels } from '../lib/models';
 import { useNav } from '../lib/nav';
 import { useTRPC } from '../lib/trpc';
+import { type WorkbenchFocus, WorkbenchContext, useWorkbench } from '../lib/workbench';
 
 type ChatData = { conversation: ConversationSummary; messages: MessageRecord[] };
 
@@ -47,18 +51,45 @@ function apply(data: ChatData, event: ChatLiveEvent): ChatData {
     case 'delta':
       return {
         ...data,
-        messages: data.messages.map((m) =>
-          m.id === event.messageId
-            ? { ...m, content: m.content + event.text, reasoning: m.reasoning + event.reasoning }
-            : m,
-        ),
+        messages: data.messages.map((m) => {
+          if (m.id !== event.messageId) return m;
+          const parts = [...m.parts];
+          const last = parts.at(-1);
+          if (event.text) {
+            if (last?.type === 'text' && last.round === event.round) {
+              parts[parts.length - 1] = { ...last, text: last.text + event.text };
+            } else {
+              parts.push({ type: 'text', round: event.round, text: event.text });
+            }
+          }
+          return {
+            ...m,
+            parts,
+            content: m.content + event.text,
+            reasoning: m.reasoning + event.reasoning,
+          };
+        }),
+      };
+    case 'part':
+      return {
+        ...data,
+        messages: data.messages.map((m) => {
+          if (m.id !== event.messageId) return m;
+          const parts = [...m.parts];
+          parts[event.index] = event.part;
+          return { ...m, parts };
+        }),
       };
     case 'removed':
       return { ...data, messages: data.messages.filter((m) => m.id !== event.messageId) };
     case 'conversation':
       return {
         ...data,
-        conversation: { ...event.conversation, replying: data.conversation.replying },
+        conversation: {
+          ...event.conversation,
+          replying: data.conversation.replying,
+          asking: data.conversation.asking,
+        },
       };
   }
 }
@@ -68,7 +99,11 @@ export function DraftChat({ clankId }: { clankId: string }) {
   const trpc = useTRPC();
   const { go } = useNav();
   const clank = useClank(clankId);
+  const [folder, setFolder] = useState<string | null>(null);
   const start = useMutation(trpc.chat.start.mutationOptions());
+  const choose = useMutation(
+    trpc.chat.chooseFolder.mutationOptions({ onSuccess: (picked) => picked && setFolder(picked) }),
+  );
   if (!clank) return null;
 
   return (
@@ -80,14 +115,32 @@ export function DraftChat({ clankId }: { clankId: string }) {
           <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase">{clank.role}</p>
         </div>
         <p className="max-w-md text-sm text-dim">{clank.summary}</p>
+        {folder ? (
+          <span
+            className="flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-3 text-[13px] text-white/85"
+            title={`${clank.name} works on its own copy of ${folder}`}
+          >
+            <FolderIcon />
+            <span className="max-w-64 truncate">{folderName(folder)}</span>
+            <IconButton label="Don't use a folder" onClick={() => setFolder(null)}>
+              <XIcon />
+            </IconButton>
+          </span>
+        ) : (
+          <Button size="sm" variant="ghost" onClick={() => choose.mutate()}>
+            <FolderIcon /> Work on a folder
+          </Button>
+        )}
+        {choose.error && <ErrorText>{choose.error.message}</ErrorText>}
       </div>
       <ComposerArea
         clank={clank}
         replying={false}
+        notes={0}
         error={start.error?.message ?? null}
         onSend={async (text) => {
           try {
-            const { conversation } = await start.mutateAsync({ clankId, text });
+            const { conversation } = await start.mutateAsync({ clankId, text, folder });
             go({ page: 'chat', id: conversation.id });
             return true;
           } catch {
@@ -167,9 +220,9 @@ export function LiveChat({ id }: { id: string }) {
           ))}
         </div>
       </div>
-      <ComposerArea
+      <ChatComposer
         clank={clank}
-        replying={conversation.replying}
+        conversation={conversation}
         error={(send.error ?? retry.error)?.message ?? null}
         onSend={async (text) => {
           stick.current = true;
@@ -184,6 +237,32 @@ export function LiveChat({ id }: { id: string }) {
       />
     </ChatFrame>
   );
+}
+
+/** The composer, knowing how many diff editor notes will go with the next message. */
+function ChatComposer(props: {
+  clank: ClankSummary;
+  conversation: ConversationSummary;
+  error: string | null;
+  onSend: (text: string) => Promise<boolean>;
+  onStop: () => void;
+}) {
+  const notes = useWorkbenchNotes();
+  return (
+    <ComposerArea
+      clank={props.clank}
+      replying={props.conversation.replying}
+      notes={notes}
+      error={props.error}
+      onSend={props.onSend}
+      onStop={props.onStop}
+    />
+  );
+}
+
+function useWorkbenchNotes(): number {
+  const { state } = useWorkbench();
+  return state?.notes.filter((n) => n.status === 'pending').length ?? 0;
 }
 
 /** What a reply that hasn't started is waiting on. */
@@ -201,7 +280,20 @@ function waitingFor(
   return 'Thinking…';
 }
 
-/** The header, the conversation and the box to write in. */
+/** The chat's workspace, kept live while the chat is about a folder. */
+function useWorkspaceState(conversation: ConversationSummary | null): WorkspaceState | null {
+  const trpc = useTRPC();
+  const [state, setState] = useState<WorkspaceState | null>(null);
+  useSubscription(
+    trpc.workspace.live.subscriptionOptions(conversation?.id ?? '', {
+      enabled: conversation !== null && conversation.folder !== null,
+      onData: setState,
+    }),
+  );
+  return conversation?.folder ? state : null;
+}
+
+/** The header, the conversation and the box to write in, with the workbench beside them. */
 function ChatFrame({
   clank,
   conversation,
@@ -212,25 +304,49 @@ function ChatFrame({
   children: ReactNode;
 }) {
   const [showPrompt, setShowPrompt] = useState(false);
+  const [open, setOpen] = useState(true);
+  const [focus, setFocus] = useState<WorkbenchFocus | null>(null);
+  const state = useWorkspaceState(conversation);
+  const show = useCallback((next: Omit<WorkbenchFocus, 'nonce'>) => {
+    setOpen(true);
+    setFocus((current) => ({ ...next, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
+  const hasFolder = conversation?.folder != null;
+  const workbench = useMemo(
+    () => ({
+      state,
+      conversationId: conversation?.id ?? null,
+      replying: conversation?.replying ?? false,
+      open: open && hasFolder,
+      setOpen,
+      focus,
+      show,
+    }),
+    [state, conversation?.id, conversation?.replying, open, hasFolder, focus, show],
+  );
+
   return (
-    <div className="flex h-full min-h-0">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <ChatHeader
-          clank={clank}
-          conversation={conversation}
-          showPrompt={showPrompt}
-          onTogglePrompt={() => setShowPrompt((s) => !s)}
-        />
-        {children}
+    <WorkbenchContext value={workbench}>
+      <div className="flex h-full min-h-0">
+        <div className="@container flex min-w-[22rem] flex-1 flex-col">
+          <ChatHeader
+            clank={clank}
+            conversation={conversation}
+            showPrompt={showPrompt}
+            onTogglePrompt={() => setShowPrompt((s) => !s)}
+          />
+          {children}
+        </div>
+        {showPrompt && (
+          <PromptPanel
+            clank={clank}
+            conversationId={conversation?.id ?? null}
+            onClose={() => setShowPrompt(false)}
+          />
+        )}
+        {workbench.open && <Workbench clankId={clank.id} />}
       </div>
-      {showPrompt && (
-        <PromptPanel
-          clank={clank}
-          conversationId={conversation?.id ?? null}
-          onClose={() => setShowPrompt(false)}
-        />
-      )}
-    </div>
+    </WorkbenchContext>
   );
 }
 
@@ -245,6 +361,7 @@ function ChatHeader(props: {
   const { go } = useNav();
   const providers = useProviders();
   const model = useClankModel(clank);
+  const { open: workbenchOpen, setOpen: setWorkbenchOpen } = useWorkbench();
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -276,9 +393,10 @@ function ChatHeader(props: {
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-1">
+          {/* With the workbench open the chat is narrow; the model shows on each reply anyway. */}
           {model && (
             <span
-              className="mr-2 max-w-64 truncate rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-dim"
+              className="mr-2 hidden max-w-64 truncate rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-dim @3xl:inline-block"
               title={`${model.model} · ${whereItRuns(model, providers)}`}
             >
               {model.model} · {whereItRuns(model, providers)}
@@ -288,12 +406,13 @@ function ChatHeader(props: {
             (conversation.folder ? (
               <span
                 className="mr-1 flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-2.5 text-[12px] text-white/80"
-                title={`${clank.name} follows CLANKS.md or AGENTS.md in ${conversation.folder}`}
+                title={`${clank.name} works on its own copy of ${conversation.folder}, and follows its CLANKS.md or AGENTS.md`}
               >
                 <FolderIcon />
                 <span className="max-w-32 truncate">{folderName(conversation.folder)}</span>
                 <IconButton
                   label="Stop using this folder"
+                  disabled={conversation.replying}
                   onClick={() => clearFolder.mutate(conversation.id)}
                 >
                   <XIcon />
@@ -301,12 +420,26 @@ function ChatHeader(props: {
               </span>
             ) : (
               <IconButton
-                label="Chat about a folder: the clank follows its CLANKS.md or AGENTS.md"
+                label="Work on a folder: the clank gets its own copy, and follows its CLANKS.md or AGENTS.md"
+                disabled={conversation.replying}
                 onClick={() => pickFolder.mutate(conversation.id)}
               >
                 <FolderIcon />
               </IconButton>
             ))}
+          {conversation?.folder && (
+            <IconButton
+              label={
+                workbenchOpen
+                  ? 'Hide the workbench'
+                  : 'Show the workbench: diff, terminal and activity'
+              }
+              onClick={() => setWorkbenchOpen(!workbenchOpen)}
+              className={workbenchOpen ? 'bg-white/[0.08] text-white' : ''}
+            >
+              <CodeIcon />
+            </IconButton>
+          )}
           <IconButton
             label={`What ${clank.name} is told`}
             onClick={props.onTogglePrompt}
@@ -335,7 +468,14 @@ function ChatHeader(props: {
                   </Button>
                 </span>
               ) : (
-                <IconButton label="Delete chat" onClick={() => setConfirmDelete(true)}>
+                <IconButton
+                  label={
+                    conversation.folder
+                      ? 'Delete chat. Its worktree goes too; the branch stays, with any work left in it committed.'
+                      : 'Delete chat'
+                  }
+                  onClick={() => setConfirmDelete(true)}
+                >
                   <TrashIcon />
                 </IconButton>
               )}
@@ -375,6 +515,8 @@ function ChatHeader(props: {
 function ComposerArea(props: {
   clank: ClankSummary;
   replying: boolean;
+  /** Notes from the diff editor that will go with the next message. */
+  notes: number;
   error: string | null;
   onSend: (text: string) => Promise<boolean>;
   onStop: () => void;
@@ -403,11 +545,19 @@ function ComposerArea(props: {
           </span>
         </div>
       ) : (
-        props.error && (
-          <div className="mx-auto max-w-3xl px-6 pb-1">
-            <ErrorText>{props.error}</ErrorText>
-          </div>
-        )
+        <>
+          {props.error && (
+            <div className="mx-auto max-w-3xl px-6 pb-1">
+              <ErrorText>{props.error}</ErrorText>
+            </div>
+          )}
+          {props.notes > 0 && (
+            <p className="mx-auto max-w-3xl px-6 pb-1 text-[12px] text-amber-200/90">
+              {props.notes === 1 ? 'Your review note goes' : `Your ${props.notes} review notes go`}{' '}
+              with this message.
+            </p>
+          )}
+        </>
       )}
       <Composer
         name={props.clank.name}
