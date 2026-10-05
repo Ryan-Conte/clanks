@@ -8,15 +8,17 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "pnpm --filter @clanks/desktop dev",
+    "dev": "pnpm fetch-llama && pnpm --filter @clanks/desktop dev",
     "build": "turbo run build",
-    "package": "pnpm --filter @clanks/desktop package",
+    "package": "pnpm fetch-llama && pnpm --filter @clanks/desktop package",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:e2e": "pnpm --filter @clanks/models test:e2e",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "db:generate": "pnpm --filter @clanks/orchestrator db:generate"
+    "db:generate": "pnpm --filter @clanks/orchestrator db:generate",
+    "fetch-llama": "pnpm --filter @clanks/models fetch-llama"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

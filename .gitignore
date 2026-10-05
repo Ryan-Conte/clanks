@@ -6,3 +6,4 @@ out/
 .DS_Store
 .env*
 *.tsbuildinfo
+apps/desktop/resources/llama/

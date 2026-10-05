@@ -8,10 +8,11 @@ export interface AppDataLayout {
   database: string;
   /** Secrets, encrypted with a key held by the OS keychain. Never in the database. */
   secrets: string;
-  /** GGUF files, named sha256-<digest>. */
-  modelBlobs: string;
-  /** name:tag → blob, chat template, default parameters. */
-  modelManifests: string;
+  /**
+   * The default models folder: GGUF files named by sha256 in `blobs/`, downloads in progress in
+   * `partial/`. The user can move it to another drive; the model manager tracks where it is.
+   */
+  models: string;
   /** llama-server builds downloaded for this machine's GPU backend. */
   runtime: string;
   /** One git worktree per ticket run, under <project>/<key>. */
@@ -32,8 +33,7 @@ export function appDataLayout(root: string): AppDataLayout {
     root,
     database: join(root, 'clanks.db'),
     secrets: join(root, 'secrets.json'),
-    modelBlobs: join(root, 'models', 'blobs'),
-    modelManifests: join(root, 'models', 'manifests'),
+    models: join(root, 'models'),
     runtime: join(root, 'runtime'),
     worktrees: join(root, 'worktrees'),
     checkpoints: join(root, 'checkpoints'),
@@ -48,8 +48,7 @@ export function appDataLayout(root: string): AppDataLayout {
 export function ensureAppDataLayout(layout: AppDataLayout): void {
   for (const dir of [
     layout.root,
-    layout.modelBlobs,
-    layout.modelManifests,
+    layout.models,
     layout.runtime,
     layout.worktrees,
     layout.checkpoints,

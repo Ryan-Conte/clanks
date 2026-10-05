@@ -1,0 +1,28 @@
+{
+  "name": "@clanks/models",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Model manager: catalog, pulls, blob store, hardware probe and the llama-server supervisor.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "catalog:update": "tsx scripts/update-catalog.ts",
+    "fetch-llama": "tsx scripts/fetch-llama.ts"
+  },
+  "dependencies": {
+    "@clanks/core": "workspace:*",
+    "@huggingface/gguf": "^0.4.6",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@clanks/providers": "workspace:*",
+    "@types/node": "^22.19.0",
+    "tsx": "^4.20.0",
+    "vitest": "^5.0.3"
+  }
+}

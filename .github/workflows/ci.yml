@@ -36,7 +36,7 @@ jobs:
           fi
 
   test:
-    name: Unit tests (${{ matrix.os }})
+    name: Tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +51,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+      # The pinned builds only change with the manifest, so they're cached on its hash.
+      - uses: actions/cache@v6
+        with:
+          path: apps/desktop/resources/llama
+          key: llama-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/models/src/runtime/llama-cpp.json') }}
+      - run: pnpm fetch-llama
+      - name: Pull a tiny model and run it on the bundled llama.cpp
+        run: pnpm test:e2e
 
   package:
     name: Package (${{ matrix.os }})
@@ -77,6 +85,11 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v6
+        with:
+          path: apps/desktop/resources/llama
+          key: llama-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/models/src/runtime/llama-cpp.json') }}
+      # Fetches the llama.cpp builds to bundle (unless cached), then builds the installers.
       - run: pnpm package
         env:
           # Never pick up a signing identity from the runner; builds are unsigned until Milestone 11.

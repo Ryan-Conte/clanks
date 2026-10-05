@@ -9,7 +9,7 @@ describe('app data layout', () => {
     const root = join(tempDir(), 'clanks');
     const layout = appDataLayout(root);
     expect(layout.database).toBe(join(root, 'clanks.db'));
-    expect(layout.modelBlobs).toBe(join(root, 'models', 'blobs'));
+    expect(layout.models).toBe(join(root, 'models'));
     for (const path of Object.values(layout) as string[]) {
       expect(path.startsWith(root)).toBe(true);
     }
@@ -20,8 +20,7 @@ describe('app data layout', () => {
     ensureAppDataLayout(layout);
     ensureAppDataLayout(layout);
     for (const dir of [
-      layout.modelBlobs,
-      layout.modelManifests,
+      layout.models,
       layout.runtime,
       layout.worktrees,
       layout.checkpoints,

@@ -10,7 +10,7 @@ Everything runs on your own computer. clanks downloads open models and runs them
 
 There is no clanks account and no clanks cloud. Local models need nothing else. If you want, a clank can use a cloud model with your own API key (Anthropic, OpenAI, Google, OpenRouter) instead, or a model server you already run elsewhere (vLLM, LM Studio, Ollama). Keys stay in your OS keychain and go straight to the provider you chose.
 
-> Status: pre-alpha. [Milestone 0](docs/ROADMAP.md#milestone-0-foundations) is in: the desktop app opens, with its tray, database, keychain and CI, but the crew can't do any work yet. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
+> Status: pre-alpha. [Milestone 1](docs/ROADMAP.md#milestone-1-pull-and-run-models) is in: the app sizes up your machine, pulls models from its catalog or Hugging Face, and runs them on its own bundled llama.cpp, offline. The crew can't chat or do work yet; that starts with Milestone 2. See the [roadmap](docs/ROADMAP.md), the [buildout plan](docs/PLAN.md) and [the crew](crew/README.md).
 
 ## Every project gets its own crew
 
@@ -113,7 +113,7 @@ clanks runs models itself. You don't need Ollama, a separate model server or the
 
 - **Pull models** from a built-in catalog by short name, or from any GGUF repo on Hugging Face, straight into clanks' own model store. Downloads resume and are checksum-verified. (If you happen to have Ollama models on disk already, clanks can reuse the files instead of downloading them again.)
 - **See what fits.** clanks detects your GPU and memory and tells you, before you download, whether a model will run well.
-- **Runs them with llama.cpp**, bundled inside the app for Metal, CUDA, Vulkan and CPU. Models load when a clank needs them and unload when idle, and several clanks can share one loaded model.
+- **Runs them with llama.cpp**, bundled inside the app for Metal, Vulkan and CPU, with a CUDA build downloaded on request for NVIDIA cards. Models load when a clank needs them and unload when idle, and several clanks can share one loaded model.
 - **A model per clank.** Plan with a large model, build with a fast one, run QA on a small one. Swap any time.
 - **Serve other apps.** Optionally expose your models on localhost through OpenAI-compatible and Ollama-compatible endpoints.
 
@@ -163,7 +163,7 @@ The reasoning behind each choice is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development
 
-You need Node 22.12 or later and pnpm 10 (`corepack enable` gives you the version the repo pins). Nothing else: the SQLite driver ships prebuilt binaries and Electron downloads itself on first run.
+You need Node 22.12 or later and pnpm 10 (`corepack enable` gives you the version the repo pins). Nothing else: the SQLite driver ships prebuilt binaries, Electron downloads itself on first run, and `pnpm dev` fetches the pinned llama.cpp builds for your platform (about 50 MB, checked by sha256) the first time.
 
 ```bash
 git clone https://github.com/Ryan-Conte/clanks
@@ -176,11 +176,14 @@ pnpm dev
 | --- | --- |
 | `pnpm dev` | Runs the app from source with hot reload. Its data goes in a `clanks-dev` folder, apart from an installed copy's. |
 | `pnpm test` | Unit tests for every package. |
+| `pnpm test:e2e` | Pulls a 19 MB model from Hugging Face and answers a prompt on the real bundled llama.cpp. Needs the network and `pnpm fetch-llama`. |
+| `pnpm fetch-llama` | Fetches the pinned llama.cpp builds that ship inside the app into `apps/desktop/resources/llama`. |
 | `pnpm lint`, `pnpm format`, `pnpm typecheck` | The same checks CI runs. |
 | `pnpm db:generate` | Writes a migration after you change the schema in `packages/orchestrator/src/store/schema.ts`. |
 | `pnpm package` | Builds installers for your platform into `apps/desktop/dist`. |
+| `pnpm --filter @clanks/models catalog:update` | Fills in new model catalog entries from Hugging Face: pinned revision, sha256 and size of each file, and the facts the memory estimate needs. `--refresh` moves every entry to its repo's latest commit. |
 
-`CLANKS_DATA_DIR` points the app at another data folder. Add `--smoke-test` to a packaged app to check that it starts, loads its window and reads its database, then quits. CI does this on macOS, Windows and Linux for every push.
+`CLANKS_DATA_DIR` points the app at another data folder. Add `--smoke-test` to a packaged app to check that it starts, loads its window, reads its database and runs its bundled llama.cpp, then quits. CI does this on macOS, Windows and Linux for every push.
 
 ## Docs
 

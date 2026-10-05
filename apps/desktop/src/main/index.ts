@@ -1,10 +1,10 @@
 import { type Orchestrator, startOrchestrator } from '@clanks/orchestrator';
-import { type BrowserWindow, type Tray, app, nativeTheme } from 'electron';
+import { type BrowserWindow, type Tray, app, dialog, nativeTheme, shell } from 'electron';
 import { join } from 'node:path';
 import { attachIpcHandler } from './ipc/electron';
 import { createIpcHandler } from './ipc/server';
 import { keychainCipher } from './keychain';
-import { dataDir } from './paths';
+import { dataDir, resourcePath } from './paths';
 import { runSmokeTest } from './smoke-test';
 import { createTray } from './tray';
 import { createMainWindow } from './window';
@@ -64,6 +64,24 @@ if (!app.requestSingleInstanceLock()) {
         dataDir: app.getPath('userData'),
         migrationsFolder: join(__dirname, 'migrations'),
         cipher: keychainCipher,
+        bundledRuntimeDir: resourcePath('llama'),
+        host: {
+          pickFolder: async ({ title, defaultPath }) => {
+            const options: Electron.OpenDialogOptions = {
+              title,
+              ...(defaultPath ? { defaultPath } : {}),
+              properties: ['openDirectory', 'createDirectory'],
+            };
+            const result = mainWindow
+              ? await dialog.showOpenDialog(mainWindow, options)
+              : await dialog.showOpenDialog(options);
+            return result.canceled ? null : (result.filePaths[0] ?? null);
+          },
+          openFolder: async (path) => {
+            const error = await shell.openPath(path);
+            if (error) throw new Error(error);
+          },
+        },
         appInfo: {
           name: app.getName(),
           version: app.getVersion(),

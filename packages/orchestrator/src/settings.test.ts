@@ -51,3 +51,17 @@ describe('settings', () => {
     store.close();
   });
 });
+
+describe('internal app state', () => {
+  it('is kept beside the settings without becoming one', () => {
+    const store = openStore({ file: ':memory:', migrationsFolder });
+    const settings = new SettingsService(store.db);
+    expect(settings.readInternal('models.dir')).toBeUndefined();
+    settings.writeInternal('models.dir', '/mnt/big/models');
+    expect(settings.readInternal('models.dir')).toBe('/mnt/big/models');
+    expect(settings.get()).toEqual(defaultSettings);
+    settings.writeInternal('models.dir', null);
+    expect(settings.readInternal('models.dir')).toBeUndefined();
+    store.close();
+  });
+});

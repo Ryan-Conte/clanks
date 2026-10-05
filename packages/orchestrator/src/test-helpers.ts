@@ -1,8 +1,10 @@
+import type { HardwareInfo } from '@clanks/core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { onTestFinished } from 'vitest';
+import { type Orchestrator, type OrchestratorOptions, startOrchestrator } from './orchestrator';
 import type { SecretCipher } from './secrets';
 
 export const migrationsFolder = fileURLToPath(new URL('../drizzle', import.meta.url));
@@ -33,4 +35,55 @@ export function fakeCipher({ available = true } = {}): SecretCipher & { availabl
     encrypt: (plain) => Buffer.from(Buffer.from(plain, 'utf8').map((byte) => byte ^ 0x5a)),
     decrypt: (encrypted) => Buffer.from(encrypted.map((byte) => byte ^ 0x5a)).toString('utf8'),
   };
+}
+
+/** A machine with a 24 GB GPU, so tests never depend on the one they run on. */
+export const testHardware: HardwareInfo = {
+  platform: process.platform,
+  arch: process.arch,
+  cpu: { model: 'Test CPU', threads: 8 },
+  memory: { totalBytes: 32 * 1024 ** 3, freeBytes: 16 * 1024 ** 3, unified: false },
+  gpus: [
+    {
+      id: 'CUDA0',
+      name: 'Test GPU',
+      backend: 'cuda',
+      totalBytes: 24 * 1024 ** 3,
+      freeBytes: 23 * 1024 ** 3,
+    },
+  ],
+  nvidia: true,
+  backend: 'cuda',
+  budget: { gpuBytes: 22 * 1024 ** 3, systemBytes: 24 * 1024 ** 3 },
+  problems: [],
+  probedAt: new Date(0),
+};
+
+/** An orchestrator in a temporary folder, with no llama.cpp builds and a made-up machine. */
+export function startTestOrchestrator(options: Partial<OrchestratorOptions> = {}): Orchestrator {
+  const orchestrator = startOrchestrator({
+    dataDir: join(tempDir(), 'clanks'),
+    migrationsFolder,
+    cipher: fakeCipher(),
+    appInfo: {
+      name: 'clanks',
+      version: '0.0.0-test',
+      platform: process.platform,
+      arch: process.arch,
+      packaged: false,
+      versions: { electron: '0', chrome: '0', node: process.versions.node },
+    },
+    ...options,
+    models: {
+      builds: () => [],
+      probe: () => Promise.resolve({ hardware: testHardware, build: null }),
+      ...options.models,
+    },
+  });
+  // Hooks run last-registered first, so this settles before the temporary folder goes.
+  onTestFinished(async () => {
+    orchestrator.close();
+    await orchestrator.ready.catch(() => {});
+  });
+  return orchestrator;
 }

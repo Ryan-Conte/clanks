@@ -1,0 +1,160 @@
+{
+  "release": "v0.5.0",
+  "build": "b11146",
+  "baseUrl": "https://github.com/ggml-org/llama.cpp/releases/download/b11146",
+  "assets": [
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "backend": "cpu",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-win-cpu-x64.zip",
+          "size": 18560055,
+          "sha256": "14cf1303ca9ac3abd94816850532f9f9a69ac66fbaca3776fc6f9061c2fac1d1"
+        }
+      ]
+    },
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "backend": "vulkan",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-win-vulkan-x64.zip",
+          "size": 32127004,
+          "sha256": "55a378aa095b466979d85075234f66d7655c7a7483222af0c006c0e55b4d7bd6"
+        }
+      ]
+    },
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "backend": "cuda",
+      "bundled": false,
+      "files": [
+        {
+          "name": "llama-b11146-bin-win-cuda-12.4-x64.zip",
+          "size": 253869799,
+          "sha256": "3c806a6ceccc3dae1c743ceb1a1fb2cce5b76f40bfbd4c6b7b8afb6ef45a5807"
+        },
+        {
+          "name": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+          "size": 391443627,
+          "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+        }
+      ]
+    },
+    {
+      "platform": "win32",
+      "arch": "arm64",
+      "backend": "cpu",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-win-cpu-arm64.zip",
+          "size": 12034624,
+          "sha256": "1727d241f3bf6d27360e984e851cf013928fd655bf89f8628e70da027f377b7d"
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "backend": "cpu",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-ubuntu-x64.tar.gz",
+          "size": 16998357,
+          "sha256": "c150306eb16b5ab696f76a8bdf810c35fd98a24e82158742e6fa28f420ff8410"
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "backend": "vulkan",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-ubuntu-vulkan-x64.tar.gz",
+          "size": 30598492,
+          "sha256": "d3ce40fce7403cc93bcf5718fc46c6efb61ed9709f8e5d9f10c86bf0e30e8fb3"
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "backend": "cuda",
+      "bundled": false,
+      "files": [
+        {
+          "name": "llama-b11146-bin-ubuntu-cuda-12.8-x64.tar.gz",
+          "size": 168920581,
+          "sha256": "c2ab9e19838513ff69d1af8d999ad717dd3c7ee4714ac04c7ed5ab9077c50e4e"
+        },
+        {
+          "name": "cudart-llama-b11146-bin-ubuntu-cuda-12.8-x64.tar.gz",
+          "size": 594373356,
+          "sha256": "1466daea60aad1144819e151b2bae19d54556cf1da6c129c4f55a5ded2637c25"
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "arch": "arm64",
+      "backend": "cpu",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-ubuntu-arm64.tar.gz",
+          "size": 13598346,
+          "sha256": "4aeda6fe68831547e49b7fa87607383ca5352b3d72ca5f70d52ed265f58c131f"
+        }
+      ]
+    },
+    {
+      "platform": "linux",
+      "arch": "arm64",
+      "backend": "vulkan",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-ubuntu-vulkan-arm64.tar.gz",
+          "size": 24410274,
+          "sha256": "5dcebe3ecbcb43a1ed85e3284453f9edf54dcca833e1cb1f54b4022b753c1da5"
+        }
+      ]
+    },
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "backend": "metal",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-macos-arm64.tar.gz",
+          "size": 11189714,
+          "sha256": "1ad3f9eff80edb9dbef4259ad564d1720612ef7eea48fa4afed0e54f5f3d5711"
+        }
+      ]
+    },
+    {
+      "platform": "darwin",
+      "arch": "x64",
+      "backend": "cpu",
+      "bundled": true,
+      "files": [
+        {
+          "name": "llama-b11146-bin-macos-x64.tar.gz",
+          "size": 11237237,
+          "sha256": "305f0e3a17d2c01eb205cd0a62128357f1ec3b55329cb084d94e5ec0115d7a3b"
+        }
+      ]
+    }
+  ]
+}

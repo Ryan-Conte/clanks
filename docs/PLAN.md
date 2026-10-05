@@ -58,9 +58,10 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
 <app data>/
   clanks.db                   SQLite: everything in the data model below
   secrets.json                API keys and tokens, encrypted by the OS keychain; never in the database
-  models/blobs/               GGUF files, named sha256-<digest>
-  models/manifests/           name:tag → blob, chat template, default parameters
-  runtime/                    llama-server builds downloaded for your GPU backend
+  models/blobs/               GGUF files, named sha256-<digest>; which model uses which is in clanks.db
+  models/partial/             downloads in progress, one folder per pull
+  models/links/               the shards of split models, linked under their original names
+  runtime/                    llama.cpp builds downloaded for your GPU (CUDA), and running servers' PIDs
   worktrees/<project>/<key>/  one git worktree per ticket run
   checkpoints/<project>.git   shadow git directories for checkpoints
   artifacts/<ticket>/         notes, documents, email drafts, screenshots
@@ -315,9 +316,9 @@ Every project has a context shared by all its clanks, and every clank has a memo
 
 clanks downloads and runs models itself, with a llama.cpp runtime bundled inside the app. A fresh install needs nothing else: no Ollama, no separate model server, no command line. Models are pulled straight from Hugging Face into clanks' own store and run by clanks' own runtime. The experience will feel familiar to anyone who has used Ollama (short names, pull, a local store, models loaded on demand and unloaded when idle), but nothing depends on it.
 
-**Runtime.** llama.cpp's `llama-server`, pinned to a tested release and shipped as prebuilt binaries per platform and GPU backend: Metal on Apple Silicon; CPU and Vulkan on Windows and Linux, with CUDA builds downloaded on first run when an NVIDIA GPU is found. The model manager starts one `llama-server` per loaded model as a child process on 127.0.0.1, on a random port, with a per-launch API key, and uses its OpenAI-compatible API. If it crashes, the supervisor restarts it and the affected runs resume from their last checkpoint.
+**Runtime.** llama.cpp's `llama-server`, pinned to a tested release (`packages/models/src/runtime/llama-cpp.json` lists every build with its sha256) and shipped as prebuilt binaries per platform and GPU backend: Metal on Apple Silicon; CPU and Vulkan on Windows and Linux. When an NVIDIA GPU is found, the Models screen offers the CUDA build as a download (about 600 MB), checked the same way. `scripts/fetch-llama.ts` in `packages/models` fetches the bundled builds at build time and keeps only the server and its libraries. The model manager starts one `llama-server` per loaded model as a child process on 127.0.0.1, on a random port, with a per-launch API key, a scrubbed environment and `--offline`, and uses its OpenAI-compatible API. It sets the context and slots and leaves layer placement to llama.cpp's own fitting to free memory (`--fit`); where the layers and buffers ended up, read from its log, is what the Models screen shows. If it crashes, the supervisor restarts it and the affected runs resume from their last checkpoint. Servers a crashed app left behind are stopped on the next start.
 
-**Catalog.** A versioned JSON file in `packages/models` lists recommended models by short name and tag (`name:tag`), with the Hugging Face repo and file, sha256, size, quantisation, context length, capabilities (tools, vision), licence and role tags (`code`, `general`, `reasoning`, `writing`, `design`, `long-context`) that the crew docs match against. The app ships with a copy and can refresh it from this repo. It is data, never code.
+**Catalog.** A versioned JSON file in `packages/models` lists recommended models by short name and tag (`name:tag`), with the Hugging Face repo and file, sha256, size, quantisation, context length, capabilities (tools, vision), licence and role tags (`code`, `general`, `reasoning`, `writing`, `design`, `long-context`) that the crew docs match against. Each entry pins its repo's revision and carries the GGUF facts the memory estimate needs, so the catalog shows what fits with no network; `pnpm --filter @clanks/models catalog:update` fills those in from Hugging Face. The app ships with a copy; refreshing it from this repo comes later. It is data, never code.
 
 **Pulling.**
 
@@ -667,7 +668,7 @@ The first steps, in the order they unblock each other:
 
 - **License.** MIT or Apache-2.0 for adoption, or AGPL to keep forks open.
 - **Starter models.** Which models go in the catalog for each hardware tier, and how often to re-pick them. Needs the evaluation harness (see the roadmap) run against the crew docs.
-- **GPU builds.** CUDA builds of llama.cpp are large. Download on first run as planned, or ship a separate installer for NVIDIA machines.
+- **GPU builds.** CUDA builds of llama.cpp are large, so for now they're a download the Models screen offers on NVIDIA machines. Revisit a separate installer for NVIDIA machines, and ROCm builds for AMD cards, which run on Vulkan today.
 - **Windows sandboxing.** There is no lightweight equivalent of Seatbelt or bubblewrap, so host commands on Windows rely on the permission policy alone. Decide whether Docker or WSL should be the default there.
 - **Ollama API scope.** How much of Ollama's API to mirror (`/api/embed`, `/api/create` with Modelfiles) beyond the common subset.
 - **Studio scope.** Where to draw the line before the first release: pen tool, boolean operations and Figma import are listed under Later.

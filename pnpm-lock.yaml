@@ -45,9 +45,15 @@ importers:
       '@clanks/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@clanks/models':
+        specifier: workspace:*
+        version: link:../../packages/models
       '@clanks/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
+      '@clanks/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
       '@fontsource-variable/geist':
         specifier: ^5.3.0
         version: 5.3.0
@@ -119,11 +125,42 @@ importers:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@24.19.1)(vite@7.3.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
 
+  packages/models:
+    dependencies:
+      '@clanks/core':
+        specifier: workspace:*
+        version: link:../core
+      '@huggingface/gguf':
+        specifier: ^0.4.6
+        version: 0.4.6
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@clanks/providers':
+        specifier: workspace:*
+        version: link:../providers
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.5
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@22.20.5)(vite@7.3.6(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
+
   packages/orchestrator:
     dependencies:
       '@clanks/core':
         specifier: workspace:*
         version: link:../core
+      '@clanks/models':
+        specifier: workspace:*
+        version: link:../models
+      '@clanks/providers':
+        specifier: workspace:*
+        version: link:../providers
       '@trpc/server':
         specifier: ^11.19.0
         version: 11.19.0(typescript@6.0.3)
@@ -146,6 +183,19 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@22.20.5)(vite@7.3.6(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
+
+  packages/providers:
+    dependencies:
+      '@clanks/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.5
       vitest:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@22.20.5)(vite@7.3.6(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
@@ -790,6 +840,14 @@ packages:
 
   '@fontsource-variable/geist@5.3.0':
     resolution: {integrity: sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA==}
+
+  '@huggingface/gguf@0.4.6':
+    resolution: {integrity: sha512-+S4ysHzzNN77rU0gBcuuGN+x1TYNP4M7EgOEZ2rKaTz8dZ8o2N92qapQaeTjnPPNiWSc23iCV9E8u2A9VvK+rg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  '@huggingface/tasks@0.21.57':
+    resolution: {integrity: sha512-Pt7C6D6Fz1SyG/jWzoHO37JeN47fFCZsKt+u70ZMnvAeOqwLkmJcDC/KJzmnCBjoV9oiC2bptFiXoOQRMbCh/w==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -3410,6 +3468,12 @@ snapshots:
   '@fontsource-variable/geist-mono@5.3.0': {}
 
   '@fontsource-variable/geist@5.3.0': {}
+
+  '@huggingface/gguf@0.4.6':
+    dependencies:
+      '@huggingface/tasks': 0.21.57
+
+  '@huggingface/tasks@0.21.57': {}
 
   '@humanfs/core@0.19.2':
     dependencies:

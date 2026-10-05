@@ -5,9 +5,10 @@ const TIMEOUT_MS = 60_000;
 
 /**
  * `--smoke-test`: proves a build works end to end, then quits. The window must load, React must
- * mount, and the UI's first tRPC call must make it through the preload bridge to the orchestrator
- * and the migrated database. CI runs this against the packaged app on every platform, with
- * `--screenshot=<file>` to keep a picture of the window.
+ * mount, its tRPC calls must make it through the preload bridge to the orchestrator and the
+ * migrated database, and the bundled llama.cpp build must start and report this machine's devices.
+ * CI runs this against the packaged app on every platform, with `--screenshot=<file>` to keep a
+ * picture of the window.
  */
 export async function runSmokeTest(window: BrowserWindow, screenshot?: string): Promise<string> {
   // Anything the window reports goes to the log, so a failure in CI says why.
@@ -30,7 +31,7 @@ export async function runSmokeTest(window: BrowserWindow, screenshot?: string): 
     if (window.isDestroyed()) throw new Error('The window closed');
     if (!window.webContents.isLoading()) {
       const text = (await window.webContents.executeJavaScript(
-        `document.querySelector('[data-testid="app-info"]')?.innerText ?? ''`,
+        `document.querySelector('[data-testid="hardware"] dl')?.innerText ?? ''`,
       )) as string;
       if (text) {
         if (screenshot) await saveScreenshot(window, screenshot);
@@ -38,7 +39,7 @@ export async function runSmokeTest(window: BrowserWindow, screenshot?: string): 
       }
     }
     if (Date.now() > deadline) {
-      throw new Error(`The app didn't show its info within ${TIMEOUT_MS / 1000}s`);
+      throw new Error(`The app didn't show this machine's hardware within ${TIMEOUT_MS / 1000}s`);
     }
     await sleep(250);
   }
