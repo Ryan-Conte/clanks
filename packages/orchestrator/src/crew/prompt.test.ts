@@ -1,4 +1,4 @@
-import { type UserProfile } from '@clanks/core';
+import { type UserProfile, defaultClankBrowser } from '@clanks/core';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -66,7 +66,7 @@ function sentinel(): Clank {
     id: 'sentinel',
     name: 'Sentinel',
     avatar: 'red',
-    overrides: { name: null, avatar: null, model: null, tools: {} },
+    overrides: { name: null, avatar: null, model: null, tools: {}, browser: defaultClankBrowser },
     doc: 'bundled',
     docError: null,
   };

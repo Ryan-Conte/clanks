@@ -45,6 +45,7 @@ export function ActivityPane() {
     show({
       ...(checkpointId ? { checkpointId, diff: event.checkpointId ? 'step' : 'upTo' } : {}),
       ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+      ...(event.image ? { image: event.image } : {}),
     });
     // The chat follows too.
     const target =
@@ -113,6 +114,11 @@ export function ActivityPane() {
                       onClick={() => show({ tab: 'terminal', sessionId: event.sessionId! })}
                     >
                       Its output
+                    </Button>
+                  )}
+                  {event.image && (
+                    <Button size="sm" onClick={() => show({ tab: 'browser', image: event.image! })}>
+                      The page at this step
                     </Button>
                   )}
                 </div>

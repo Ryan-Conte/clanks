@@ -1,5 +1,5 @@
 import type { ClankSummary, ToolPart } from '@clanks/core';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { memo, useState } from 'react';
 import { formatSeconds } from '../../lib/format';
 import { useTRPC } from '../../lib/trpc';
@@ -52,7 +52,8 @@ function ToolRow({ part }: { part: ToolPart }) {
           <Section title="Arguments">{pretty(part.arguments)}</Section>
           {part.reason && <p className="text-dim">Why not: {part.reason}</p>}
           {part.result !== null && <Section title="Result">{part.result}</Section>}
-          {(part.checkpointId ?? part.sessionId) && (
+          {part.image && part.name === 'browser_screenshot' && <Picture path={part.image} />}
+          {(part.checkpointId ?? part.sessionId ?? part.image) && (
             <div className="flex gap-2">
               {part.checkpointId && (
                 <Button
@@ -70,6 +71,11 @@ function ToolRow({ part }: { part: ToolPart }) {
                   onClick={() => show({ tab: 'terminal', sessionId: part.sessionId! })}
                 >
                   Show in the terminal
+                </Button>
+              )}
+              {part.image && (
+                <Button size="sm" onClick={() => show({ tab: 'browser', image: part.image! })}>
+                  Show the page
                 </Button>
               )}
             </div>
@@ -92,9 +98,9 @@ function ApprovalCard({ part, conversationId, clank }: Parameters<typeof ToolCar
     decide.mutate({ conversationId, toolCallId: part.id, decision });
   const what = {
     command: 'run a command',
-    url: 'fetch a page',
+    url: part.name.startsWith('browser_') ? 'open a page' : 'fetch a page',
     path: 'use a file',
-    tool: `use ${part.name}`,
+    tool: part.name.startsWith('browser_') ? 'use the browser' : `use ${part.name}`,
   }[approval.kind];
   const project = approval.scope?.split(/[\\/]/).filter(Boolean).pop();
 
@@ -206,6 +212,20 @@ function Label({ text }: { text: string }) {
         ),
       )}
     </>
+  );
+}
+
+/** A picture the tool took, such as a screenshot the clank looked at. */
+function Picture({ path }: { path: string }) {
+  const trpc = useTRPC();
+  const picture = useQuery(trpc.chat.picture.queryOptions(path, { staleTime: Infinity }));
+  if (!picture.data) return null;
+  return (
+    <img
+      src={picture.data}
+      alt="What the clank saw"
+      className="max-h-80 w-full rounded-lg border border-line object-contain object-top"
+    />
   );
 }
 

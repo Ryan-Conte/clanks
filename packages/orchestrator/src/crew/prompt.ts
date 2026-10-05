@@ -254,6 +254,11 @@ function runText(run: RunContext): string {
         '{{user.name}} watches your file changes in the diff editor and your commands in the terminal, and approves the calls that need it. They may reject a change with a note; fix what the note says.',
       );
     }
+    if (run.tools.some((t) => t.startsWith('browser_'))) {
+      lines.push(
+        "Pages you open show in {{user.name}}'s browser pane as you work. browser_read gives a page as text with refs such as [12], which browser_click and browser_type take. If a page needs a login or shows a CAPTCHA, don't try to get past it: say so, and {{user.name}} can take over the browser. While they have it, your browser tools wait until they hand it back.",
+      );
+    }
     lines.push(
       "This is a chat, not a ticket: when you're done, reply to {{user.name}} with what you did and what you found. Board, spec, progress and output tools aren't available here.",
     );

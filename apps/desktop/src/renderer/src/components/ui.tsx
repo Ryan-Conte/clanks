@@ -337,6 +337,31 @@ export function LayersIcon() {
   );
 }
 
+export function BackIcon() {
+  return (
+    <Icon>
+      <path d="M13 8H3m0 0 4-4M3 8l4 4" />
+    </Icon>
+  );
+}
+
+export function ForwardIcon() {
+  return (
+    <Icon>
+      <path d="M3 8h10m0 0-4-4m4 4-4 4" />
+    </Icon>
+  );
+}
+
+export function GlobeIcon() {
+  return (
+    <Icon>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M2.5 8h11M8 2.5c1.6 1.6 2.4 3.4 2.4 5.5S9.6 11.9 8 13.5M8 2.5C6.4 4.1 5.6 5.9 5.6 8s.8 3.9 2.4 5.5" />
+    </Icon>
+  );
+}
+
 export function ArrowUpIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">

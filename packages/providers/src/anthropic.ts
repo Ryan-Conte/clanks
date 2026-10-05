@@ -209,7 +209,15 @@ function toAnthropic(history: ChatMessage[]): {
         const result: Anthropic.ToolResultBlockParam = {
           type: 'tool_result',
           tool_use_id: message.toolCallId,
-          content: message.content,
+          content: message.images?.length
+            ? [
+                { type: 'text', text: message.content },
+                ...message.images.map((image): Anthropic.ImageBlockParam => ({
+                  type: 'image',
+                  source: { type: 'base64', media_type: image.mediaType, data: image.data },
+                })),
+              ]
+            : message.content,
         };
         // Every result of one round goes back in a single user turn.
         const last = messages.at(-1);

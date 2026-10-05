@@ -152,10 +152,47 @@ export async function* streamOpenAI(
   yield { type: 'done', finishReason: calls.size > 0 ? 'tool_calls' : finish };
 }
 
+type ContentPart =
+  { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+
+/**
+ * The messages as the API takes them. Tool results can only be text there, so pictures a tool
+ * took go in the user turn that follows the round's results: one of their own, or the user's
+ * next message, since some chat templates insist the user and the model take turns.
+ */
+export function toOpenAIMessages(messages: ChatMessage[]): unknown[] {
+  const out: unknown[] = [];
+  let pictures: ContentPart[] = [];
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      out.push(toOpenAIMessage(message));
+      for (const image of message.images ?? []) {
+        pictures.push(
+          { type: 'text', text: 'The picture from the tool call above:' },
+          { type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } },
+        );
+      }
+      continue;
+    }
+    if (pictures.length > 0) {
+      if (message.role === 'user') {
+        out.push({ role: 'user', content: [...pictures, { type: 'text', text: message.content }] });
+        pictures = [];
+        continue;
+      }
+      out.push({ role: 'user', content: pictures });
+      pictures = [];
+    }
+    out.push(toOpenAIMessage(message));
+  }
+  if (pictures.length > 0) out.push({ role: 'user', content: pictures });
+  return out;
+}
+
 function toOpenAI(request: ChatRequest, endpoint: OpenAIEndpoint) {
   return {
     model: request.model,
-    messages: request.messages.map(toOpenAIMessage),
+    messages: toOpenAIMessages(request.messages),
     ...(request.tools?.length
       ? {
           tools: request.tools.map((tool) => ({

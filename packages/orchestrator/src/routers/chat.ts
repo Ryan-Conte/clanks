@@ -7,6 +7,8 @@ import {
   newConversationSchema,
   sendMessageSchema,
 } from '@clanks/core';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { ChatError } from '../chat/service';
 import { userProcedure } from '../procedures';
@@ -161,6 +163,20 @@ export const chatRouter = router({
   clearFolder: userProcedure
     .input(conversationIdSchema)
     .mutation(({ ctx, input }) => ctx.chat.setFolder(input, null)),
+
+  /** A picture a tool took in a chat, such as the page after a browser step, as a data URL. */
+  picture: userProcedure
+    .input(z.string().regex(/^[0-9a-f-]{36}\/[\w-]{1,80}\.(jpg|png)$/i, 'Not a picture in a chat'))
+    .query(async ({ ctx, input }) => {
+      let data: Buffer;
+      try {
+        data = await readFile(join(ctx.paths.artifacts, input));
+      } catch {
+        throw new ChatError('That picture is gone');
+      }
+      const type = input.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      return `data:${type};base64,${data.toString('base64')}`;
+    }),
 
   /** What a clank is told before a chat: its system prompt, layer by layer. */
   preview: userProcedure

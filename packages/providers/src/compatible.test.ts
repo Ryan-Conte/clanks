@@ -6,6 +6,7 @@ import {
   createOpenRouterProvider,
   createServerProvider,
 } from './compatible';
+import { toOpenAIMessages } from './openai';
 import { ProviderError } from './provider';
 import { collect, fakeApi, json, sse } from './test/http';
 
@@ -204,5 +205,50 @@ describe('model servers', () => {
       apiKey: () => undefined,
     });
     await expect(provider.listModels()).rejects.toThrow(/^Couldn't reach LM Studio: /);
+  });
+});
+
+describe('pictures from tools', () => {
+  const picture = { mediaType: 'image/jpeg' as const, data: 'AAAA' };
+  const call = (id: string) => ({ id, name: 'browser_screenshot', arguments: '{}' });
+
+  it('follow the round of results in a user turn, since tool results are text', () => {
+    expect(
+      toOpenAIMessages([
+        { role: 'assistant', content: '', toolCalls: [call('c1'), call('c2')] },
+        { role: 'tool', toolCallId: 'c1', content: 'A screenshot', images: [picture] },
+        { role: 'tool', toolCallId: 'c2', content: 'Done' },
+        { role: 'assistant', content: 'It looks fine.' },
+      ]),
+    ).toEqual([
+      expect.objectContaining({ role: 'assistant' }),
+      { role: 'tool', tool_call_id: 'c1', content: 'A screenshot' },
+      { role: 'tool', tool_call_id: 'c2', content: 'Done' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'The picture from the tool call above:' },
+          { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } },
+        ],
+      },
+      { role: 'assistant', content: 'It looks fine.' },
+    ]);
+  });
+
+  it("join the user's next message rather than making two user turns", () => {
+    const messages = toOpenAIMessages([
+      { role: 'assistant', content: '', toolCalls: [call('c1')] },
+      { role: 'tool', toolCallId: 'c1', content: 'A screenshot', images: [picture] },
+      { role: 'user', content: 'My notes' },
+    ]);
+    expect(messages).toHaveLength(3);
+    expect(messages[2]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'The picture from the tool call above:' },
+        { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } },
+        { type: 'text', text: 'My notes' },
+      ],
+    });
   });
 });

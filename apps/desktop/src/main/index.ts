@@ -1,6 +1,7 @@
 import { type Orchestrator, startOrchestrator } from '@clanks/orchestrator';
 import { type BrowserWindow, type Tray, app, dialog, nativeTheme, shell } from 'electron';
 import { join } from 'node:path';
+import { createBrowserHost } from './browser';
 import { attachIpcHandler } from './ipc/electron';
 import { createIpcHandler } from './ipc/server';
 import { keychainCipher } from './keychain';
@@ -60,12 +61,17 @@ if (!app.requestSingleInstanceLock()) {
   app
     .whenReady()
     .then(async () => {
+      const browserHost = createBrowserHost({
+        window: () => mainWindow,
+        dataDir: app.getPath('userData'),
+      });
       const started = startOrchestrator({
         dataDir: app.getPath('userData'),
         migrationsFolder: join(__dirname, 'migrations'),
         bundledCrewDir: join(__dirname, 'crew'),
         cipher: keychainCipher,
         bundledRuntimeDir: resourcePath('llama'),
+        browserHost,
         host: {
           pickFolder: async ({ title, defaultPath }) => {
             const options: Electron.OpenDialogOptions = {
@@ -114,7 +120,11 @@ if (!app.requestSingleInstanceLock()) {
       const window = openWindow();
 
       if (smokeTest && window) {
-        const info = await runSmokeTest(window, app.commandLine.getSwitchValue('screenshot'));
+        const info = await runSmokeTest(
+          window,
+          browserHost,
+          app.commandLine.getSwitchValue('screenshot'),
+        );
         console.log(`Smoke test passed: ${info}`);
         app.quit();
       }

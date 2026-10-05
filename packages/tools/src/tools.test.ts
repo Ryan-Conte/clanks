@@ -11,7 +11,7 @@ import { BUILTIN_TOOLS, builtinTool } from './index';
 import { McpManager, mcpSlug, mcpToolName, mcpToolSpec } from './mcp';
 import { docLevel, policyFor } from './policy';
 import { redactCommand, redactUrl } from './redact';
-import type { CommandResult, ToolContext, ToolSpec } from './spec';
+import type { BrowserAccess, CommandResult, ToolContext, ToolSpec } from './spec';
 import { htmlToText, searchWith } from './web';
 import { tree } from './files';
 
@@ -47,6 +47,7 @@ function context(root: string, base: string, extra: Partial<ToolContext> = {}): 
     workspace: { root, cwd: root, branch: 'clanks/test', baseCommit: base },
     shell: null,
     web: { fetch, search: null },
+    browser: null,
     signal: new AbortController().signal,
     clank: { id: 'forge', name: 'Forge' },
     maxChars: 20_000,
@@ -279,6 +280,101 @@ describe('the web tools', () => {
   });
 });
 
+describe('the browser tools', () => {
+  /** Records each step and answers it with the step's name. */
+  function browser(): { access: BrowserAccess; steps: unknown[][] } {
+    const steps: unknown[][] = [];
+    const step =
+      (name: string) =>
+      (...args: unknown[]) => {
+        steps.push([name, ...args]);
+        return Promise.resolve({ content: `did ${name}` });
+      };
+    return {
+      steps,
+      access: {
+        open: step('open'),
+        navigate: step('navigate'),
+        read: step('read'),
+        click: step('click'),
+        type: step('type'),
+        press: step('press'),
+        scroll: step('scroll'),
+        screenshot: () =>
+          Promise.resolve({
+            content: 'A screenshot',
+            image: { data: new Uint8Array([1]), mediaType: 'image/jpeg' as const },
+          }),
+        console: step('console'),
+        back: step('back'),
+        close: step('close'),
+        search: (query: string) =>
+          Promise.resolve(
+            query === 'blocked'
+              ? { results: [], page: 'Please prove you are human' }
+              : {
+                  results: [{ title: 'Surf', url: 'https://surf.test', snippet: 'Waves' }],
+                  page: null,
+                },
+          ),
+      },
+    };
+  }
+
+  it('act through the browser, taking refs however the model writes them', async () => {
+    const { access, steps } = browser();
+    const ctx = context(tempDir(), 'x', { browser: access });
+    expect((await call('browser_click', { ref: '[12]' }, ctx)).content).toBe('did click');
+    await call('browser_type', { ref: 3, text: 'foam', submit: true }, ctx);
+    await call('browser_read', {}, ctx);
+    await call('browser_scroll', {}, ctx);
+    await call('browser_scroll', { ref: '4' }, ctx);
+    expect(steps).toEqual([
+      ['click', 12],
+      ['type', 3, 'foam', true],
+      ['read', 1],
+      ['scroll', 'down', null],
+      ['scroll', 'down', 4],
+    ]);
+    expect(() => builtinTool('browser_click')!.parse({ ref: 'the button' })).toThrow();
+  });
+
+  it('show a screenshot to the model, and only to a model that can see', async () => {
+    const { access } = browser();
+    const ctx = context(tempDir(), 'x', { browser: access });
+    const shot = await call('browser_screenshot', {}, ctx);
+    expect(shot).toMatchObject({ content: 'A screenshot', showModel: true });
+    expect(builtinTool('browser_screenshot')!.needs).toEqual(['browser', 'vision']);
+    expect(builtinTool('browser_read')!.needs).toEqual(['browser']);
+  });
+
+  it('ask before opening a site, and always allow the whole site', () => {
+    const open = builtinTool('browser_open')!;
+    expect(open.approval(open.parse({ url: 'https://shop.test/a?b=1' }))).toEqual({
+      kind: 'url',
+      subject: 'https://shop.test/a?b=1',
+      pattern: 'https://shop.test/*',
+    });
+    expect(open.label(open.parse({ url: 'https://shop.test/a?token=x' }))).toBe(
+      'Opening `shop.test/a`',
+    );
+  });
+
+  it('search in the browser when no backend is set up', async () => {
+    const { access } = browser();
+    const ctx = context(tempDir(), 'x', { browser: access });
+    expect((await call('web_search', { query: 'surf' }, ctx)).content).toBe(
+      '1. Surf\n   https://surf.test\n   Waves',
+    );
+    expect((await call('web_search', { query: 'blocked' }, ctx)).content).toMatch(
+      /couldn't be picked off[\s\S]*prove you are human/,
+    );
+    await expect(call('web_search', { query: 'x' }, context(tempDir(), 'x'))).rejects.toThrow(
+      /No web search/,
+    );
+  });
+});
+
 describe('the policy', () => {
   const doc: ClankFrontmatter['tools'] = {
     allow: ['fs_read', 'browser_screenshot'],
@@ -325,6 +421,9 @@ describe('labels', () => {
         query: 'q',
         handle: 'p1',
         message: 'm',
+        keys: 'Enter',
+        ref: '1',
+        text: 't',
       });
       expect(label.length, tool.name).toBeGreaterThan(3);
     }

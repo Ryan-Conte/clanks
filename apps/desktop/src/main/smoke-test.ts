@@ -1,3 +1,4 @@
+import { type BrowserHost, PageDriver } from '@clanks/browser';
 import type { BrowserWindow } from 'electron';
 import { writeFileSync } from 'node:fs';
 
@@ -6,12 +7,16 @@ const TIMEOUT_MS = 60_000;
 /**
  * `--smoke-test`: proves a build works end to end, then quits. The window must load, React must
  * mount, its tRPC calls must make it through the preload bridge to the orchestrator and the
- * migrated database, the crew's bundled priming docs must load, and the bundled llama.cpp build
- * must start and report this machine's devices.
+ * migrated database, the crew's bundled priming docs must load, the bundled llama.cpp build must
+ * start and report this machine's devices, and the browser pane must read and click a page.
  * CI runs this against the packaged app on every platform, with `--screenshot=<file>` to keep a
  * picture of the window.
  */
-export async function runSmokeTest(window: BrowserWindow, screenshot?: string): Promise<string> {
+export async function runSmokeTest(
+  window: BrowserWindow,
+  browser: BrowserHost,
+  screenshot?: string,
+): Promise<string> {
   // Anything the window reports goes to the log, so a failure in CI says why.
   const { webContents } = window;
   webContents.on('console-message', ({ level, message }) =>
@@ -37,7 +42,8 @@ export async function runSmokeTest(window: BrowserWindow, screenshot?: string): 
       )) as [string, string];
       if (text && crew.includes('Atlas')) {
         if (screenshot) await saveScreenshot(window, screenshot);
-        return text.trim().replace(/\s*\n\s*/g, ' | ');
+        const browsed = await checkBrowser(browser);
+        return `${text.trim().replace(/\s*\n\s*/g, ' | ')} | ${browsed}`;
       }
     }
     if (Date.now() > deadline) {
@@ -46,6 +52,36 @@ export async function runSmokeTest(window: BrowserWindow, screenshot?: string): 
       );
     }
     await sleep(250);
+  }
+}
+
+const SMOKE_PAGE = `<title>Smoke</title><h1>Waves</h1>
+<button onclick="document.title = 'Clicked'">Paddle out</button>`;
+
+/** Opens a tab, reads it as the clanks do, clicks its button over CDP and takes a picture. */
+async function checkBrowser(host: BrowserHost): Promise<string> {
+  const tab = host.open({
+    session: { key: 'smoke-test', persistent: false },
+    guard: () => true,
+    events: { state: () => {}, windowOpen: () => {}, download: () => {} },
+  });
+  try {
+    await tab.ready;
+    const driver = new PageDriver(tab.cdp);
+    await driver.attach();
+    await tab.load(`data:text/html,${encodeURIComponent(SMOKE_PAGE)}`);
+    const page = await driver.snapshot();
+    if (!page.lines.includes('[1] button "Paddle out"')) {
+      throw new Error(`The browser read the page as: ${page.lines.join(' | ')}`);
+    }
+    await driver.click(1);
+    if ((await driver.evaluate<string>('document.title')) !== 'Clicked') {
+      throw new Error("Clicking the page's button over CDP did nothing");
+    }
+    const picture = await tab.capture({ maxWidth: 400, quality: 50 });
+    return `browser read and clicked a page (${picture.length}-byte picture)`;
+  } finally {
+    tab.close();
   }
 }
 

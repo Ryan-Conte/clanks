@@ -73,6 +73,11 @@ export interface ToolPart {
   checkpointId: string | null;
   /** The terminal session it ran in, for commands. */
   sessionId: string | null;
+  /**
+   * A picture of what it saw, such as the page after a browser step, in the chat's artifacts.
+   * Missing on calls saved before pictures were kept.
+   */
+  image?: string | null;
 }
 
 /** Something the app says in a reply, which the model never sees: "Rewound here." */

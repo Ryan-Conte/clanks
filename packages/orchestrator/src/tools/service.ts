@@ -11,6 +11,7 @@ import {
 import {
   BUILTIN_TOOLS,
   type McpManager,
+  type ToolNeed,
   type ToolSpec,
   type WebAccess,
   builtinTool,
@@ -62,13 +63,23 @@ export class ToolService extends EventEmitter<{ change: [] }> {
 
   /**
    * The tools a clank gets in a chat: those its policy doesn't turn off, that this chat can
-   * support. Files, commands and git need a workspace; search needs a backend.
+   * support. Files, commands and git need a workspace; search needs a backend or the browser;
+   * the browser needs the app; screenshots need a model that can see them.
    */
-  async forChat(clank: Clank, chat: { workspace: boolean }): Promise<Toolset> {
+  async forChat(
+    clank: Clank,
+    chat: { workspace: boolean; browser?: boolean; vision?: boolean },
+  ): Promise<Toolset> {
     const specs = new Map<string, ToolSpec>();
     const levels = new Map<string, ToolPolicyLevel>();
     const problems: string[] = [];
-    const search = this.searchConfigured();
+    const has: Record<ToolNeed, boolean> = {
+      workspace: chat.workspace,
+      shell: chat.workspace,
+      search: (chat.browser ?? false) || this.searchConfigured(),
+      browser: chat.browser ?? false,
+      vision: chat.vision ?? false,
+    };
     for (const spec of BUILTIN_TOOLS) {
       const { level } = policyFor({
         doc: clank.frontmatter.tools,
@@ -76,8 +87,7 @@ export class ToolService extends EventEmitter<{ change: [] }> {
         name: spec.name,
       });
       if (level === 'off') continue;
-      if (!chat.workspace && spec.needs.some((n) => n === 'workspace' || n === 'shell')) continue;
-      if (!search && spec.needs.includes('search')) continue;
+      if (!spec.needs.every((need) => has[need])) continue;
       specs.set(spec.name, spec);
       levels.set(spec.name, level);
     }

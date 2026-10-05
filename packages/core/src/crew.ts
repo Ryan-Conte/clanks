@@ -120,6 +120,25 @@ export const clankFrontmatterSchema = z
 
 export type ClankFrontmatter = z.infer<typeof clankFrontmatterSchema>;
 
+const sitePatternsSchema = z.array(z.string().trim().min(1).max(300)).max(200);
+
+/** How a clank browses, as the user set it on its profile. */
+export const clankBrowserSchema = z.object({
+  /** Sites it may open. Empty allows any site that `deny` doesn't name. */
+  allow: sitePatternsSchema,
+  /** Sites it may never open. Wins over `allow`. */
+  deny: sitePatternsSchema,
+  /**
+   * Keep its cookies and storage on disk, across chats and restarts, so it stays signed in to
+   * sites. Otherwise each chat starts with a fresh, empty browser.
+   */
+  persistent: z.boolean(),
+});
+
+export type ClankBrowser = z.infer<typeof clankBrowserSchema>;
+
+export const defaultClankBrowser: ClankBrowser = { allow: [], deny: [], persistent: false };
+
 /** What the user changed about a clank in the app. Null keeps what its doc says. */
 export interface ClankOverrides {
   name: string | null;
@@ -128,6 +147,7 @@ export interface ClankOverrides {
   model: ModelChoice | null;
   /** Tool policies that win over the doc's. */
   tools: ToolOverrides;
+  browser: ClankBrowser;
 }
 
 export const clankProfilePatchSchema = z
@@ -136,6 +156,7 @@ export const clankProfilePatchSchema = z
     avatar: avatarSchema.nullable(),
     model: modelChoiceSchema.nullable(),
     tools: toolOverridesSchema,
+    browser: clankBrowserSchema,
   })
   .partial()
   .strict();
@@ -161,6 +182,7 @@ export interface ClankSummary {
   /** Context the doc asks for, in tokens. */
   minContext: number;
   needs: ('tools' | 'vision')[];
+  browser: ClankBrowser;
 }
 
 /** The parts of a priming doc: frontmatter for the app, a body for the model. */

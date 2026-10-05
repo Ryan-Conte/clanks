@@ -64,7 +64,7 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
   runtime/                    llama.cpp builds downloaded for your GPU (CUDA), and running servers' PIDs
   worktrees/<repo>/<key>/     one git worktree per run: a ticket's, or a chat's about a folder
   checkpoints/<run>.git       a shadow git directory per run, for its checkpoints
-  artifacts/<ticket>/         notes, documents, email drafts, screenshots
+  artifacts/<ticket>/         notes, documents, email drafts, screenshots; until tickets, <chat>/ holds its browser steps' pictures
   crew/                       your clank library: edited priming docs (<id>.md) and custom clanks
   browser/                    persistent browser sessions, only when enabled
   chromium/                   the app window's own Chromium caches and storage
@@ -394,7 +394,7 @@ Usage is recorded for every call. Cloud calls are priced from tables in config; 
 - Every tool declares a short live label for the board ("Running `npm test`", "Editing `src/cart.ts`"), with redaction rules for commands and URLs. `post_progress` takes an optional list of plan steps, which cards show as progress.
 - Every tool declares a risk level. Each clank has a policy mapping tools to allow, ask, deny or off. Defaults come from the clank's priming doc; Settings override them. Approval prompts can widen a rule to a command or a host for the whole project.
 - Outbound actions are not tools. Clanks can't push, open PRs, merge, post or send. The orchestrator pushes Forge's branch and opens its pull request when Forge submits on a connected repo, and does everything else only when you approve, so no model output, injected or not, can trigger them. Integration operations that spend money, publish or contact people are tools, but locked to asking every time.
-- `web_search` uses a backend you configure: a self-hosted SearXNG, or a Brave or Tavily key. Without one it runs the search in the built-in browser, where you can watch it; until the browser arrives (Milestone 4), clanks without a backend get no search tool and fetch pages they know the address of.
+- `web_search` uses a backend you configure: a self-hosted SearXNG, or a Brave or Tavily key. Without one it searches DuckDuckGo's plain HTML results in a tab of the built-in browser, where you can watch it, and falls back to the page as text when it can't pick the results out.
 
 ## Integrations
 
@@ -512,9 +512,20 @@ It is also the review surface for pull requests and for comparing versions of sp
 - The browser controller drives tabs over the Chrome DevTools Protocol through `webContents.debugger`: navigation, input events, the accessibility tree, screenshots and console messages.
 - `browser_read` returns a compact text snapshot: title, URL and the accessibility tree with numbered refs, such as `[12] button "Book now"`. `browser_click` and `browser_type` take a ref. Text-first works for local models without vision; vision models can also use `browser_screenshot`.
 - Sessions are isolated. Each run starts with a fresh in-memory partition. A clank can be given a persistent partition for sites you want it to stay signed in to. Your own browser's cookies and passwords are never involved.
-- You watch live. A banner shows which clank is driving. **Take over** pauses the clank's browser tools (they return "user has control") so you can sign in, dismiss something or steer. **Hand back** resumes.
+- You watch live. A banner shows which clank is driving. **Take over** pauses the clank's browser tools (they wait until you hand back) so you can sign in, dismiss something or steer. **Hand back** resumes.
 - Guard rails: per-clank site allow and deny lists checked on every navigation; `browser_type` refuses password fields; downloads are blocked unless approved; no file uploads; new windows open as tabs.
 - Forge uses the same pane to preview its dev server, so you see the site being built.
+
+In a chat (Milestone 4), the browser works whether or not the chat is about a folder, and the workbench opens on it when the clank opens a tab. Details as built:
+
+- **One view per tab, at the pane's size.** A tab shows at the pane's own width, so what the clank reads is what you see. Tabs that aren't on screen stay on the window, hidden, so their pages keep laying out and taking input; a view off the window altogether gets no size. A hidden page draws nothing, so to picture it the view is shown for a moment with only its corner pixel inside the window.
+- **Pages as text.** `browser_read` turns the accessibility tree into lines: headings, paragraphs, list items and table rows, with every element it can act on numbered, such as `[12] link "Pricing" (/pricing)`. Elements in running text stay in the sentence; elsewhere each gets its own line. A ref keeps its number for as long as the page lives. `browser_open`, `browser_navigate`, `browser_back` and any click, typing or key that leads to a new page return the page as text straight away, which saves small models a round trip. Long pages come in parts by line.
+- **Acting like a person.** Clicks go to the middle of the element's visible box as real mouse events, and refuse when something else, such as a cookie banner, is on top of it. Typing replaces a field's text, picks a drop-down's option by its label, and refuses password and card fields. Page dialogs are answered for safety: alerts are closed, questions are answered Cancel, and the clank is told.
+- **Pictures.** After each step the page is kept as a small JPEG in the chat's artifacts; tool cards and the activity timeline show it in the pane. `browser_screenshot` is offered only to models that can see, and a reply keeps only its newest screenshot in the conversation.
+- **Take over.** While you have control, the clank's browser tools wait (up to 15 minutes, or until you stop the reply), then carry on with a note that you had the browser. You can type an address and go back, forward or reload. The site lists apply only while the clank drives, and file pickers work only for you.
+- **Sessions.** A chat's tabs share an in-memory session that's cleared when the chat is deleted. **Stay signed in** on a clank's profile gives it one kept session under `browser/<clank>`, across chats and restarts, which **Sign out everywhere** clears. Pages get no permissions (camera, location, notifications and the like) and see an ordinary Chrome user agent.
+- **Downloads** are stopped and wait in the pane for you. **Save to Downloads** fetches the file again into your Downloads folder; the clank is told either way, and can't open downloaded files.
+- **Site lists** live on each clank's profile: only these sites, and never these. They're checked on every frame navigation, redirects included, and pop-ups the lists refuse don't open.
 
 ### Terminal
 

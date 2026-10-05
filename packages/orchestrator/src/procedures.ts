@@ -1,3 +1,4 @@
+import { BrowserError } from '@clanks/browser';
 import { ModelsError } from '@clanks/models';
 import { ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
@@ -17,7 +18,8 @@ export function isUserError(error: unknown): error is Error {
     error instanceof CrewDocError ||
     error instanceof SecretsUnavailableError ||
     error instanceof WorkspaceError ||
-    error instanceof McpError
+    error instanceof McpError ||
+    error instanceof BrowserError
   );
 }
 

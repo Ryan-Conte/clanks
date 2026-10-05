@@ -295,3 +295,43 @@ describe('the Anthropic provider', () => {
     ]);
   });
 });
+
+describe('pictures from tools', () => {
+  it('go back inside their tool result', async () => {
+    const api = await fakeApi((req, res) =>
+      req.method === 'GET' ? modelsPage(res) : reply(res, [{ type: 'text', text: 'Ok' }]),
+    );
+    const withPicture: ChatRequest = {
+      model: MODEL,
+      messages: [
+        { role: 'user', content: 'How does it look?' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'tu_1', name: 'browser_screenshot', arguments: '{}' }],
+        },
+        {
+          role: 'tool',
+          toolCallId: 'tu_1',
+          content: 'A screenshot',
+          images: [{ mediaType: 'image/png', data: 'AAAA' }],
+        },
+      ],
+    };
+    await collect(provider(api.url).stream(withPicture, new AbortController().signal));
+    const sent = api.requests.find((r) => r.method === 'POST')!;
+    expect((sent.body as { messages: unknown[] }).messages[2]).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu_1',
+          content: [
+            { type: 'text', text: 'A screenshot' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          ],
+        },
+      ],
+    });
+  });
+});

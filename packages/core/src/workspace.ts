@@ -208,6 +208,8 @@ export interface ActivityEvent {
   toolCallId: string | null;
   checkpointId: string | null;
   sessionId: string | null;
+  /** A picture of the step, such as the page after a browser step, in the chat's artifacts. */
+  image: string | null;
   startedAt: Date;
   durationMs: number | null;
 }

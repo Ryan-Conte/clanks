@@ -12,6 +12,7 @@ import { BUILTIN_PROVIDER, ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { userProcedure as modelProcedure } from './procedures';
+import { browserRouter } from './routers/browser';
 import { chatRouter } from './routers/chat';
 import { crewRouter } from './routers/crew';
 import { providersRouter } from './routers/providers';
@@ -59,6 +60,7 @@ export const appRouter = router({
   chat: chatRouter,
   providers: providersRouter,
   workspace: workspaceRouter,
+  browser: browserRouter,
   tools: toolsRouter,
   mcp: mcpRouter,
 

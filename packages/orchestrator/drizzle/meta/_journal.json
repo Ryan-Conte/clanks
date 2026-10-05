@@ -29,6 +29,13 @@
       "when": 1791199303836,
       "tag": "0003_tools",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791236852572,
+      "tag": "0004_browser",
+      "breakpoints": true
     }
   ]
 }

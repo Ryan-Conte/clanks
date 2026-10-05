@@ -2,6 +2,7 @@ import type {
   ActivityEvent,
   Avatar,
   ChangedFile,
+  ClankBrowser,
   ChatUsage,
   FinishReason,
   GgufFacts,
@@ -69,6 +70,8 @@ export const clank = sqliteTable('clank', {
   model: text('model'),
   /** Tool policies the user set, which win over the doc's. */
   tools: text('tools', { mode: 'json' }).$type<ToolOverrides>(),
+  /** Its site lists and whether its browser keeps cookies. Null is the defaults. */
+  browser: text('browser', { mode: 'json' }).$type<ClankBrowser>(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
@@ -210,6 +213,8 @@ export const event = sqliteTable(
     toolCallId: text('tool_call_id'),
     checkpointId: text('checkpoint_id'),
     sessionId: text('session_id'),
+    /** A picture of the step, relative to the artifacts folder. */
+    image: text('image'),
     startedAt: integer('started_at', { mode: 'timestamp_ms' }).notNull(),
     durationMs: integer('duration_ms'),
   },

@@ -4,13 +4,14 @@ import { git } from '@clanks/workspace';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { fakeBrowserHost } from '../browser/fake-host';
 import { sqliteModelRepository } from '../store/models';
 import { startTestOrchestrator, tempDir } from '../test-helpers';
 import { formatNotes, toTurns } from './service';
 
 const MODEL = 'tiny:1b';
 
-function pulled(tools = true): ModelRecord {
+function pulled(tools = true, vision = false): ModelRecord {
   return {
     id: MODEL,
     source: 'catalog',
@@ -21,7 +22,7 @@ function pulled(tools = true): ModelRecord {
     params: '1B',
     license: 'mit',
     tags: ['code'],
-    capabilities: { tools, vision: false, reasoning: false },
+    capabilities: { tools, vision, reasoning: false },
     files: [{ role: 'model', path: 'm.gguf', sha256: 'b'.repeat(64), size: 1000 }],
     facts: {
       architecture: 'llama',
@@ -67,10 +68,17 @@ const call = (
 ) => ({ type: 'tool_call', call: { id, name, arguments: JSON.stringify(args) } }) as const;
 const say = (text: string): ChatEvent[] => [{ type: 'text', text }];
 
-function setup(replies: ChatEvent[][], options: { tools?: boolean } = {}) {
-  const orchestrator = startTestOrchestrator();
+function setup(
+  replies: ChatEvent[][],
+  options: { tools?: boolean; vision?: boolean; browser?: ReturnType<typeof fakeBrowserHost> } = {},
+) {
+  const orchestrator = startTestOrchestrator(
+    options.browser ? { browserHost: options.browser.host } : {},
+  );
   const { context } = orchestrator;
-  sqliteModelRepository(context.store.db).putModel(pulled(options.tools ?? true));
+  sqliteModelRepository(context.store.db).putModel(
+    pulled(options.tools ?? true, options.vision ?? false),
+  );
   const blobs = join(orchestrator.paths.models, 'blobs');
   mkdirSync(blobs, { recursive: true });
   writeFileSync(join(blobs, `sha256-${'b'.repeat(64)}`), 'gguf');
@@ -537,5 +545,105 @@ describe('reviewing in the diff editor', () => {
     expect(await git(['show', `${state.run!.branch}:src/app.ts`], { cwd: root })).toBe(
       'a\nB\nc\nd\nE\nf',
     );
+  });
+});
+
+describe('a clank with a browser', () => {
+  const pages = {
+    'https://boards.test/': {
+      title: 'Boards',
+      text: ['Soft tops are the easiest boards to learn on.'],
+      elements: [{ role: 'link' as const, name: 'Prices', href: '/prices' }],
+    },
+    'https://boards.test/prices': { title: 'Prices', text: ['Foamie 7ft: $399'] },
+    'https://html.duckduckgo.com/html/?q=beginner%20boards': {
+      title: 'Search',
+      results: [{ title: 'Boards', url: 'https://boards.test/', snippet: 'Soft tops' }],
+    },
+  };
+
+  it('browses without a folder, keeping a picture of each step', async () => {
+    const browser = fakeBrowserHost(pages);
+    const { chat, context, fake } = setup(
+      [
+        [call('browser_open', { url: 'https://boards.test/' }, 'o1')],
+        [call('browser_click', { ref: '[1]' }, 'c1')],
+        [call('browser_read', {}, 'r1')],
+        say('A Foamie 7ft is $399.'),
+      ],
+      { browser },
+    );
+    const { conversation } = chat.start('scout', 'How much is a beginner board?');
+    const messages = await settled(chat, conversation.id);
+    const parts = tools(messages.at(-1)!);
+    expect(parts.map((p) => [p.name, p.status])).toEqual([
+      ['browser_open', 'done'],
+      ['browser_click', 'done'],
+      ['browser_read', 'done'],
+    ]);
+    expect(parts[1]!.result).toBe(
+      'Clicked [1]. It led to a new page:\n\nPrices\nhttps://boards.test/prices\n\nFoamie 7ft: $399',
+    );
+    // Every step left a picture of the page for the user, and the activity log points at it.
+    const image = parts[0]!.image!;
+    expect(image).toBe(`${conversation.id}/o1.jpg`);
+    expect(existsSync(join(context.paths.artifacts, image))).toBe(true);
+    const steps = context.activity.list(conversation.id).filter((e) => e.kind === 'tool');
+    expect(steps.map((e) => e.image)).toEqual(parts.map((p) => p.image));
+    // The model read the page as text, with nothing it can't see.
+    const last = fake.requests.at(-1)!.messages.at(-1)!;
+    expect(last).toMatchObject({ role: 'tool', toolCallId: 'r1' });
+    expect(last).not.toHaveProperty('images');
+    expect((last as { content: string }).content).toContain('Foamie 7ft: $399');
+    // Scout was told about the pane.
+    expect(fake.requests[0]!.messages[0]!.content).toContain('browser pane');
+
+    await chat.delete(conversation.id);
+    expect(browser.tabs[0]!.closed).toBe(true);
+    expect(existsSync(join(context.paths.artifacts, conversation.id))).toBe(false);
+  });
+
+  it('offers screenshots only to a model that can see, and shows it the newest', async () => {
+    const blind = setup([say('Ok.')], { browser: fakeBrowserHost(pages) });
+    const first = blind.chat.start('scout', 'Hi');
+    await settled(blind.chat, first.conversation.id);
+    const offered = (blind.fake.requests[0]!.tools ?? []).map((t) => t.name);
+    expect(offered).toContain('browser_read');
+    expect(offered).not.toContain('browser_screenshot');
+
+    const { chat, fake } = setup(
+      [
+        [call('browser_open', { url: 'https://boards.test/' }, 'o1')],
+        [call('browser_screenshot', {}, 's1')],
+        [call('browser_screenshot', {}, 's2')],
+        say('It looks clean.'),
+      ],
+      { browser: fakeBrowserHost(pages), vision: true },
+    );
+    const { conversation } = chat.start('scout', 'How does it look?');
+    await settled(chat, conversation.id);
+    expect((fake.requests[0]!.tools ?? []).map((t) => t.name)).toContain('browser_screenshot');
+    const sent = fake.requests.at(-1)!.messages.filter((m) => m.role === 'tool');
+    const [open, firstShot, secondShot] = sent;
+    expect(open!.images).toBeUndefined();
+    expect(firstShot!.images).toBeUndefined();
+    expect(firstShot!.content).toMatch(/picture was here; it was dropped/);
+    expect(secondShot!.images).toEqual([
+      { mediaType: 'image/jpeg', data: Buffer.from([0xff, 0xd8, 0xff]).toString('base64') },
+    ]);
+  });
+
+  it('searches in the browser when no search backend is set up', async () => {
+    const browser = fakeBrowserHost(pages);
+    const { chat } = setup(
+      [[call('web_search', { query: 'beginner boards' }, 'w1')], say('Found one.')],
+      { browser },
+    );
+    const { conversation } = chat.start('scout', 'Find beginner boards');
+    const messages = await settled(chat, conversation.id);
+    expect(tools(messages.at(-1)!)[0]!.result).toBe(
+      '1. Boards\n   https://boards.test/\n   Soft tops',
+    );
+    expect(browser.tabs).toHaveLength(1);
   });
 });

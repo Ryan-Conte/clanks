@@ -18,9 +18,10 @@ export class ActivityService extends EventEmitter<{ event: [ActivityEvent] }> {
     this.setMaxListeners(100);
   }
 
-  append(entry: Omit<ActivityEvent, 'id'>): ActivityEvent {
+  append(entry: Omit<ActivityEvent, 'id' | 'image'> & { image?: string | null }): ActivityEvent {
     const values = {
       ...entry,
+      image: entry.image ?? null,
       input: entry.input === null ? null : headTail(entry.input, MAX_FIELD),
       output: entry.output === null ? null : headTail(entry.output, MAX_FIELD),
     };

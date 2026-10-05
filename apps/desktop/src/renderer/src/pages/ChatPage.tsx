@@ -1,4 +1,5 @@
 import type {
+  BrowserState,
   ChatLiveEvent,
   ClankSummary,
   ConversationSummary,
@@ -293,6 +294,19 @@ function useWorkspaceState(conversation: ConversationSummary | null): WorkspaceS
   return conversation?.folder ? state : null;
 }
 
+/** The chat's browser tabs, kept live once the chat is saved. */
+function useBrowserState(conversation: ConversationSummary | null): BrowserState | null {
+  const trpc = useTRPC();
+  const [state, setState] = useState<BrowserState | null>(null);
+  useSubscription(
+    trpc.browser.live.subscriptionOptions(conversation?.id ?? '', {
+      enabled: conversation !== null,
+      onData: setState,
+    }),
+  );
+  return conversation ? state : null;
+}
+
 /** The header, the conversation and the box to write in, with the workbench beside them. */
 function ChatFrame({
   clank,
@@ -307,22 +321,32 @@ function ChatFrame({
   const [open, setOpen] = useState(true);
   const [focus, setFocus] = useState<WorkbenchFocus | null>(null);
   const state = useWorkspaceState(conversation);
+  const browser = useBrowserState(conversation);
   const show = useCallback((next: Omit<WorkbenchFocus, 'nonce'>) => {
     setOpen(true);
     setFocus((current) => ({ ...next, nonce: (current?.nonce ?? 0) + 1 }));
   }, []);
+  // A tab the clank opens brings the browser forward, so the user sees it browse.
+  const tabCount = browser?.tabs.length ?? 0;
+  const [seenTabs, setSeenTabs] = useState(0);
+  if (tabCount !== seenTabs) {
+    setSeenTabs(tabCount);
+    if (tabCount > seenTabs) show({ tab: 'browser' });
+  }
   const hasFolder = conversation?.folder != null;
+  const hasWorkbench = hasFolder || tabCount > 0;
   const workbench = useMemo(
     () => ({
       state,
+      browser,
       conversationId: conversation?.id ?? null,
       replying: conversation?.replying ?? false,
-      open: open && hasFolder,
+      open: open && hasWorkbench,
       setOpen,
       focus,
       show,
     }),
-    [state, conversation?.id, conversation?.replying, open, hasFolder, focus, show],
+    [state, browser, conversation?.id, conversation?.replying, open, hasWorkbench, focus, show],
   );
 
   return (
@@ -344,7 +368,7 @@ function ChatFrame({
             onClose={() => setShowPrompt(false)}
           />
         )}
-        {workbench.open && <Workbench clankId={clank.id} />}
+        {workbench.open && <Workbench clankId={clank.id} folder={hasFolder} />}
       </div>
     </WorkbenchContext>
   );
@@ -361,7 +385,8 @@ function ChatHeader(props: {
   const { go } = useNav();
   const providers = useProviders();
   const model = useClankModel(clank);
-  const { open: workbenchOpen, setOpen: setWorkbenchOpen } = useWorkbench();
+  const { open: workbenchOpen, setOpen: setWorkbenchOpen, browser } = useWorkbench();
+  const browsing = (browser?.tabs.length ?? 0) > 0;
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -427,12 +452,14 @@ function ChatHeader(props: {
                 <FolderIcon />
               </IconButton>
             ))}
-          {conversation?.folder && (
+          {(conversation?.folder || browsing) && (
             <IconButton
               label={
                 workbenchOpen
                   ? 'Hide the workbench'
-                  : 'Show the workbench: diff, terminal and activity'
+                  : conversation?.folder
+                    ? 'Show the workbench: diff, terminal, browser and activity'
+                    : 'Show the workbench: browser and activity'
               }
               onClick={() => setWorkbenchOpen(!workbenchOpen)}
               className={workbenchOpen ? 'bg-white/[0.08] text-white' : ''}

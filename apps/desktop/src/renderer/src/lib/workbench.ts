@@ -1,7 +1,7 @@
-import type { WorkspaceState } from '@clanks/core';
+import type { BrowserState, WorkspaceState } from '@clanks/core';
 import { createContext, useContext } from 'react';
 
-export type WorkbenchTab = 'diff' | 'terminal' | 'activity';
+export type WorkbenchTab = 'diff' | 'terminal' | 'browser' | 'activity';
 
 /** Where something asked the workbench to look: a step in the diff, a command's output. */
 export interface WorkbenchFocus {
@@ -11,6 +11,8 @@ export interface WorkbenchFocus {
   diff?: 'step' | 'upTo';
   /** A terminal session to show. */
   sessionId?: string;
+  /** A picture of the page at a step, to show in the browser pane instead of the live page. */
+  image?: string;
   /** Counts up, so asking for the same place twice still moves the panes. */
   nonce: number;
 }
@@ -18,6 +20,8 @@ export interface WorkbenchFocus {
 export interface Workbench {
   /** The chat's workspace, kept live. Null until it first arrives, or for a draft. */
   state: WorkspaceState | null;
+  /** The chat's browser tabs, kept live. Null for a draft. */
+  browser: BrowserState | null;
   conversationId: string | null;
   /** The chat's clank is writing a reply. */
   replying: boolean;
@@ -29,6 +33,7 @@ export interface Workbench {
 
 export const WorkbenchContext = createContext<Workbench>({
   state: null,
+  browser: null,
   conversationId: null,
   replying: false,
   open: false,

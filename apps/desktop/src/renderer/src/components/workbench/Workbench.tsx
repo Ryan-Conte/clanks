@@ -3,8 +3,9 @@ import { type PointerEvent as ReactPointerEvent, useState } from 'react';
 import { useClank } from '../../lib/crew';
 import { useTRPC } from '../../lib/trpc';
 import { type WorkbenchTab, useWorkbench } from '../../lib/workbench';
-import { Button, ErrorText, FolderIcon, IconButton, XIcon } from '../ui';
+import { Button, Dot, ErrorText, FolderIcon, IconButton, XIcon } from '../ui';
 import { ActivityPane } from './ActivityPane';
+import { BrowserPane } from './BrowserPane';
 import { DiffPane } from './DiffPane';
 import { TerminalPane } from './TerminalPane';
 
@@ -12,16 +13,29 @@ const MIN_WIDTH = 420;
 const TABS: [WorkbenchTab, string][] = [
   ['diff', 'Diff'],
   ['terminal', 'Terminal'],
+  ['browser', 'Browser'],
   ['activity', 'Activity'],
 ];
+/** Tabs that show the chat's files, which need a folder. */
+const FILE_TABS = new Set<WorkbenchTab>(['diff', 'terminal']);
 
-/** Beside the chat: what the clank is changing, running and doing, as it happens. */
-export function Workbench({ clankId }: { clankId: string }) {
+/**
+ * Beside the chat: what the clank is changing, running, browsing and doing, as it happens. The
+ * diff and terminal need a folder; the browser and the activity work in any chat.
+ */
+export function Workbench({ clankId, folder }: { clankId: string; folder: boolean }) {
   const trpc = useTRPC();
-  const { state, conversationId, setOpen, focus } = useWorkbench();
+  const { state, browser, conversationId, setOpen, focus } = useWorkbench();
   const clank = useClank(clankId);
-  const [tab, setTab] = useState<WorkbenchTab>('diff');
-  const [visited, setVisited] = useState<Set<WorkbenchTab>>(new Set(['diff']));
+  const tabs = TABS.filter(
+    ([id]) => (folder || !FILE_TABS.has(id)) && (id !== 'browser' || browser?.available),
+  );
+  const first: WorkbenchTab = folder ? 'diff' : 'browser';
+  const [chosen, setTab] = useState<WorkbenchTab>(first);
+  const [visited, setVisited] = useState<Set<WorkbenchTab>>(new Set([first]));
+  // A tab that went away, such as Diff when the folder is cleared, falls back to the first.
+  const tab = tabs.some(([id]) => id === chosen) ? chosen : (tabs[0]?.[0] ?? 'activity');
+  const seen = new Set([...visited, tab]);
   const [width, setWidth] = useState(() =>
     Math.max(MIN_WIDTH, Math.round(window.innerWidth * 0.42)),
   );
@@ -71,7 +85,7 @@ export function Workbench({ clankId }: { clankId: string }) {
       />
       <header className="flex items-center gap-1 border-b border-line px-2 py-1.5">
         <nav className="flex gap-0.5" aria-label="Workbench">
-          {TABS.map(([id, label]) => (
+          {tabs.map(([id, label]) => (
             <button
               key={id}
               type="button"
@@ -80,6 +94,11 @@ export function Workbench({ clankId }: { clankId: string }) {
               className={`rounded-lg px-3 py-1 text-[13px] transition-colors ${tab === id ? 'bg-white/[0.08] text-white' : 'text-dim hover:text-white'}`}
             >
               {label}
+              {id === 'browser' && (browser?.busy || browser?.control === 'user') && (
+                <span className="ml-1.5 inline-block align-middle">
+                  <Dot tone={browser.control === 'user' ? 'amber' : 'mint'} live />
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -104,45 +123,54 @@ export function Workbench({ clankId }: { clankId: string }) {
           <XIcon />
         </IconButton>
       </header>
-      {!state ? null : state.status !== 'ready' ? (
-        <div className="flex flex-col gap-3 p-6 text-sm">
-          <p className="text-white/85">{statusText(state.status, state.folder, name)}</p>
-          {state.error && <ErrorText>{state.error}</ErrorText>}
-          {(state.status === 'not_repo' || state.status === 'no_commits') && conversationId && (
-            <div>
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={setupGit.isPending}
-                onClick={() => setupGit.mutate(conversationId)}
-              >
-                {state.status === 'not_repo' ? 'Set up git here' : 'Commit everything'}
-              </Button>
-            </div>
-          )}
-          {setupGit.error && <ErrorText>{setupGit.error.message}</ErrorText>}
-        </div>
-      ) : !run ? (
-        <p className="p-6 text-sm text-dim">Making {name}'s copy of the folder…</p>
-      ) : (
-        <div className="relative min-h-0 flex-1">
-          {visited.has('diff') && (
-            <div className={tab === 'diff' ? 'absolute inset-0' : 'hidden'}>
-              <DiffPane clankId={clankId} width={width} />
-            </div>
-          )}
-          {visited.has('terminal') && (
-            <div className={tab === 'terminal' ? 'absolute inset-0' : 'hidden'}>
-              <TerminalPane />
-            </div>
-          )}
-          {visited.has('activity') && (
-            <div className={tab === 'activity' ? 'absolute inset-0' : 'hidden'}>
-              <ActivityPane />
-            </div>
-          )}
-        </div>
-      )}
+      <div className="relative min-h-0 flex-1">
+        {FILE_TABS.has(tab) && folder && !run && state && (
+          <div className="absolute inset-0 overflow-y-auto">
+            {state.status !== 'ready' ? (
+              <div className="flex flex-col gap-3 p-6 text-sm">
+                <p className="text-white/85">{statusText(state.status, state.folder, name)}</p>
+                {state.error && <ErrorText>{state.error}</ErrorText>}
+                {(state.status === 'not_repo' || state.status === 'no_commits') &&
+                  conversationId && (
+                    <div>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={setupGit.isPending}
+                        onClick={() => setupGit.mutate(conversationId)}
+                      >
+                        {state.status === 'not_repo' ? 'Set up git here' : 'Commit everything'}
+                      </Button>
+                    </div>
+                  )}
+                {setupGit.error && <ErrorText>{setupGit.error.message}</ErrorText>}
+              </div>
+            ) : (
+              <p className="p-6 text-sm text-dim">Making {name}'s copy of the folder…</p>
+            )}
+          </div>
+        )}
+        {run && seen.has('diff') && (
+          <div className={tab === 'diff' ? 'absolute inset-0' : 'hidden'}>
+            <DiffPane clankId={clankId} width={width} />
+          </div>
+        )}
+        {run && seen.has('terminal') && (
+          <div className={tab === 'terminal' ? 'absolute inset-0' : 'hidden'}>
+            <TerminalPane />
+          </div>
+        )}
+        {seen.has('browser') && tabs.some(([id]) => id === 'browser') && (
+          <div className={tab === 'browser' ? 'absolute inset-0' : 'hidden'}>
+            <BrowserPane clankId={clankId} />
+          </div>
+        )}
+        {seen.has('activity') && (
+          <div className={tab === 'activity' ? 'absolute inset-0' : 'hidden'}>
+            <ActivityPane />
+          </div>
+        )}
+      </div>
       {openFolder.error && (
         <div className="border-t border-line px-3 py-2">
           <ErrorText>{openFolder.error.message}</ErrorText>

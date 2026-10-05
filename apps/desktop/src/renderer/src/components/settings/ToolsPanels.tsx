@@ -26,12 +26,12 @@ export function WebSearchPanel() {
   return (
     <Panel
       title="Web search"
-      description="For clanks' web_search tool. Without a backend, clanks can still fetch pages they know the address of."
+      description="For clanks' web_search tool. Without a backend, clanks search DuckDuckGo in the browser pane, where you can watch."
     >
       <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Search backend">
         {(
           [
-            ['none', 'None'],
+            ['none', 'In the browser'],
             ['searxng', 'SearXNG'],
             ['brave', 'Brave Search'],
             ['tavily', 'Tavily'],

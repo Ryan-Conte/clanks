@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Avatar } from '../components/Avatar';
 import { ModelPicker } from '../components/ModelPicker';
+import { BrowserPanel } from '../components/crew/BrowserPanel';
 import { ToolsPanel } from '../components/crew/ToolsPanel';
 import { Badge, Button, ErrorText, Panel, inputClass } from '../components/ui';
 import {
@@ -123,6 +124,7 @@ export function ClankPage({ clankId }: { clankId: string }) {
       </header>
       <ProfilePanel clank={clank} />
       <ToolsPanel clank={clank} />
+      <BrowserPanel clank={clank} />
       <DocPanel clank={clank} />
     </div>
   );

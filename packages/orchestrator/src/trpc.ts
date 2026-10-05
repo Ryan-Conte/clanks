@@ -2,6 +2,7 @@ import type { ModelManager } from '@clanks/models';
 import type { ProviderRegistry } from '@clanks/providers';
 import { initTRPC } from '@trpc/server';
 import type { ActivityService } from './activity/service';
+import type { BrowserService } from './browser/service';
 import type { ChatService } from './chat/service';
 import type { CrewService } from './crew/crew';
 import type { LocalApi } from './local-api/server';
@@ -55,6 +56,8 @@ export interface OrchestratorContext {
   /** Tool policies, "always allow" rules and search. */
   tools: ToolService;
   mcp: McpService;
+  /** Every chat's browser tabs, and who's driving them. */
+  browser: BrowserService;
   /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
   localApi: LocalApi;
   host: Host | null;

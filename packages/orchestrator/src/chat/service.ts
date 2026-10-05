@@ -1,5 +1,6 @@
 import {
   type ApprovalDecision,
+  type ChatImage,
   type ChatLiveEvent,
   type ChatMessage,
   type ChatUsage,
@@ -23,9 +24,10 @@ import { type ToolContext, ToolArgumentsError, ToolFailure, type ToolResult } fr
 import { commandShell } from '@clanks/workspace';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { ActivityService } from '../activity/service';
+import type { BrowserService } from '../browser/service';
 import type { CrewService } from '../crew/crew';
 import { readProjectInstructions } from '../crew/instructions';
 import { type AssembledPrompt, type RunContext, assemblePrompt } from '../crew/prompt';
@@ -53,17 +55,25 @@ export interface ChatServiceOptions {
     contextWindow(choice: ModelChoice): number;
   };
   settings: { get(): Settings };
-  /** Pulled models, for the crew's model, how much context each gets and whether it calls tools. */
+  /**
+   * Pulled models, for the crew's model, how much context each gets, and whether it calls tools
+   * and sees pictures.
+   */
   library: () => {
     id: string;
     facts: GgufFacts;
     missing: boolean;
-    capabilities: { tools: boolean };
+    capabilities: { tools: boolean; vision: boolean };
   }[];
+  /** Whether a cloud model or a server's model sees pictures, as its provider says. */
+  vision?: (choice: ModelChoice) => boolean;
   workspace: WorkspaceService;
   terminal: TerminalService;
   activity: ActivityService;
   tools: ToolService;
+  browser: BrowserService;
+  /** Pictures tools took, one folder per chat. */
+  artifactsDir: string;
   now?: () => Date;
   platform?: NodeJS.Platform;
   /** How often a reply being written is saved, so a crash keeps most of it. */
@@ -89,6 +99,8 @@ const DEFAULT_SERVER_CONTEXT = 32_768;
 const MAX_ROUNDS = 40;
 /** Earlier replies' tool results are cut to this in the history, to save room. */
 const OLD_RESULT_CHARS = 3000;
+/** Roughly what a picture costs a model that sees it, in tokens. */
+const IMAGE_TOKENS = 1000;
 
 /**
  * Chats with clanks. Replies are written here in the orchestrator, not in the window, so closing
@@ -279,8 +291,10 @@ export class ChatService extends EventEmitter<{
       await run.done;
     }
     this.options.terminal.closeConversation(conversationId);
+    this.options.browser.closeConversation(conversationId);
     await this.options.workspace.remove(conversationId);
     this.store.deleteConversation(conversationId);
+    rmSync(join(this.options.artifactsDir, conversationId), { recursive: true, force: true });
     this.emit('list');
   }
 
@@ -356,15 +370,17 @@ export class ChatService extends EventEmitter<{
     const status = conversation
       ? (await this.options.workspace.state(conversation.id)).status
       : null;
-    const toolset = await this.options.tools.forChat(clank, {
-      workspace: run !== null || status === 'ready',
-    });
     let choice: ModelChoice | null = null;
     try {
       choice = this.modelFor(clank.id);
     } catch {
       // No model yet: show what it would be told on one that calls tools.
     }
+    const toolset = await this.options.tools.forChat(clank, {
+      workspace: run !== null || status === 'ready',
+      browser: this.options.browser.available,
+      vision: choice !== null && this.seesImages(choice),
+    });
     return this.prompt(clank.id, conversation?.folder ?? null, {
       run,
       status,
@@ -507,7 +523,12 @@ export class ChatService extends EventEmitter<{
     try {
       const clank = this.options.crew.get(conversation.clankId);
       const { run: workspace, problem, status } = await this.prepareWorkspace(conversation);
-      const toolset = await this.options.tools.forChat(clank, { workspace: workspace !== null });
+      const vision = this.seesImages(choice);
+      const toolset = await this.options.tools.forChat(clank, {
+        workspace: workspace !== null,
+        browser: this.options.browser.available,
+        vision,
+      });
       const callsTools = this.callsTools(choice);
       const offered: Toolset = callsTools
         ? toolset
@@ -664,7 +685,23 @@ export class ChatService extends EventEmitter<{
                 maxChars,
               });
           if (outcome.malformed) malformed++;
-          messages.push({ role: 'tool', toolCallId: outcome.id, content: outcome.result });
+          if (outcome.image && vision) {
+            // Only the newest picture stays: each one costs as much as a page of text.
+            for (const earlier of messages) {
+              if (earlier.role === 'tool' && earlier.images) {
+                delete earlier.images;
+                earlier.content += '\n\n[A picture was here; it was dropped to save room.]';
+              }
+            }
+            messages.push({
+              role: 'tool',
+              toolCallId: outcome.id,
+              content: outcome.result,
+              images: [outcome.image],
+            });
+          } else {
+            messages.push({ role: 'tool', toolCallId: outcome.id, content: outcome.result });
+          }
           flush(true);
         }
         if (malformed >= 2) {
@@ -754,7 +791,7 @@ export class ChatService extends EventEmitter<{
     workspace: RunInfo | null;
     clank: { id: string; name: string };
     maxChars: number;
-  }): Promise<{ id: string; result: string; malformed: boolean }> {
+  }): Promise<{ id: string; result: string; malformed: boolean; image?: ChatImage }> {
     const { conversation, message, run, call, round, toolset, workspace } = input;
     const signal = run.controller.signal;
     const user = this.userName();
@@ -786,7 +823,7 @@ export class ChatService extends EventEmitter<{
     const finish = (
       status: ToolPart['status'],
       result: string,
-      extra: { output?: string; malformed?: boolean } = {},
+      extra: { output?: string; malformed?: boolean; image?: ChatImage } = {},
     ) => {
       part.status = status;
       part.result = result;
@@ -810,10 +847,16 @@ export class ChatService extends EventEmitter<{
         toolCallId: part.id,
         checkpointId: part.checkpointId,
         sessionId: part.sessionId,
+        image: part.image ?? null,
         startedAt: part.startedAt!,
         durationMs: part.endedAt.getTime() - part.startedAt!.getTime(),
       });
-      return { id: part.id, result, malformed: extra.malformed ?? false };
+      return {
+        id: part.id,
+        result,
+        malformed: extra.malformed ?? false,
+        ...(extra.image ? { image: extra.image } : {}),
+      };
     };
 
     const spec = toolset.specs.get(call.name);
@@ -906,6 +949,13 @@ export class ChatService extends EventEmitter<{
             })
           : null,
       web: this.options.tools.web(),
+      browser:
+        spec.needs.includes('browser') || spec.needs.includes('search')
+          ? this.options.browser.access(conversation.id, input.clank, {
+              signal,
+              maxChars: input.maxChars,
+            })
+          : null,
       signal,
       clank: input.clank,
       maxChars: input.maxChars,
@@ -926,6 +976,7 @@ export class ChatService extends EventEmitter<{
       }
     }
     part.sessionId = result.sessionId ?? null;
+    if (result.image) part.image = this.saveImage(conversation.id, part.id, result.image);
     if (spec.mutates && workspace) {
       try {
         const made = await this.options.workspace.checkpoint(conversation.id, {
@@ -945,7 +996,34 @@ export class ChatService extends EventEmitter<{
       });
     return finish(result.error ? 'failed' : 'done', result.content, {
       ...(result.output ? { output: result.output } : {}),
+      ...(result.image && result.showModel
+        ? {
+            image: {
+              mediaType: result.image.mediaType,
+              data: Buffer.from(result.image.data).toString('base64'),
+            },
+          }
+        : {}),
     });
+  }
+
+  /** Keeps a picture a tool took in the chat's artifacts. Returns its path there. */
+  private saveImage(
+    conversationId: string,
+    callId: string,
+    image: { data: Uint8Array; mediaType: string },
+  ): string | null {
+    const base = callId.replace(/[^\w-]/g, '_').slice(0, 80);
+    const name = `${base}.${image.mediaType === 'image/png' ? 'png' : 'jpg'}`;
+    try {
+      const dir = join(this.options.artifactsDir, conversationId);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, name), image.data);
+      return `${conversationId}/${name}`;
+    } catch (error) {
+      console.error('Saving a picture failed', error);
+      return null;
+    }
   }
 
   /** A call the model made that won't run, because the reply was stopped first. */
@@ -954,7 +1032,7 @@ export class ChatService extends EventEmitter<{
     message: MessageRecord,
     call: ToolCall,
     round: number,
-  ): { id: string; result: string; malformed: boolean } {
+  ): { id: string; result: string; malformed: boolean; image?: ChatImage } {
     const id = call.id || `call_${randomUUID()}`;
     this.addPart(conversation.id, message, {
       type: 'tool',
@@ -1010,6 +1088,12 @@ export class ChatService extends EventEmitter<{
   private callsTools(choice: ModelChoice): boolean {
     if (choice.provider !== BUILTIN_PROVIDER) return true;
     return this.options.library().find((m) => m.id === choice.model)?.capabilities.tools ?? false;
+  }
+
+  /** Whether the model sees pictures, so it can be given screenshots. */
+  private seesImages(choice: ModelChoice): boolean {
+    if (choice.provider !== BUILTIN_PROVIDER) return this.options.vision?.(choice) ?? false;
+    return this.options.library().find((m) => m.id === choice.model)?.capabilities.vision ?? false;
   }
 
   private prompt(
@@ -1122,13 +1206,14 @@ function prettyArguments(raw: string): string {
   }
 }
 
-/** Rough tokens in a turn, tool calls included. */
+/** Rough tokens in a turn, tool calls and pictures included. */
 export function tokensOf(message: ChatMessage): number {
   const calls =
     message.role === 'assistant'
       ? (message.toolCalls ?? []).reduce((sum, c) => sum + estimateTokens(c.name + c.arguments), 0)
       : 0;
-  return estimateTokens(message.content) + calls;
+  const images = message.role === 'tool' ? (message.images?.length ?? 0) * IMAGE_TOKENS : 0;
+  return estimateTokens(message.content) + calls + images;
 }
 
 /**

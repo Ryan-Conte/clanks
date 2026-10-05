@@ -176,7 +176,7 @@ export const webFetch = defineTool({
 export const webSearch = defineTool({
   name: 'web_search',
   description:
-    'Searches the web and returns the top results with their addresses. Read a result in full with web_fetch.',
+    'Searches the web and returns the top results with their addresses. Read a result in full with web_fetch or browser_open.',
   schema: z.object({
     query: z.string().min(1).describe('What to search for'),
     count: z.number().int().min(1).max(10).optional().describe('How many results. Default 5'),
@@ -186,8 +186,26 @@ export const webSearch = defineTool({
   label: (args) => `Searching the web for "${short(args.query, 40)}"`,
   approval: (args) => ({ kind: 'tool', subject: args.query, pattern: '*' }),
   async run(args, ctx) {
-    if (!ctx.web.search) throw new ToolFailure('No web search is set up.');
-    const results = await ctx.web.search(args.query, args.count ?? 5, ctx.signal);
+    const count = args.count ?? 5;
+    let results: SearchResult[];
+    if (ctx.web.search) {
+      results = await ctx.web.search(args.query, count, ctx.signal);
+    } else if (ctx.browser) {
+      // No backend: the search runs in the browser pane, where the user can watch it.
+      const found = await ctx.browser.search(args.query, count);
+      if (found.results.length === 0 && found.page) {
+        return {
+          content: headOnly(
+            `The results couldn't be picked off the search page, so here it is as text:\n\n${found.page}`,
+            ctx.maxChars,
+            'The rest of the page was cut.',
+          ),
+        };
+      }
+      results = found.results;
+    } else {
+      throw new ToolFailure('No web search is set up.');
+    }
     if (results.length === 0) return { content: `No results for "${args.query}".` };
     const lines = results.map(
       (r, i) =>

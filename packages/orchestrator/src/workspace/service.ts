@@ -30,7 +30,7 @@ import {
   splitLines,
   subfolderOf,
 } from '@clanks/workspace';
-import { and, asc, desc, eq, gt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, isNull, ne, or } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
@@ -548,14 +548,22 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
         .set({ rewound: true })
         .where(and(eq(checkpointTable.runId, row.id), gt(checkpointTable.seq, found.seq)))
         .run();
+      // Notes made since go, but not the one made with the checkpoint, a moment after it.
       this.options.db
         .delete(reviewNote)
-        .where(and(eq(reviewNote.runId, row.id), gt(reviewNote.createdAt, found.createdAt)))
+        .where(
+          and(
+            eq(reviewNote.runId, row.id),
+            gt(reviewNote.createdAt, found.createdAt),
+            or(isNull(reviewNote.checkpointId), ne(reviewNote.checkpointId, found.id)),
+          ),
+        )
         .run();
+      // A note sent in the same millisecond as the checkpoint was still sent after it.
       this.options.db
         .update(reviewNote)
         .set({ status: 'pending', sentAt: null })
-        .where(and(eq(reviewNote.runId, row.id), gt(reviewNote.sentAt, found.createdAt)))
+        .where(and(eq(reviewNote.runId, row.id), gte(reviewNote.sentAt, found.createdAt)))
         .run();
       return found;
     });

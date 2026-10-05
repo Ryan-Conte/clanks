@@ -1,7 +1,9 @@
+import type { BrowserHost } from '@clanks/browser';
 import { ModelManager, type ModelManagerOptions, parseModelRef } from '@clanks/models';
 import { ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
 import { McpManager } from '@clanks/tools';
 import { ActivityService } from './activity/service';
+import { BrowserService } from './browser/service';
 import { ChatService } from './chat/service';
 import { ChatStore } from './chat/store';
 import { CrewService } from './crew/crew';
@@ -35,6 +37,8 @@ export interface OrchestratorOptions {
   /** The llama.cpp builds shipped with the app, one folder per backend. */
   bundledRuntimeDir?: string;
   host?: Host;
+  /** The browser pane's views and sessions. Without one, clanks get no browser tools. */
+  browserHost?: BrowserHost;
   /** Tests swap in their own Hugging Face, builds and hardware probe. */
   models?: Partial<ModelManagerOptions>;
   /** Tests point the cloud providers at stand-ins. */
@@ -125,6 +129,12 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     secrets,
   });
 
+  const browser = new BrowserService({
+    host: options.browserHost ?? null,
+    settings: (clankId) => crew.get(clankId).overrides.browser,
+    userName: () => settings.get().profile.name || 'The user',
+  });
+
   const chat = new ChatService({
     store: chatStore,
     crew,
@@ -132,10 +142,19 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     providerInfo: providerSettings,
     settings,
     library: () => models.library(),
+    vision: (choice) => {
+      try {
+        return providers.get(choice.provider).capabilities(choice.model).vision;
+      } catch {
+        return false;
+      }
+    },
     workspace,
     terminal,
     activity,
     tools,
+    browser,
+    artifactsDir: paths.artifacts,
   });
   chat.recover();
 
@@ -170,6 +189,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     activity,
     tools,
     mcp,
+    browser,
     localApi,
     host: options.host ?? null,
   };
@@ -185,6 +205,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     close: () => {
       void localApi.stop();
       chat.close();
+      browser.closeAll();
       terminal.closeAll();
       void mcpManager.closeAll();
       models.close();
