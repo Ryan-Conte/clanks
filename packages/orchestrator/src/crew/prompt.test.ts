@@ -31,6 +31,8 @@ function crewService() {
 function chat(overrides: Partial<RunContext> = {}): RunContext {
   return {
     mode: 'chat',
+    project: null,
+    brief: null,
     folder: null,
     workspace: null,
     workspaceStatus: null,
@@ -50,6 +52,7 @@ function input(overrides: Partial<PromptInput> = {}): PromptInput {
     crew: crew.list(),
     profile,
     instructions: null,
+    context: null,
     run: chat(),
     // 23:30 UTC is already the next day in Perth.
     now: new Date('2026-10-04T23:30:00Z'),

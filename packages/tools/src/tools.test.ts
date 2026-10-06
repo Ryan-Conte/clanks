@@ -48,6 +48,7 @@ function context(root: string, base: string, extra: Partial<ToolContext> = {}): 
     shell: null,
     web: { fetch, search: null },
     browser: null,
+    board: null,
     signal: new AbortController().signal,
     clank: { id: 'forge', name: 'Forge' },
     maxChars: 20_000,
@@ -420,10 +421,16 @@ describe('labels', () => {
         url: 'https://x.test',
         query: 'q',
         handle: 'p1',
-        message: 'm',
+        message: 'Wiring up the cart',
         keys: 'Enter',
         ref: '1',
         text: 't',
+        key: 'SURF-1',
+        depends_on: 'SURF-2',
+        title: 'Add checkout',
+        type: 'pr',
+        to: 'forge',
+        clank: 'forge',
       });
       expect(label.length, tool.name).toBeGreaterThan(3);
     }

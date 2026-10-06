@@ -1,5 +1,6 @@
 import {
   type ClankToolPolicy,
+  type RunRole,
   TOOL_GROUPS,
   type ToolDefinition,
   type ToolGroup,
@@ -64,11 +65,19 @@ export class ToolService extends EventEmitter<{ change: [] }> {
   /**
    * The tools a clank gets in a chat: those its policy doesn't turn off, that this chat can
    * support. Files, commands and git need a workspace; search needs a backend or the browser;
-   * the browser needs the app; screenshots need a model that can see them.
+   * the browser needs the app; screenshots need a model that can see them. Board and spec tools
+   * need a project, and the crew's finishing calls a run on a ticket.
    */
   async forChat(
     clank: Clank,
-    chat: { workspace: boolean; browser?: boolean; vision?: boolean },
+    chat: {
+      workspace: boolean;
+      browser?: boolean;
+      vision?: boolean;
+      project?: boolean;
+      /** What the clank does in a run. Null or missing for a chat. */
+      role?: RunRole | null;
+    },
   ): Promise<Toolset> {
     const specs = new Map<string, ToolSpec>();
     const levels = new Map<string, ToolPolicyLevel>();
@@ -79,6 +88,10 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       search: (chat.browser ?? false) || this.searchConfigured(),
       browser: chat.browser ?? false,
       vision: chat.vision ?? false,
+      project: chat.project ?? false,
+      ticket: chat.role === 'maker' || chat.role === 'checker',
+      maker: chat.role === 'maker',
+      checker: chat.role === 'checker',
     };
     for (const spec of BUILTIN_TOOLS) {
       const { level } = policyFor({

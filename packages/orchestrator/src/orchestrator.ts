@@ -3,12 +3,15 @@ import { ModelManager, type ModelManagerOptions, parseModelRef } from '@clanks/m
 import { ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
 import { McpManager } from '@clanks/tools';
 import { ActivityService } from './activity/service';
+import { BoardService } from './board/service';
 import { BrowserService } from './browser/service';
 import { ChatService } from './chat/service';
 import { ChatStore } from './chat/store';
 import { CrewService } from './crew/crew';
+import { GitHubService } from './github/service';
 import { LocalApi } from './local-api/server';
 import { McpService } from './mcp/service';
+import { ProjectService } from './projects/service';
 import { TerminalService } from './terminal/service';
 import { ToolService } from './tools/service';
 import { WorkspaceService } from './workspace/service';
@@ -43,6 +46,11 @@ export interface OrchestratorOptions {
   models?: Partial<ModelManagerOptions>;
   /** Tests point the cloud providers at stand-ins. */
   cloud?: Pick<ProviderServiceOptions, 'endpoints' | 'fetch'>;
+  /** The GitHub OAuth app signing in with a code goes through. Without one, users paste a token. */
+  githubClientId?: string | null;
+  /** Tests point GitHub at a stand-in, and don't wait between polls. */
+  githubFetch?: typeof fetch;
+  githubSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 export interface Orchestrator {
@@ -106,6 +114,24 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     db: store.db,
   });
 
+  const github = new GitHubService({
+    secrets,
+    store: {
+      read: (key) => settings.readInternal(key as `${string}.${string}`),
+      write: (key, value) => settings.writeInternal(key as `${string}.${string}`, value),
+    },
+    clientId: options.githubClientId ?? null,
+    ...(options.githubFetch ? { fetch: options.githubFetch } : {}),
+    ...(options.githubSleep ? { sleep: options.githubSleep } : {}),
+  });
+  const projects = new ProjectService({ db: store.db, crew, github });
+  const board = new BoardService({
+    db: store.db,
+    projects,
+    crew,
+    userName: () => settings.get().profile.name || 'the user',
+  });
+
   const chatStore = new ChatStore(store.db);
   const activity = new ActivityService(store.db);
   const workspace = new WorkspaceService({
@@ -115,6 +141,10 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     conversations: {
       get: (id) => chatStore.conversation(id),
       lastMessageId: (id) => chatStore.lastMessage(id)?.id ?? null,
+    },
+    workName: (id) => {
+      const conversation = chatStore.conversation(id);
+      return conversation ? board.workName(conversation) : null;
     },
   });
   const terminal = new TerminalService();
@@ -154,9 +184,25 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     activity,
     tools,
     browser,
+    board,
     artifactsDir: paths.artifacts,
   });
+  board.attach({
+    createRun: (input) => chat.createRun(input),
+    post: (id, text) => chat.post(id, text),
+    delete: (id) => chat.delete(id),
+    inFlight: (id) => chat.inFlight(id),
+    replying: (id) => chat.replying(id),
+    conversation: (id) => chatStore.conversation(id),
+    inProject: (id) => chatStore.inProject(id),
+    forTicket: (id) => chatStore.forTicket(id),
+  });
+  // A run's tool calls show on its ticket's card as they happen.
+  chat.on('live', (id, event) => {
+    if (event.type !== 'delta') board.touchConversation(id);
+  });
   chat.recover();
+  board.recover();
 
   const localApi = new LocalApi({
     providers,
@@ -190,6 +236,9 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     tools,
     mcp,
     browser,
+    projects,
+    board,
+    github,
     localApi,
     host: options.host ?? null,
   };
@@ -204,6 +253,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     ready,
     close: () => {
       void localApi.stop();
+      github.cancelDeviceFlow();
       chat.close();
       browser.closeAll();
       terminal.closeAll();

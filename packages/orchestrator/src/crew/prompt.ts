@@ -1,4 +1,4 @@
-import { STAGES, type UserProfile, type WorkspaceStatus, estimateTokens } from '@clanks/core';
+import { type UserProfile, type WorkspaceStatus, estimateTokens, orderStages } from '@clanks/core';
 import type { Clank } from './crew';
 import { type ProjectInstructions, instructionsFor } from './instructions';
 
@@ -23,9 +23,16 @@ export interface AssembledPrompt {
   tokens: number;
 }
 
-/** What one run of a clank is for. Tickets come with the board. */
+/**
+ * What one run of a clank is for: a chat with the user, a ticket it works on its own, or planning
+ * the board from a spec the user approved.
+ */
 export interface RunContext {
-  mode: 'chat';
+  mode: 'chat' | 'ticket' | 'plan';
+  /** The project the chat or run is in, by name. */
+  project: string | null;
+  /** A ticket or planning run's own part of the run context, written by the board. */
+  brief: string | null;
   /** The folder the chat is about, if any. */
   folder: string | null;
   /** The clank's own copy of the folder's repository, when it has one. */
@@ -50,13 +57,15 @@ export interface PromptInput {
   crew: Clank[];
   profile: UserProfile;
   instructions: ProjectInstructions | null;
+  /** The project context layer, for a chat or run in a project. */
+  context: string | null;
   run: RunContext;
   now: Date;
   platform: NodeJS.Platform;
 }
 
 /** Layer budgets for a 32k-token model, from docs/CONTEXT.md. */
-export const BUDGETS = { profile: 300, instructions: 1500 } as const;
+export const BUDGETS = { profile: 300, instructions: 1500, context: 2000 } as const;
 
 /**
  * Builds a clank's system prompt. Stable layers come first, so llama.cpp's prompt cache and
@@ -70,7 +79,7 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
   const layers: PromptLayer[] = [
     layer('crew', 'Crew rules', fill(input.rules)),
     layer('clank', `${input.clank.name}'s priming doc`, fill(input.clank.body)),
-    // Integration guides, project context and clank memory arrive with integrations and projects.
+    // Integration guides and clank memory arrive with integrations and the crew's memory.
     layer('profile', 'Your profile', profileText(input.profile, fill), BUDGETS.profile),
   ];
 
@@ -88,7 +97,11 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
     }
   }
 
-  layers.push(layer('run', 'Run context', fill(runText(input.run))));
+  // The board writes the project context and a run's brief from what's on it: not templated.
+  if (input.context) {
+    layers.push(layer('context', 'Project context', input.context, BUDGETS.context));
+  }
+  layers.push(layer('run', 'Run context', runText(input.run, fill)));
 
   const system = layers.map((l) => l.text).join('\n\n');
   return { system, layers, tokens: estimateTokens(system) };
@@ -168,27 +181,7 @@ export function crewRoster(crew: Clank[]): string {
 
 /** `{{workflow}}`: the stages in order with the clanks in each, custom checkers included. */
 export function workflowStages(crew: Clank[]): string {
-  const builtin = (stage: string) => (STAGES as readonly string[]).includes(stage);
-  const order: string[] = [...STAGES];
-  // Custom stages go after the stage they name, in roster order. One may follow another.
-  let pending = crew.map((c) => c.frontmatter.workflow).filter((w) => !builtin(w.stage));
-  for (;;) {
-    const ready = pending.filter((w) => order.includes(w.after ?? ''));
-    if (ready.length === 0) break;
-    for (const workflow of ready) {
-      if (order.includes(workflow.stage)) continue;
-      // Behind any custom stage already placed there, so roster order holds.
-      let at = order.indexOf(workflow.after!) + 1;
-      while (at < order.length && !builtin(order[at]!)) at++;
-      order.splice(at, 0, workflow.stage);
-    }
-    pending = pending.filter((w) => !order.includes(w.stage));
-  }
-  // One whose stage to follow nobody uses still runs, just before sign-off.
-  for (const workflow of pending) {
-    if (!order.includes(workflow.stage)) order.splice(order.indexOf('signoff'), 0, workflow.stage);
-  }
-  return order
+  return orderStages(crew.map((c) => c.frontmatter.workflow))
     .map((stage) => ({
       stage,
       names: crew.filter((c) => c.frontmatter.workflow.stage === stage).map((c) => c.name),
@@ -223,13 +216,24 @@ const NO_FOLDER_REASONS: Partial<Record<WorkspaceStatus, string>> = {
   error: "Its workspace couldn't be made, so you can't work on its files.",
 };
 
-function runText(run: RunContext): string {
-  const lines = ['## Run context', '', 'Mode: chat. You are talking with {{user.name}} directly.'];
+function runText(run: RunContext, fill: (text: string) => string): string {
+  const lines = ['## Run context', ''];
+  if (run.mode !== 'chat' && run.brief) {
+    // The board's words, which may quote the user's: added as they are, after the rest is filled.
+    lines.push('{{brief}}');
+  } else {
+    lines.push(
+      run.project
+        ? `Mode: chat. You are talking with {{user.name}} directly, in the project ${run.project}.`
+        : 'Mode: chat. You are talking with {{user.name}} directly.',
+    );
+  }
   const ws = run.workspace;
   if (run.folder && ws) {
     const sub = ws.cwd !== ws.worktree;
+    const about = run.project ? "the project's workspace," : 'the folder';
     lines.push(
-      `This chat is about the folder \`${run.folder}\`. You work in your own copy of it: a git worktree on the branch \`${ws.branch}\`, made from commit \`${ws.baseCommit.slice(0, 7)}\`. Paths in tools are relative to ${sub ? 'that folder in your copy' : 'your copy'}. Changes {{user.name}} hasn't committed aren't in it, and nothing you do touches their own checkout.`,
+      `This ${run.mode === 'chat' ? 'chat' : 'run'} is about ${about} \`${run.folder}\`. You work in your own copy of it: a git worktree on the branch \`${ws.branch}\`, made from commit \`${ws.baseCommit.slice(0, 7)}\`. Paths in tools are relative to ${sub ? 'that folder in your copy' : 'your copy'}. Changes {{user.name}} hasn't committed aren't in it, and nothing you do touches their own checkout.`,
     );
   } else if (run.folder) {
     lines.push(`This chat is about the folder \`${run.folder}\`.`);
@@ -248,6 +252,9 @@ function runText(run: RunContext): string {
     );
   } else {
     lines.push(`Your tools here: ${run.tools.map((t) => `\`${t}\``).join(', ')}.`);
+    lines.push(
+      "A tool call that fails didn't happen. Fix it and call again, or tell {{user.name}} it failed; never say you did what a failed call didn't do.",
+    );
     if (run.shell) lines.push(`Commands run in ${run.shell}.`);
     if (ws) {
       lines.push(
@@ -259,14 +266,18 @@ function runText(run: RunContext): string {
         "Pages you open show in {{user.name}}'s browser pane as you work. browser_read gives a page as text with refs such as [12], which browser_click and browser_type take. If a page needs a login or shows a CAPTCHA, don't try to get past it: say so, and {{user.name}} can take over the browser. While they have it, your browser tools wait until they hand it back.",
       );
     }
-    lines.push(
-      "This is a chat, not a ticket: when you're done, reply to {{user.name}} with what you did and what you found. Board, spec, progress and output tools aren't available here.",
-    );
+    if (run.mode === 'chat') {
+      lines.push(
+        run.project
+          ? "This is a chat, not a ticket: when you're done, reply to {{user.name}} with what you did and what you found. Board and spec tools work on this project's board; progress and output tools aren't available here."
+          : "This is a chat, not a ticket: when you're done, reply to {{user.name}} with what you did and what you found. Board, spec, progress and output tools aren't available here, since the chat isn't in a project.",
+      );
+    }
   }
   if (run.problems.length > 0) {
     lines.push('', `These tools aren't working right now: ${run.problems.join('; ')}.`);
   }
-  return lines.join('\n');
+  return fill(lines.join('\n')).replace('{{brief}}', () => run.brief ?? '');
 }
 
 /** The user's time zone, or this computer's when they haven't set one. */

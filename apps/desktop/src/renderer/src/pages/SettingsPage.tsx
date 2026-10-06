@@ -1,12 +1,14 @@
 import type { Settings, SettingsPatch } from '@clanks/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
+import { GitHubAccount, GitHubSignIn } from '../components/project/GitHub';
 import { LocalApiPanel } from '../components/settings/LocalApiPanel';
 import { ProfilePanel } from '../components/settings/ProfilePanel';
 import { CloudPanel, ServersPanel } from '../components/settings/ProvidersPanels';
 import { McpPanel, RulesPanel, WebSearchPanel } from '../components/settings/ToolsPanels';
 import { Button, Dot, ErrorText, Panel, Row, Toggle, inputClass } from '../components/ui';
 import { formatTokens } from '../lib/format';
+import { useGitHub } from '../lib/github';
 import { BACKEND_NAMES, useModels } from '../lib/models';
 import { useTRPC } from '../lib/trpc';
 
@@ -27,6 +29,7 @@ export function SettingsPage() {
       <WebSearchPanel />
       <RulesPanel />
       <LocalApiPanel />
+      <GitHubPanel />
       <HuggingFacePanel />
       <BackgroundPanel />
       <AppPanel />
@@ -44,6 +47,19 @@ function useSettings() {
     }),
   );
   return { settings, update: (patch: SettingsPatch) => update.mutate(patch), mutation: update };
+}
+
+/** The GitHub account projects clone their repositories from. */
+function GitHubPanel() {
+  const status = useGitHub();
+  return (
+    <Panel
+      title="GitHub"
+      description="For projects on a GitHub repository: listing and making repositories, and cloning them. The token stays in your keychain and only goes to GitHub."
+    >
+      {status?.signedIn ? <GitHubAccount status={status} /> : <GitHubSignIn />}
+    </Panel>
+  );
 }
 
 function AppPanel() {

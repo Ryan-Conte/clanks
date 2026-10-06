@@ -15,6 +15,8 @@ export function ModelPicker(props: {
   value: ModelChoice | null;
   onChange: (choice: ModelChoice | null) => void;
   disabled?: boolean;
+  /** What no choice means here. The crew's model, unless a project picks one. */
+  emptyLabel?: string;
 }) {
   const trpc = useTRPC();
   const snapshot = useModels();
@@ -46,7 +48,8 @@ export function ModelPicker(props: {
       }}
     >
       <option value="">
-        The crew's model{snapshot?.crewModel ? ` (${snapshot.crewModel})` : ', none yet'}
+        {props.emptyLabel ??
+          `The crew's model${snapshot?.crewModel ? ` (${snapshot.crewModel})` : ', none yet'}`}
       </option>
       {/* A choice whose list hasn't loaded, or that's gone from it, still shows. */}
       {props.value && !listed.has(value) && (

@@ -72,6 +72,8 @@ export interface WorkspaceServiceOptions {
     ): { id: string; clankId: string; folder: string | null; title: string } | undefined;
     lastMessageId(id: string): string | null;
   };
+  /** The name a run's worktree and branch get, such as a ticket's key. Chats get `chat-<id>`. */
+  workName?: (conversationId: string) => string | null;
   now?: () => Date;
 }
 
@@ -143,9 +145,9 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
     if (status !== 'ready') return null;
     const info = (await repoInfo(folder))!;
     const id = randomUUID();
-    const short = conversationId.slice(0, 8);
-    const worktree = join(this.options.worktreesDir, repoKey(info.root), `chat-${short}`);
-    const branch = `clanks/chat-${short}`;
+    const name = this.options.workName?.(conversationId) ?? `chat-${conversationId.slice(0, 8)}`;
+    const worktree = join(this.options.worktreesDir, repoKey(info.root), name);
+    const branch = `clanks/${name}`;
     try {
       await addWorktree({ repoRoot: info.root, path: worktree, branch, base: info.head! });
       const row: RunRow = {

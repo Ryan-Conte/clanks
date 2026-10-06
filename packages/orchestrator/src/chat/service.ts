@@ -13,6 +13,7 @@ import {
   type ModelChoice,
   type ReviewNote,
   type RunInfo,
+  type RunRole,
   type Settings,
   type ToolCall,
   type ToolPart,
@@ -27,6 +28,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ActivityService } from '../activity/service';
+import type { ChatScope, ReplyOutcome } from '../board/service';
 import type { BrowserService } from '../browser/service';
 import type { CrewService } from '../crew/crew';
 import { readProjectInstructions } from '../crew/instructions';
@@ -42,6 +44,18 @@ export class ChatError extends Error {
     super(message);
     this.name = 'ChatError';
   }
+}
+
+/** What chats need from the board: projects, their runs, and what each run is for. */
+export interface ChatBoard {
+  /** What a chat or run in a project knows. Null outside one. */
+  scope(conversation: Conversation): ChatScope | null;
+  /** A project's workspace, for a chat with a clank in its crew. Throws for anyone else. */
+  chatFolder(projectId: string, clankId: string): string;
+  /** A clank's model in a project, if the project picks one. */
+  modelFor(projectId: string, clankId: string): ModelChoice | null;
+  replyStarted(conversation: Conversation): void;
+  replyEnded(conversation: Conversation, outcome: ReplyOutcome): void;
 }
 
 export interface ChatServiceOptions {
@@ -72,6 +86,8 @@ export interface ChatServiceOptions {
   activity: ActivityService;
   tools: ToolService;
   browser: BrowserService;
+  /** Projects' boards. Without one, chats can't be in projects. */
+  board?: ChatBoard;
   /** Pictures tools took, one folder per chat. */
   artifactsDir: string;
   now?: () => Date;
@@ -86,6 +102,8 @@ interface Run {
   done: Promise<void>;
   /** Tool calls waiting for the user, by call id. */
   approvals: Map<string, (decision: ApprovalDecision) => void>;
+  /** A finishing call handed the ticket on, so the run is over. */
+  finished: boolean;
 }
 
 /** The longest reply a local model is asked for: room enough for thinking and a long answer. */
@@ -101,6 +119,8 @@ const MAX_ROUNDS = 40;
 const OLD_RESULT_CHARS = 3000;
 /** Roughly what a picture costs a model that sees it, in tokens. */
 const IMAGE_TOKENS = 1000;
+/** A run that stops with a plain reply is reminded this often to end with a finishing call. */
+const MAX_NUDGES = 2;
 
 /**
  * Chats with clanks. Replies are written here in the orchestrator, not in the window, so closing
@@ -113,6 +133,8 @@ export class ChatService extends EventEmitter<{
   list: [];
 }> {
   private readonly runs = new Map<string, Run>();
+  /** What the app wrote to a run while it was replying, waiting its turn. */
+  private readonly queued = new Map<string, string[]>();
   private readonly store: ChatStore;
   private closed = false;
 
@@ -164,21 +186,26 @@ export class ChatService extends EventEmitter<{
 
   /**
    * Starts a chat with its first message, so empty chats never pile up. It can be about a folder
-   * from the start.
+   * from the start, or in a project, which makes it about the project's workspace.
    */
   start(
     clankId: string,
     text: string,
     folder: string | null = null,
+    projectId: string | null = null,
   ): { conversation: Conversation; reply: MessageRecord } {
     const clank = this.options.crew.get(clankId);
-    const choice = this.modelFor(clank.id);
+    const where = projectId ? this.board().chatFolder(projectId, clank.id) : folder;
+    const choice = this.modelFor(clank.id, projectId);
     const now = this.now();
     const conversation: Conversation = {
       id: randomUUID(),
       clankId: clank.id,
       title: titleFrom(text),
-      folder: folder === null ? null : checkFolder(folder),
+      folder: where === null ? null : checkFolder(where),
+      projectId,
+      ticketId: null,
+      role: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -189,6 +216,54 @@ export class ChatService extends EventEmitter<{
     return { conversation, reply };
   }
 
+  /** Starts a run: the conversation a clank works a ticket in, which the app writes to. */
+  createRun(input: {
+    clankId: string;
+    projectId: string;
+    ticketId: string;
+    role: RunRole;
+    title: string;
+  }): Conversation {
+    const clank = this.options.crew.get(input.clankId);
+    const now = this.now();
+    const conversation: Conversation = {
+      id: randomUUID(),
+      clankId: clank.id,
+      title: input.title,
+      folder: checkFolder(this.board().chatFolder(input.projectId, clank.id)),
+      projectId: input.projectId,
+      ticketId: input.ticketId,
+      role: input.role,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.store.insertConversation(conversation);
+    this.emit('list');
+    return conversation;
+  }
+
+  /**
+   * Writes to a run as the app, such as a ticket brief or a bounce, and starts a reply. While one
+   * is being written, it waits its turn. Throws when the clank has no model to run on.
+   */
+  post(conversationId: string, text: string): void {
+    const conversation = this.require(conversationId);
+    if (this.runs.has(conversationId)) {
+      this.queued.set(conversationId, [...(this.queued.get(conversationId) ?? []), text]);
+      return;
+    }
+    const choice = this.modelFor(conversation.clankId, conversation.projectId);
+    this.appendUser(conversationId, text, 'app');
+    const updated = this.store.updateConversation(conversationId, { updatedAt: this.now() })!;
+    this.reply(updated, choice);
+    this.emit('list');
+  }
+
+  /** Whether a reply is being written in a conversation. */
+  replying(conversationId: string): boolean {
+    return this.runs.has(conversationId);
+  }
+
   /**
    * Sends a message. Notes the user left in the diff editor since the clank last heard from them
    * go with it, so they're never lost.
@@ -196,7 +271,7 @@ export class ChatService extends EventEmitter<{
   send(conversationId: string, text: string): MessageRecord {
     const conversation = this.require(conversationId);
     this.assertIdle(conversationId);
-    const choice = this.modelFor(conversation.clankId);
+    const choice = this.modelFor(conversation.clankId, conversation.projectId);
     const notes = this.options.workspace.pendingNotes(conversationId);
     const content = notes.length > 0 ? `${text.trim()}\n\n${formatNotes(notes)}` : text;
     this.appendUser(conversationId, content);
@@ -216,7 +291,7 @@ export class ChatService extends EventEmitter<{
     if (notes.length === 0) throw new ChatError('There are no notes to send');
     const conversation = this.require(conversationId);
     this.assertIdle(conversationId);
-    const choice = this.modelFor(conversation.clankId);
+    const choice = this.modelFor(conversation.clankId, conversation.projectId);
     this.appendUser(conversationId, formatNotes(notes));
     this.options.workspace.markSent(
       conversationId,
@@ -232,7 +307,7 @@ export class ChatService extends EventEmitter<{
   retry(conversationId: string): MessageRecord {
     const conversation = this.require(conversationId);
     this.assertIdle(conversationId);
-    const choice = this.modelFor(conversation.clankId);
+    const choice = this.modelFor(conversation.clankId, conversation.projectId);
     const last = this.store.lastMessage(conversationId);
     if (!last) throw new ChatError('There is nothing to answer yet');
     if (last.role === 'assistant') {
@@ -270,6 +345,9 @@ export class ChatService extends EventEmitter<{
   setFolder(conversationId: string, folder: string | null): Conversation {
     const current = this.require(conversationId);
     this.assertIdle(conversationId);
+    if (current.projectId) {
+      throw new ChatError("A chat in a project is about the project's workspace");
+    }
     const path = folder === null ? null : checkFolder(folder);
     const updated = this.store.updateConversation(conversationId, { folder: path })!;
     if (current.folder !== path) {
@@ -293,6 +371,7 @@ export class ChatService extends EventEmitter<{
     this.options.terminal.closeConversation(conversationId);
     this.options.browser.closeConversation(conversationId);
     await this.options.workspace.remove(conversationId);
+    this.queued.delete(conversationId);
     this.store.deleteConversation(conversationId);
     rmSync(join(this.options.artifactsDir, conversationId), { recursive: true, force: true });
     this.emit('list');
@@ -366,13 +445,14 @@ export class ChatService extends EventEmitter<{
   async preview(clankId: string, conversationId: string | null): Promise<AssembledPrompt> {
     const conversation = conversationId ? this.require(conversationId) : null;
     const clank = this.options.crew.get(clankId);
+    const scope = conversation ? (this.options.board?.scope(conversation) ?? null) : null;
     const run = conversation ? this.options.workspace.run(conversation.id) : null;
     const status = conversation
       ? (await this.options.workspace.state(conversation.id)).status
       : null;
     let choice: ModelChoice | null = null;
     try {
-      choice = this.modelFor(clank.id);
+      choice = this.modelFor(clank.id, conversation?.projectId ?? null);
     } catch {
       // No model yet: show what it would be told on one that calls tools.
     }
@@ -380,15 +460,22 @@ export class ChatService extends EventEmitter<{
       workspace: run !== null || status === 'ready',
       browser: this.options.browser.available,
       vision: choice !== null && this.seesImages(choice),
+      project: scope !== null,
+      role: scope?.run?.role ?? null,
     });
-    return this.prompt(clank.id, conversation?.folder ?? null, {
-      run,
-      status,
-      tools: choice && !this.callsTools(choice) ? [] : [...toolset.specs.keys()],
-      shell: null,
-      toolsUnsupported: choice !== null && !this.callsTools(choice) && toolset.specs.size > 0,
-      problems: toolset.problems,
-    });
+    return this.prompt(
+      clank.id,
+      conversation?.folder ?? null,
+      {
+        run,
+        status,
+        tools: choice && !this.callsTools(choice) ? [] : [...toolset.specs.keys()],
+        shell: null,
+        toolsUnsupported: choice !== null && !this.callsTools(choice) && toolset.specs.size > 0,
+        problems: toolset.problems,
+      },
+      scope,
+    );
   }
 
   /**
@@ -411,10 +498,12 @@ export class ChatService extends EventEmitter<{
     }
   }
 
-  /** The model a clank runs on: its own, or the crew's. */
-  modelFor(clankId: string): ModelChoice {
+  /** The model a clank runs on: the project's pick for it, its own, or the crew's. */
+  modelFor(clankId: string, projectId: string | null = null): ModelChoice {
     const clank = this.options.crew.get(clankId);
-    const own = clank.overrides.model;
+    const own =
+      (projectId ? this.options.board?.modelFor(projectId, clank.id) : null) ??
+      clank.overrides.model;
     if (own) {
       if (own.provider === BUILTIN_PROVIDER) this.requirePulled(own.model, clank.name);
       else if (!this.options.providerInfo.isConfigured(own.provider)) {
@@ -450,12 +539,13 @@ export class ChatService extends EventEmitter<{
     }
   }
 
-  private appendUser(conversationId: string, text: string): MessageRecord {
+  private appendUser(conversationId: string, text: string, author?: 'app'): MessageRecord {
     const content = text.trim();
     const message: MessageRecord = {
       id: randomUUID(),
       conversationId,
       role: 'user',
+      ...(author ? { author } : {}),
       content,
       parts: [{ type: 'text', round: 0, text: content }],
       reasoning: '',
@@ -492,16 +582,46 @@ export class ChatService extends EventEmitter<{
     this.emit('live', conversation.id, { type: 'message', message: structuredClone(message) });
 
     const controller = new AbortController();
-    const run: Run = { controller, message, done: Promise.resolve(), approvals: new Map() };
+    const run: Run = {
+      controller,
+      message,
+      done: Promise.resolve(),
+      approvals: new Map(),
+      finished: false,
+    };
     this.runs.set(conversation.id, run);
+    this.options.board?.replyStarted(conversation);
     run.done = this.write(conversation, choice, history, run)
       // Only saving can fail here, such as when the app quits mid-reply.
       .catch((error: unknown) => console.error('Saving a chat reply failed', error))
       .finally(() => {
         this.runs.delete(conversation.id);
+        if (!this.closed && this.store.conversation(conversation.id)) this.ended(conversation, run);
         this.emit('list');
       });
     return structuredClone(message);
+  }
+
+  /** Tells the board how a reply ended, then starts what the app wrote meanwhile. */
+  private ended(conversation: Conversation, run: Run): void {
+    try {
+      this.options.board?.replyEnded(conversation, {
+        status: run.message.status,
+        finished: run.finished,
+        error: run.message.error,
+      });
+    } catch (error) {
+      console.error('The board missed the end of a reply', error);
+    }
+    const queue = this.queued.get(conversation.id);
+    const next = queue?.shift();
+    if (queue?.length === 0) this.queued.delete(conversation.id);
+    if (next === undefined) return;
+    try {
+      this.post(conversation.id, next);
+    } catch (error) {
+      console.error('Writing to a run failed', error);
+    }
   }
 
   private async write(
@@ -522,12 +642,16 @@ export class ChatService extends EventEmitter<{
     };
     try {
       const clank = this.options.crew.get(conversation.clankId);
+      const scope = this.options.board?.scope(conversation) ?? null;
+      const role = scope?.run?.role ?? null;
       const { run: workspace, problem, status } = await this.prepareWorkspace(conversation);
       const vision = this.seesImages(choice);
       const toolset = await this.options.tools.forChat(clank, {
         workspace: workspace !== null,
         browser: this.options.browser.available,
         vision,
+        project: scope !== null,
+        role,
       });
       const callsTools = this.callsTools(choice);
       const offered: Toolset = callsTools
@@ -537,14 +661,19 @@ export class ChatService extends EventEmitter<{
         offered.specs.has('shell_exec') || offered.specs.has('shell_start')
           ? (await commandShell()).name
           : null;
-      const prompt = this.prompt(clank.id, conversation.folder, {
-        run: workspace,
-        status,
-        tools: [...offered.specs.keys()],
-        shell: shellName,
-        toolsUnsupported: !callsTools && toolset.specs.size > 0,
-        problems: [...toolset.problems, ...(problem ? [problem] : [])],
-      });
+      const prompt = this.prompt(
+        clank.id,
+        conversation.folder,
+        {
+          run: workspace,
+          status,
+          tools: [...offered.specs.keys()],
+          shell: shellName,
+          toolsUnsupported: !callsTools && toolset.specs.size > 0,
+          problems: [...toolset.problems, ...(problem ? [problem] : [])],
+        },
+        scope,
+      );
       const window = this.contextWindow(choice);
       const toolTokens = estimateTokens(JSON.stringify(offered.definitions));
       const maxChars = Math.max(4000, Math.min(40_000, Math.floor(window * 4 * 0.12)));
@@ -554,7 +683,10 @@ export class ChatService extends EventEmitter<{
       );
       const messages: ChatMessage[] = [{ role: 'system', content: prompt.system }, ...turns];
       const local = choice.provider === BUILTIN_PROVIDER;
+      // A run on a ticket must end by handing it on, not with a plain reply.
+      const mustFinish = (role === 'maker' || role === 'checker') && callsTools;
       let malformed = 0;
+      let nudges = 0;
       const totals = {
         prompt: 0,
         completion: 0,
@@ -664,6 +796,19 @@ export class ChatService extends EventEmitter<{
           break;
         }
         if (calls.length === 0) {
+          if (mustFinish && nudges < MAX_NUDGES && finish !== 'length') {
+            nudges++;
+            messages.push(
+              { role: 'assistant', content: text.trim() || '…' },
+              { role: 'user', content: nudgeText(role) },
+            );
+            this.addPart(conversation.id, message, {
+              type: 'note',
+              round,
+              text: `Reminded ${clank.name} to end the run by handing the ticket on.`,
+            });
+            continue;
+          }
           message.finishReason = finish;
           message.status = 'done';
           break;
@@ -673,17 +818,26 @@ export class ChatService extends EventEmitter<{
         for (const call of calls) {
           const outcome = signal.aborted
             ? this.skipCall(conversation, message, call, round)
-            : await this.callTool({
-                conversation,
-                message,
-                run,
-                call,
-                round,
-                toolset: offered,
-                workspace,
-                clank,
-                maxChars,
-              });
+            : run.finished
+              ? this.skipCall(
+                  conversation,
+                  message,
+                  call,
+                  round,
+                  "The ticket was already handed on, so this didn't run.",
+                )
+              : await this.callTool({
+                  conversation,
+                  message,
+                  run,
+                  call,
+                  round,
+                  toolset: offered,
+                  workspace,
+                  clank,
+                  maxChars,
+                  scope,
+                });
           if (outcome.malformed) malformed++;
           if (outcome.image && vision) {
             // Only the newest picture stays: each one costs as much as a page of text.
@@ -703,6 +857,11 @@ export class ChatService extends EventEmitter<{
             messages.push({ role: 'tool', toolCallId: outcome.id, content: outcome.result });
           }
           flush(true);
+        }
+        if (run.finished) {
+          message.status = 'done';
+          message.finishReason = 'stop';
+          break;
         }
         if (malformed >= 2) {
           throw new ChatError(
@@ -791,6 +950,7 @@ export class ChatService extends EventEmitter<{
     workspace: RunInfo | null;
     clank: { id: string; name: string };
     maxChars: number;
+    scope: ChatScope | null;
   }): Promise<{ id: string; result: string; malformed: boolean; image?: ChatImage }> {
     const { conversation, message, run, call, round, toolset, workspace } = input;
     const signal = run.controller.signal;
@@ -956,6 +1116,7 @@ export class ChatService extends EventEmitter<{
               maxChars: input.maxChars,
             })
           : null,
+      board: input.scope?.access ?? null,
       signal,
       clank: input.clank,
       maxChars: input.maxChars,
@@ -976,6 +1137,7 @@ export class ChatService extends EventEmitter<{
       }
     }
     part.sessionId = result.sessionId ?? null;
+    if (result.finish && !result.error) run.finished = true;
     if (result.image) part.image = this.saveImage(conversation.id, part.id, result.image);
     if (spec.mutates && workspace) {
       try {
@@ -1026,12 +1188,13 @@ export class ChatService extends EventEmitter<{
     }
   }
 
-  /** A call the model made that won't run, because the reply was stopped first. */
+  /** A call the model made that won't run, because the reply was stopped or the run is over. */
   private skipCall(
     conversation: Conversation,
     message: MessageRecord,
     call: ToolCall,
     round: number,
+    why = 'Stopped before it ran.',
   ): { id: string; result: string; malformed: boolean; image?: ChatImage } {
     const id = call.id || `call_${randomUUID()}`;
     this.addPart(conversation.id, message, {
@@ -1045,13 +1208,13 @@ export class ChatService extends EventEmitter<{
       approval: null,
       decidedBy: null,
       reason: null,
-      result: 'Stopped before it ran.',
+      result: why,
       startedAt: null,
       endedAt: null,
       checkpointId: null,
       sessionId: null,
     });
-    return { id, result: 'Stopped before it ran.', malformed: false };
+    return { id, result: why, malformed: false };
   }
 
   private addPart(conversationId: string, message: MessageRecord, part: MessagePart): number {
@@ -1099,22 +1262,30 @@ export class ChatService extends EventEmitter<{
   private prompt(
     clankId: string,
     folder: string | null,
-    tools: Omit<RunContext, 'mode' | 'folder' | 'workspace' | 'workspaceStatus'> & {
+    tools: Omit<
+      RunContext,
+      'mode' | 'folder' | 'workspace' | 'workspaceStatus' | 'project' | 'brief'
+    > & {
       run: RunInfo | null;
       status: RunContext['workspaceStatus'];
     },
+    scope: ChatScope | null,
   ): AssembledPrompt {
     const { crew } = this.options;
     const settings = this.options.settings.get();
     const { run, status, ...rest } = tools;
+    const mode = scope?.run ? (scope.run.role === 'planner' ? 'plan' : 'ticket') : 'chat';
     return assemblePrompt({
       rules: crew.rules(),
       clank: crew.get(clankId),
-      crew: crew.list(),
+      crew: scope?.crew ?? crew.list(),
       profile: settings.profile,
       instructions: folder ? readProjectInstructions(folder) : null,
+      context: scope?.context ?? null,
       run: {
-        mode: 'chat',
+        mode,
+        project: scope?.project.name ?? null,
+        brief: scope?.run?.brief ?? null,
         folder,
         workspace: run
           ? { worktree: run.worktree, cwd: run.cwd, branch: run.branch, baseCommit: run.baseCommit }
@@ -1142,6 +1313,11 @@ export class ChatService extends EventEmitter<{
 
   private userName(): string {
     return this.options.settings.get().profile.name || 'The user';
+  }
+
+  private board(): ChatBoard {
+    if (!this.options.board) throw new ChatError("Projects aren't available here");
+    return this.options.board;
   }
 
   private require(id: string): Conversation {
@@ -1172,6 +1348,15 @@ function checkFolder(folder: string): string {
   }
   if (!isDirectory) throw new ChatError(`${path} isn't a folder`);
   return path;
+}
+
+/** What a run that stopped with a plain reply is told, so it hands the ticket on. */
+function nudgeText(role: RunRole | null): string {
+  const done =
+    role === 'checker'
+      ? 'If it passes, call `review_pass`. If it needs fixing, call `ticket_bounce` with the issues.'
+      : 'If the work is done, call `submit_output`.';
+  return `You're working this ticket on your own, so nobody reads a plain reply. ${done} If you can't go on, call \`ask_user\` with your question, or \`fail\` with what went wrong. End with one of these calls.`;
 }
 
 function isSettled(part: ToolPart): boolean {

@@ -2,12 +2,15 @@ import type { ModelManager } from '@clanks/models';
 import type { ProviderRegistry } from '@clanks/providers';
 import { initTRPC } from '@trpc/server';
 import type { ActivityService } from './activity/service';
+import type { BoardService } from './board/service';
 import type { BrowserService } from './browser/service';
 import type { ChatService } from './chat/service';
 import type { CrewService } from './crew/crew';
+import type { GitHubService } from './github/service';
 import type { LocalApi } from './local-api/server';
 import type { McpService } from './mcp/service';
 import type { AppDataLayout } from './paths';
+import type { ProjectService } from './projects/service';
 import type { ProviderService } from './providers';
 import type { SecretStore } from './secrets';
 import type { SettingsService } from './settings';
@@ -58,6 +61,12 @@ export interface OrchestratorContext {
   mcp: McpService;
   /** Every chat's browser tabs, and who's driving them. */
   browser: BrowserService;
+  /** Projects: their workspaces, crews and models. */
+  projects: ProjectService;
+  /** Each project's tickets, spec and activity feed, and the runs that work them. */
+  board: BoardService;
+  /** The user's GitHub account, for cloning and making repositories. */
+  github: GitHubService;
   /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
   localApi: LocalApi;
   host: Host | null;

@@ -13,11 +13,64 @@ export const ToolCard = memo(function ToolCard(props: {
   part: ToolPart;
   conversationId: string;
   clank: ClankSummary;
+  /** A question in it can be answered now. */
+  answerable?: boolean;
+  onAnswer?: (text: string) => void;
 }) {
   const { part } = props;
   if (part.status === 'asking' && part.approval) return <ApprovalCard {...props} />;
+  if (part.name === 'ask_user' && part.status === 'done') return <QuestionCard {...props} />;
   return <ToolRow part={part} />;
 });
+
+/** A clank's question on a ticket, with its options as answers to send. */
+function QuestionCard({ part, clank, answerable, onAnswer }: Parameters<typeof ToolCard>[0]) {
+  let args: { question?: unknown; options?: unknown; recommendation?: unknown } = {};
+  try {
+    args = JSON.parse(part.arguments || '{}') as typeof args;
+  } catch {
+    // Shown as it was written below.
+  }
+  const question = typeof args.question === 'string' ? args.question : part.arguments;
+  const options = Array.isArray(args.options)
+    ? args.options.filter((o): o is string => typeof o === 'string')
+    : [];
+  const recommended = typeof args.recommendation === 'string' ? args.recommendation : '';
+  return (
+    <div
+      id={`tool-${part.id}`}
+      className={`flex flex-col gap-3 rounded-2xl border p-4 ${answerable ? 'border-amber-300/30 bg-amber-300/[0.06]' : 'border-line bg-black/20'}`}
+    >
+      <p className="flex items-center gap-2 text-[13px] font-medium text-amber-100">
+        {answerable && <Dot tone="amber" live />}
+        {clank.name} asks
+      </p>
+      <p className="text-[14px] whitespace-pre-wrap text-white">{question}</p>
+      {recommended && <p className="text-[13px] text-dim">Recommends: {recommended}</p>}
+      {options.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {options.map((option) => (
+            <Button
+              key={option}
+              size="sm"
+              variant={option === recommended ? 'primary' : 'secondary'}
+              disabled={!answerable || !onAnswer}
+              onClick={() => onAnswer?.(option)}
+            >
+              {option}
+            </Button>
+          ))}
+        </div>
+      )}
+      {answerable && (
+        <p className="text-[12px] text-dim">
+          {options.length > 0 ? 'Pick one, or write' : 'Write'} your answer below. {clank.name}{' '}
+          carries on when you send it.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function ToolRow({ part }: { part: ToolPart }) {
   const [open, setOpen] = useState(false);

@@ -27,9 +27,10 @@ import {
   inputClass,
 } from '../components/ui';
 import { Workbench } from '../components/workbench/Workbench';
-import { useClank, useClankModel, useProviders, whereItRuns } from '../lib/crew';
+import { useClank, useClankModel, useCrew, useProviders, whereItRuns } from '../lib/crew';
 import { useModels } from '../lib/models';
 import { useNav } from '../lib/nav';
+import { folderName, useProject } from '../lib/projects';
 import { useTRPC } from '../lib/trpc';
 import { type WorkbenchFocus, WorkbenchContext, useWorkbench } from '../lib/workbench';
 
@@ -96,10 +97,12 @@ function apply(data: ChatData, event: ChatLiveEvent): ChatData {
 }
 
 /** A chat that isn't saved yet: it becomes one with its first message. */
-export function DraftChat({ clankId }: { clankId: string }) {
+export function DraftChat({ clankId, projectId }: { clankId: string; projectId: string | null }) {
   const trpc = useTRPC();
   const { go } = useNav();
   const clank = useClank(clankId);
+  const project = useProject(projectId);
+  const crew = useCrew();
   const [folder, setFolder] = useState<string | null>(null);
   const start = useMutation(trpc.chat.start.mutationOptions());
   const choose = useMutation(
@@ -116,7 +119,32 @@ export function DraftChat({ clankId }: { clankId: string }) {
           <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase">{clank.role}</p>
         </div>
         <p className="max-w-md text-sm text-dim">{clank.summary}</p>
-        {folder ? (
+        {project ? (
+          <div className="flex flex-col items-center gap-3">
+            <span
+              className="flex items-center gap-1.5 rounded-full border border-line px-3 py-0.5 text-[13px] text-white/85"
+              title={`${clank.name} works on its own copy of ${project.folder}, and on ${project.name}'s board`}
+            >
+              <FolderIcon /> {project.name}
+            </span>
+            <span className="flex items-center gap-1" aria-label="Who to talk to">
+              {crew
+                .filter((c) => project.crew.some((m) => m.clankId === c.id))
+                .map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    title={`Chat with ${c.name} in ${project.name}`}
+                    aria-pressed={c.id === clank.id}
+                    onClick={() => go({ page: 'draft', clankId: c.id, projectId: project.id })}
+                    className={`rounded-full p-0.5 ${c.id === clank.id ? 'ring-2 ring-accent/70' : 'opacity-60 hover:opacity-100'}`}
+                  >
+                    <Avatar colour={c.avatar} size="xs" />
+                  </button>
+                ))}
+            </span>
+          </div>
+        ) : folder ? (
           <span
             className="flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-3 text-[13px] text-white/85"
             title={`${clank.name} works on its own copy of ${folder}`}
@@ -141,7 +169,9 @@ export function DraftChat({ clankId }: { clankId: string }) {
         error={start.error?.message ?? null}
         onSend={async (text) => {
           try {
-            const { conversation } = await start.mutateAsync({ clankId, text, folder });
+            const { conversation } = await start.mutateAsync(
+              project ? { clankId, text, projectId: project.id } : { clankId, text, folder },
+            );
             go({ page: 'chat', id: conversation.id });
             return true;
           } catch {
@@ -190,6 +220,7 @@ export function LiveChat({ id }: { id: string }) {
   if (!query.data || !clank) return null;
   const { conversation, messages } = query.data;
   const waiting = waitingFor(conversation, messages, model, snapshot);
+  const last = messages.at(-1);
 
   return (
     <ChatFrame clank={clank} conversation={conversation}>
@@ -213,6 +244,11 @@ export function LiveChat({ id }: { id: string }) {
                 message === messages.at(-1)
               }
               waiting={waiting}
+              answerable={!conversation.replying && message === last}
+              onAnswer={(text) => {
+                stick.current = true;
+                send.mutate({ conversationId: id, text });
+              }}
               onRetry={() => {
                 stick.current = true;
                 retry.mutate(id);
@@ -399,6 +435,7 @@ function ChatHeader(props: {
   const pickFolder = useMutation(trpc.chat.pickFolder.mutationOptions());
   const clearFolder = useMutation(trpc.chat.clearFolder.mutationOptions());
   const error = [rename, remove, pickFolder, clearFolder].find((m) => m.error)?.error;
+  const project = useProject(conversation?.projectId);
 
   return (
     <header className="flex flex-col gap-2 border-b border-line px-5 py-3">
@@ -427,7 +464,35 @@ function ChatHeader(props: {
               {model.model} · {whereItRuns(model, providers)}
             </span>
           )}
+          {conversation && project && (
+            <button
+              type="button"
+              onClick={() =>
+                go({
+                  page: 'project',
+                  id: project.id,
+                  tab: 'board',
+                  ticket: conversation.ticketId,
+                })
+              }
+              className="mr-1 flex items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5 text-[12px] text-white/80 hover:bg-white/[0.05]"
+              title={
+                conversation.role
+                  ? `${clank.name}'s ${conversation.role === 'planner' ? 'planning' : 'run on a ticket'} in ${project.name}. Open it on the board.`
+                  : `${clank.name} works on its own copy of ${project.folder}, and on ${project.name}'s board`
+              }
+            >
+              <FolderIcon />
+              <span className="max-w-32 truncate">{project.name}</span>
+              {conversation.role && (
+                <span className="font-mono text-[11px] text-dim">
+                  {conversation.role === 'planner' ? 'plan' : conversation.title.split(':')[0]}
+                </span>
+              )}
+            </button>
+          )}
           {conversation &&
+            !project &&
             (conversation.folder ? (
               <span
                 className="mr-1 flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-2.5 text-[12px] text-white/80"
@@ -474,7 +539,7 @@ function ChatHeader(props: {
           >
             <LayersIcon />
           </IconButton>
-          {conversation && (
+          {conversation && !conversation.role && (
             <>
               <IconButton
                 label="Rename"
@@ -595,8 +660,4 @@ function ComposerArea(props: {
       />
     </div>
   );
-}
-
-function folderName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }

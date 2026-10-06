@@ -103,7 +103,9 @@ export const chatRouter = router({
   /** Starts a chat with its first message. */
   start: userProcedure
     .input(newConversationSchema)
-    .mutation(({ ctx, input }) => ctx.chat.start(input.clankId, input.text, input.folder ?? null)),
+    .mutation(({ ctx, input }) =>
+      ctx.chat.start(input.clankId, input.text, input.folder ?? null, input.projectId ?? null),
+    ),
 
   /** Asks for a folder for a chat that isn't saved yet. Resolves null if the user cancels. */
   chooseFolder: userProcedure.mutation(async ({ ctx }) => {

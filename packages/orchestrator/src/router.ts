@@ -15,6 +15,8 @@ import { userProcedure as modelProcedure } from './procedures';
 import { browserRouter } from './routers/browser';
 import { chatRouter } from './routers/chat';
 import { crewRouter } from './routers/crew';
+import { githubRouter } from './routers/github';
+import { boardRouter, projectsRouter } from './routers/projects';
 import { providersRouter } from './routers/providers';
 import { mcpRouter, toolsRouter } from './routers/tools';
 import { workspaceRouter } from './routers/workspace';
@@ -63,6 +65,9 @@ export const appRouter = router({
   browser: browserRouter,
   tools: toolsRouter,
   mcp: mcpRouter,
+  projects: projectsRouter,
+  board: boardRouter,
+  github: githubRouter,
 
   app: router({
     info: publicProcedure.query(({ ctx }) => ({

@@ -195,6 +195,33 @@ export interface ClankDocText {
   edited: boolean;
 }
 
+/**
+ * The stages in order: the built-in ones, with each custom checker's stage after the stage it
+ * follows, in roster order. One whose stage to follow nobody uses still runs, just before sign-off.
+ */
+export function orderStages(workflows: { stage: string; after?: string | undefined }[]): string[] {
+  const builtin = (stage: string) => (STAGES as readonly string[]).includes(stage);
+  const order: string[] = [...STAGES];
+  // One custom stage may follow another, so place them in rounds.
+  let pending = workflows.filter((w) => !builtin(w.stage));
+  for (;;) {
+    const ready = pending.filter((w) => order.includes(w.after ?? ''));
+    if (ready.length === 0) break;
+    for (const workflow of ready) {
+      if (order.includes(workflow.stage)) continue;
+      // Behind any custom stage already placed there, so roster order holds.
+      let at = order.indexOf(workflow.after!) + 1;
+      while (at < order.length && !builtin(order[at]!)) at++;
+      order.splice(at, 0, workflow.stage);
+    }
+    pending = pending.filter((w) => !order.includes(w.stage));
+  }
+  for (const workflow of pending) {
+    if (!order.includes(workflow.stage)) order.splice(order.indexOf('signoff'), 0, workflow.stage);
+  }
+  return order;
+}
+
 /** Rough tokens in a piece of text: about four characters each, erring high. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);

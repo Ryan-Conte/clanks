@@ -23,6 +23,7 @@ function toRecord(row: MessageRow): MessageRecord {
     id: row.id,
     conversationId: row.conversationId,
     role: row.role,
+    ...(row.author ? { author: row.author } : {}),
     content: row.content,
     // Messages saved before tools are their text.
     parts: row.parts
@@ -46,6 +47,26 @@ export class ChatStore {
 
   conversations(): Conversation[] {
     return this.db.select().from(conversation).orderBy(desc(conversation.updatedAt)).all();
+  }
+
+  /** A project's chats and runs, newest first. */
+  inProject(projectId: string): Conversation[] {
+    return this.db
+      .select()
+      .from(conversation)
+      .where(eq(conversation.projectId, projectId))
+      .orderBy(desc(conversation.updatedAt))
+      .all();
+  }
+
+  /** The runs on a ticket, oldest first. */
+  forTicket(ticketId: string): Conversation[] {
+    return this.db
+      .select()
+      .from(conversation)
+      .where(eq(conversation.ticketId, ticketId))
+      .orderBy(asc(conversation.createdAt))
+      .all();
   }
 
   conversation(id: string): Conversation | undefined {
@@ -110,6 +131,7 @@ export class ChatStore {
         conversationId: record.conversationId,
         position,
         role: record.role,
+        author: record.author ?? null,
         content: record.content,
         parts: record.parts,
         reasoning: record.reasoning,

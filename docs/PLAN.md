@@ -105,7 +105,7 @@ docs/
 | Area | Choice | Why |
 | --- | --- | --- |
 | Desktop shell | Electron | Cross-platform, Node in the main process so the orchestrator and app share one runtime, and a full Chromium we can reuse for the browser pane and the Studio renderer. Tauri was considered; it would split the orchestrator into Rust or a sidecar and has no embeddable Chromium on every platform. |
-| UI | React, Vite, Tailwind, TanStack Query, dnd-kit for the board | Matches the landing page stack and the ecosystem for chat and kanban UIs. |
+| UI | React, Vite, Tailwind, TanStack Query, the browser's own drag and drop for the board | Matches the landing page stack and the ecosystem for chat and kanban UIs. dnd-kit was the plan for the board; the workflow decides every move a drag asks for, so native drag and drop is enough, with no extra dependency. |
 | Local inference | llama.cpp `llama-server`, bundled, one supervised child process per loaded model | Runs GGUF models on Metal, CUDA, Vulkan or CPU; speaks an OpenAI-compatible API with tool calling and grammars; parallel slots let several clanks share one loaded model. A child process means a native crash can't take the app down. In-process bindings (node-llama-cpp) were considered for that reason. |
 | Model format and source | GGUF from Hugging Face, plus a curated catalog | GGUF is what llama.cpp loads, comes pre-quantised and carries no executable code. Almost every open model is published in it. |
 | Storage | SQLite via better-sqlite3 + Drizzle | Single local file, fast, easy backups, typed schema and migrations. better-sqlite3 ships N-API binaries that load in Node and Electron alike, so nothing is compiled or rebuilt for Electron. |
@@ -139,7 +139,8 @@ Stored in SQLite. Simplified:
 - **project_integration**: project, connection, clanks allowed to use it.
 - **routine**, **routine_run**, **scheduled_action**: schedules, their runs, and approved actions waiting for their time. Fields are in [ROUTINES.md](ROUTINES.md#data-model).
 - **package**: id, kind (`clank`, `integration`, `crew`, `routine`), index, version, sha256, publisher, licence, pinned, installed at, status (`active`, `update_available`, `revoked`).
-- **conversation**: id, clank, title, folder (optional, until projects: its `CLANKS.md` or `AGENTS.md` is followed), project (optional), created/updated.
+- **conversation**: id, clank, title, folder (optional: its `CLANKS.md` or `AGENTS.md` is followed; a project's workspace for a chat in one), project (optional), ticket and role (`maker`, `checker`, `planner`) for a run, created/updated.
+- **message** carries, besides the rest, an author: the app, for a brief or a bounce it writes to a run as the user's turn.
 - **message**: id, conversation, position, role, content parts (text, tool call, tool result, attachment), reasoning, status (`streaming`, `done`, `cancelled`, `failed`), the provider and model that wrote it, tokens, speed, time, finish reason, cost.
 - **project**: id, title, brief, workspace (a GitHub repo cloned locally, or a local folder), base branch, status, budget, bounce limit, required checks per output type.
 - **project_clank**: project, clank, model override. The project's crew; Atlas is always in it.
@@ -245,6 +246,18 @@ The board is live, and it's where you watch the crew work. The full spec is in [
 - **Other views:** **By clank** (one lane per clank and per parallel run) and **Schedule**. **Home** is the same overview across every project: needs you, working now, coming up, machine load and today's usage.
 
 The workflow engine and ticket state machine live in `packages/core` and are the only code allowed to move a ticket.
+
+### In Milestone 5
+
+Projects, specs and the board, as built. Tickets other than specs wait in the backlog until the workflow engine runs them (Milestone 6).
+
+- **Projects.** A name, a brief, the letters ticket keys start with (suggested from the name: Surf shop is `SURF`), a workspace, a crew and models. A local folder that isn't a repository yet is made one, with what's in it committed, since the crew works on copies made with git. A GitHub repository is listed, or made with a first commit, and cloned into a new folder (`~/clanks/<repo>` unless you pick another). Signing in to GitHub takes a token you paste, kept in the keychain; signing in with a code on github.com works when the build has an OAuth app (`CLANKS_GITHUB_CLIENT_ID`). A clone gets the token through git's environment for that one command, so it's never written to disk.
+- **Models.** A clank runs on its model in the project, else the project's model for the crew, else its own, else the app's crew model. Only the project's crew can chat in it; Atlas is always in.
+- **Chats in a project** are about its workspace, follow its `CLANKS.md`, and get board and spec tools as each clank's doc allows: Atlas can list, read, create, update, link and assign tickets, so it answers "what's the status?" from the board. A ticket a maker files is a proposal until Atlas or you take it on.
+- **Runs are conversations.** Each clank working a ticket has a run: a conversation the app writes to, with the ticket in its run context and, in its worktree, a branch named for the ticket (`clanks/SURF-1` for its maker, `clanks/SURF-1-atlas` for a checker). You can read a run, answer it and steer it like any chat; the app's briefs show as the app's. A run ends with a finishing call: `submit_output` for its maker, `review_pass` for a checker, or `ticket_bounce`, `ask_user` or `fail`. A run that stops with a plain reply is reminded twice, then stops as failed, and **Carry on** starts it again. `ask_user` pauses the run; your answer in it, or a click on one of its options, carries it on. After a restart, runs that were working are paused.
+- **The spec flow.** Atlas talks the idea through, then creates a `spec` ticket for Scribe, which starts straight away (one spec ticket at a time per project). Scribe saves drafts with `spec_write`; each is parsed for stories (`### US-4 …`), criteria (`- AC-4.1: …`) and edge cases, and Scribe is told what's missing. `submit_output` is refused while a story has no criteria. Atlas checks the draft and passes it or sends it back with numbered issues, which restarts it with Scribe. A ticket sent back more than three times comes to you. Signed off, it waits for you on the board and the Spec tab: **Approve** makes the draft spec v1 (v2, v3 for later ones), and **Request changes** sends your words to Scribe, without counting as a bounce. Approving starts Atlas planning in a run of its own, told which stories are new or changed: it creates the tickets, with the stories' criteria copied in unless it gives its own, and the dependencies between them.
+- **The board** shows Backlog, Build, QA + review, Ready for you and Done (collapsed), with the crew strip, **Needs you** (sign-offs, questions, approvals, failed or paused runs, proposals), a card per ticket with its status in words, progress from `post_progress` and a live line from the run's latest tool call, and the activity feed. Dragging puts the backlog in order and drops a card on a clank to reassign it; any other drag asks the workflow, which says why not. **+** adds a card. The ticket drawer has the route, the maker, stories, criteria, dependencies, what was handed in, checkers' passes, bounces, the chats and runs, and the ticket's feed lines.
+- **The Spec tab** shows each version as written, live while Scribe writes, the draft's parse problems, and a diff against the version before.
 
 ## Agent runtime
 

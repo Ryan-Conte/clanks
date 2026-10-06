@@ -1,11 +1,18 @@
 import { createContext, useContext } from 'react';
 
+/** A project's views. */
+export type ProjectTab = 'board' | 'spec' | 'settings';
+
 /** Where the window is. Chats aren't saved until their first message, so a new one is a draft. */
 export type Route =
   | { page: 'home' }
-  | { page: 'draft'; clankId: string }
+  /** A new chat, in a project when it has one. */
+  | { page: 'draft'; clankId: string; projectId?: string | null }
   | { page: 'chat'; id: string }
   | { page: 'crew'; clankId: string | null }
+  /** A project, with a ticket's drawer open on the board. */
+  | { page: 'project'; id: string; tab: ProjectTab; ticket?: string | null }
+  | { page: 'new-project' }
   | { page: 'models' }
   | { page: 'settings' };
 

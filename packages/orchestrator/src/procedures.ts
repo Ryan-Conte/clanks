@@ -2,9 +2,12 @@ import { BrowserError } from '@clanks/browser';
 import { ModelsError } from '@clanks/models';
 import { ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
+import { BoardError } from './board/service';
 import { ChatError } from './chat/service';
 import { CrewDocError } from './crew/docs';
+import { GitHubError } from './github/service';
 import { McpError } from './mcp/service';
+import { ProjectError } from './projects/service';
 import { SecretsUnavailableError } from './secrets';
 import { publicProcedure } from './trpc';
 import { WorkspaceError } from './workspace/service';
@@ -19,7 +22,10 @@ export function isUserError(error: unknown): error is Error {
     error instanceof SecretsUnavailableError ||
     error instanceof WorkspaceError ||
     error instanceof McpError ||
-    error instanceof BrowserError
+    error instanceof BrowserError ||
+    error instanceof ProjectError ||
+    error instanceof BoardError ||
+    error instanceof GitHubError
   );
 }
 

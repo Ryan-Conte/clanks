@@ -1,10 +1,16 @@
-import type { ClankFrontmatter, ToolOverrides, ToolPolicyLevel } from '@clanks/core';
+import {
+  ALWAYS_AVAILABLE_TOOLS,
+  type ClankFrontmatter,
+  type ToolOverrides,
+  type ToolPolicyLevel,
+} from '@clanks/core';
 
 type DocPolicy = ClankFrontmatter['tools'];
 
 /**
  * What a priming doc says about a tool. An entry naming the tool beats a group entry such as
- * `browser_*`; between entries alike, deny beats ask beats allow. Unlisted tools are off.
+ * `browser_*`; between entries alike, deny beats ask beats allow. Unlisted tools are off, except
+ * the crew's own, which every clank has.
  */
 export function docLevel(policy: DocPolicy, name: string): ToolPolicyLevel {
   const exact = (entries: string[]) => entries.includes(name);
@@ -15,7 +21,7 @@ export function docLevel(policy: DocPolicy, name: string): ToolPolicyLevel {
     if (matches(policy.ask)) return 'ask';
     if (matches(policy.allow)) return 'allow';
   }
-  return 'off';
+  return (ALWAYS_AVAILABLE_TOOLS as readonly string[]).includes(name) ? 'allow' : 'off';
 }
 
 export interface PolicyDecision {

@@ -90,12 +90,57 @@ export interface BrowserAccess {
   search(query: string, count: number): Promise<{ results: SearchResult[]; page: string | null }>;
 }
 
+/** A ticket as the board tools take it from a clank. */
+export interface TicketDraft {
+  title: string;
+  type: string;
+  description: string;
+  stories: string[];
+  criteria: string[];
+  /** A clank's id, or null to leave it open. */
+  assignee: string | null;
+  /** Keys of tickets it waits on. */
+  dependsOn: string[];
+}
+
+/**
+ * The board of the project a chat or run is in. Each method does what its tool says and returns
+ * what the clank reads, or throws a `ToolFailure` saying what's wrong. The crew's finishing calls
+ * work only in a ticket run.
+ */
+export interface BoardAccess {
+  list(filter: { column?: string; assignee?: string; query?: string }): string;
+  get(key: string): string;
+  create(ticket: TicketDraft): string;
+  update(input: {
+    key: string;
+    title?: string;
+    description?: string;
+    criteria?: string[];
+    stories?: string[];
+  }): string;
+  link(input: { key: string; dependsOn: string; remove: boolean }): string;
+  /** A clank's id, or null to make it open. */
+  assign(input: { key: string; clank: string | null }): string;
+  /** A version, the draft, or null for the one that fits the run. */
+  readSpec(version: number | 'draft' | null): string;
+  writeSpec(content: string): string;
+  progress(input: { message: string; steps: { title: string; done: boolean }[] }): string;
+  submit(output: Record<string, unknown> & { type: string }): string;
+  pass(review: Record<string, unknown>): string;
+  bounce(input: { to: string; reason: string; issues: string[] }): string;
+  fail(input: { reason: string; tried: string }): string;
+  ask(input: { question: string; options: string[]; recommendation: string }): string;
+}
+
 export interface ToolContext {
   workspace: WorkspaceAccess | null;
   shell: ShellAccess | null;
   web: WebAccess;
   /** Null when the chat has no browser, such as in tests or outside the app. */
   browser: BrowserAccess | null;
+  /** The project's board, in a chat or run in a project. */
+  board: BoardAccess | null;
   signal: AbortSignal;
   clank: { id: string; name: string };
   /** The most a result may hold, in characters, so it doesn't crowd out the conversation. */
@@ -115,13 +160,25 @@ export interface ToolResult {
   image?: ToolImage;
   /** The model gets the picture too, when it can see. */
   showModel?: boolean;
+  /** It handed the ticket on, so the run ends here, with no more turns for the model. */
+  finish?: boolean;
 }
 
 /**
  * What a tool needs from the chat to be offered: a workspace, commands, a search backend (or the
- * browser to search in), the browser, or a model that can see pictures.
+ * browser to search in), the browser, a model that can see pictures, a project's board, a ticket
+ * run, or a run as the ticket's maker or one of its checkers.
  */
-export type ToolNeed = 'workspace' | 'shell' | 'search' | 'browser' | 'vision';
+export type ToolNeed =
+  | 'workspace'
+  | 'shell'
+  | 'search'
+  | 'browser'
+  | 'vision'
+  | 'project'
+  | 'ticket'
+  | 'maker'
+  | 'checker';
 
 /** A tool a clank can call. */
 export interface ToolSpec<A = unknown> {

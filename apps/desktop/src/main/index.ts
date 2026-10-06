@@ -72,6 +72,8 @@ if (!app.requestSingleInstanceLock()) {
         cipher: keychainCipher,
         bundledRuntimeDir: resourcePath('llama'),
         browserHost,
+        // Signing in to GitHub with a code needs an OAuth app; without one, users paste a token.
+        githubClientId: process.env.CLANKS_GITHUB_CLIENT_ID || null,
         host: {
           pickFolder: async ({ title, defaultPath }) => {
             const options: Electron.OpenDialogOptions = {

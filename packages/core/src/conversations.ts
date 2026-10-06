@@ -1,18 +1,27 @@
 import { z } from 'zod';
+import type { RunRole } from './board';
 import type { ChatUsage, FinishReason } from './chat';
 import { type ClankId, clankIdSchema } from './crew';
 import type { ModelChoice } from './providers';
 
-/** A chat with one clank. */
+/**
+ * A chat with one clank. A chat in a project is about the project's workspace and can use its
+ * board. A run is the conversation a clank works a ticket in, which the app starts.
+ */
 export interface Conversation {
   id: string;
   clankId: ClankId;
   title: string;
   /**
    * A folder the chat is about. The clank follows its `CLANKS.md`, or `AGENTS.md`, as project
-   * instructions, and works on a copy of it. Projects take this over when they arrive.
+   * instructions, and works on a copy of it. In a project, it's the project's workspace.
    */
   folder: string | null;
+  projectId: string | null;
+  /** For a run: the ticket it works, or the spec ticket it plans from. */
+  ticketId: string | null;
+  /** For a run: what the clank is doing in it. Null for a chat. */
+  role: RunRole | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -103,6 +112,11 @@ export interface MessageRecord {
   id: string;
   conversationId: string;
   role: 'user' | 'assistant';
+  /**
+   * `app` for a user turn the app wrote for the clank, such as a ticket brief or a bounce, rather
+   * than the user. Missing on the user's own messages.
+   */
+  author?: 'app';
   /** All of the message's text, for copying and for the model. */
   content: string;
   /** The text, tool calls and notes in order. A user message is one text part. */
@@ -147,6 +161,8 @@ export const newConversationSchema = z.object({
   text: z.string().trim().min(1).max(200_000),
   /** A folder for the chat to be about from the start. */
   folder: z.string().min(1).max(4096).nullable().optional(),
+  /** A project for the chat to be in, whose workspace it's about. */
+  projectId: z.uuid().nullable().optional(),
 });
 
 export const sendMessageSchema = z.object({

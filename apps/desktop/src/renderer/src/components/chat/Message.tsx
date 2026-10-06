@@ -13,9 +13,25 @@ export const Message = memo(function Message(props: {
   canRetry: boolean;
   /** What the reply is waiting on before its first word, such as the model loading. */
   waiting: string;
+  /** It's the last message and nothing is being written, so a question in it can be answered. */
+  answerable?: boolean;
+  onAnswer?: (text: string) => void;
   onRetry: () => void;
 }) {
   const { message } = props;
+  if (message.role === 'user' && message.author === 'app') {
+    return (
+      <div
+        id={`message-${message.id}`}
+        className="animate-rise flex flex-col gap-1.5 rounded-2xl border border-line bg-white/[0.03] px-4 py-3"
+      >
+        <span className="text-[11px] font-medium tracking-[0.12em] text-dim uppercase">
+          clanks → {props.clank.name}
+        </span>
+        <Markdown text={message.content} />
+      </div>
+    );
+  }
   if (message.role === 'user') {
     return (
       <div
@@ -34,7 +50,15 @@ export const Message = memo(function Message(props: {
   return <Reply {...props} />;
 });
 
-function Reply({ message, clank, canRetry, waiting, onRetry }: Parameters<typeof Message>[0]) {
+function Reply({
+  message,
+  clank,
+  canRetry,
+  waiting,
+  answerable,
+  onAnswer,
+  onRetry,
+}: Parameters<typeof Message>[0]) {
   const streaming = message.status === 'streaming';
   // While a reply streams in, React may skip renders it can't keep up with.
   const parts = useDeferredValue(message.parts);
@@ -68,6 +92,8 @@ function Reply({ message, clank, canRetry, waiting, onRetry }: Parameters<typeof
             part={part}
             message={message}
             clank={clank}
+            answerable={answerable ?? false}
+            {...(onAnswer ? { onAnswer } : {})}
           />
         ))}
         {streaming && (parts.length === 0 ? !message.reasoning : between) && (
@@ -115,14 +141,26 @@ function Reply({ message, clank, canRetry, waiting, onRetry }: Parameters<typeof
   );
 }
 
-function Part(props: { part: MessagePart; message: MessageRecord; clank: ClankSummary }) {
+function Part(props: {
+  part: MessagePart;
+  message: MessageRecord;
+  clank: ClankSummary;
+  answerable: boolean;
+  onAnswer?: (text: string) => void;
+}) {
   const { part } = props;
   switch (part.type) {
     case 'text':
       return part.text.trim() ? <Markdown text={part.text} /> : null;
     case 'tool':
       return (
-        <ToolCard part={part} conversationId={props.message.conversationId} clank={props.clank} />
+        <ToolCard
+          part={part}
+          conversationId={props.message.conversationId}
+          clank={props.clank}
+          answerable={props.answerable}
+          {...(props.onAnswer ? { onAnswer: props.onAnswer } : {})}
+        />
       );
     case 'note':
       return <Note>{part.text}</Note>;

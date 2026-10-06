@@ -1,9 +1,11 @@
 import type {
   ActivityEvent,
   Avatar,
+  BoardEventKind,
   ChangedFile,
   ClankBrowser,
   ChatUsage,
+  Criterion,
   FinishReason,
   GgufFacts,
   MessagePart,
@@ -11,11 +13,28 @@ import type {
   ModelCapabilities,
   ModelFile,
   ModelTag,
+  OutputType,
+  ProjectRepo,
   ReviewNoteKind,
+  RouteStep,
+  RunRole,
+  SpecStatus,
+  TicketOrigin,
+  TicketProgress,
+  TicketReview,
+  TicketState,
   ToolOverrides,
 } from '@clanks/core';
 import type { PullRecord } from '@clanks/models';
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 
 /**
  * App settings, one row per key. Values are JSON, validated against `settingsSchema` on read.
@@ -75,7 +94,141 @@ export const clank = sqliteTable('clank', {
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
-/** A chat with one clank. */
+/** A project: its workspace, its crew's model, and the letters its ticket keys start with. */
+export const project = sqliteTable('project', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  brief: text('brief').notNull(),
+  key: text('key').notNull(),
+  folder: text('folder').notNull(),
+  repo: text('repo', { mode: 'json' }).$type<ProjectRepo>(),
+  /** The model for the whole crew. Both null leaves each clank on its own. */
+  provider: text('provider'),
+  model: text('model'),
+  /** The number the next ticket gets. */
+  nextNumber: integer('next_number').notNull().default(1),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+/** A clank in a project's crew, and its model there. */
+export const projectClank = sqliteTable(
+  'project_clank',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    clankId: text('clank_id').notNull(),
+    provider: text('provider'),
+    model: text('model'),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.clankId] })],
+);
+
+/** One version of a project's spec. The draft of the next version is the one not yet approved. */
+export const spec = sqliteTable(
+  'spec',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    body: text('body').notNull(),
+    status: text('status').$type<SpecStatus>().notNull(),
+    ticketId: text('ticket_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+    approvedAt: integer('approved_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [uniqueIndex('spec_project_version').on(t.projectId, t.version)],
+);
+
+export const ticket = sqliteTable(
+  'ticket',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    key: text('key').notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    type: text('type').$type<OutputType>().notNull(),
+    stories: text('stories', { mode: 'json' }).$type<string[]>().notNull(),
+    criteria: text('criteria', { mode: 'json' }).$type<Criterion[]>().notNull(),
+    assignee: text('assignee'),
+    route: text('route', { mode: 'json' }).$type<RouteStep[]>().notNull(),
+    step: integer('step').notNull(),
+    state: text('state').$type<TicketState>().notNull(),
+    reason: text('reason'),
+    bounces: integer('bounces').notNull().default(0),
+    rank: real('rank').notNull(),
+    origin: text('origin').$type<TicketOrigin>().notNull(),
+    createdBy: text('created_by').notNull(),
+    proposed: integer('proposed', { mode: 'boolean' }).notNull().default(false),
+    specVersion: integer('spec_version'),
+    progress: text('progress', { mode: 'json' }).$type<TicketProgress>(),
+    output: text('output', { mode: 'json' }).$type<Record<string, unknown>>(),
+    reviews: text('reviews', { mode: 'json' }).$type<TicketReview[]>().notNull(),
+    /** The chat it came from. Not a foreign key: deleting the chat keeps the ticket. */
+    conversationId: text('conversation_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+    doneAt: integer('done_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [uniqueIndex('ticket_project_number').on(t.projectId, t.number)],
+);
+
+/** A ticket waiting on another. */
+export const ticketDependency = sqliteTable(
+  'ticket_dependency',
+  {
+    ticketId: text('ticket_id')
+      .notNull()
+      .references(() => ticket.id, { onDelete: 'cascade' }),
+    dependsOn: text('depends_on')
+      .notNull()
+      .references(() => ticket.id, { onDelete: 'cascade' }),
+  },
+  (t) => [primaryKey({ columns: [t.ticketId, t.dependsOn] })],
+);
+
+export const bounce = sqliteTable(
+  'bounce',
+  {
+    id: text('id').primaryKey(),
+    ticketId: text('ticket_id')
+      .notNull()
+      .references(() => ticket.id, { onDelete: 'cascade' }),
+    from: text('from').notNull(),
+    to: text('to').notNull(),
+    reason: text('reason').notNull(),
+    issues: text('issues', { mode: 'json' }).$type<string[]>().notNull(),
+    at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('bounce_ticket').on(t.ticketId)],
+);
+
+/** Append-only: a project's activity feed. Lines outlive the tickets they're about. */
+export const boardEvent = sqliteTable(
+  'board_event',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    ticketId: text('ticket_id'),
+    actor: text('actor').notNull(),
+    kind: text('kind').$type<BoardEventKind>().notNull(),
+    text: text('text').notNull(),
+    at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('board_event_project').on(t.projectId, t.id)],
+);
+
+/** A chat with one clank, or a clank's run on a ticket. */
 export const conversation = sqliteTable(
   'conversation',
   {
@@ -84,10 +237,16 @@ export const conversation = sqliteTable(
     title: text('title').notNull(),
     /** A folder whose CLANKS.md or AGENTS.md the clank follows. */
     folder: text('folder'),
+    projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
+    ticketId: text('ticket_id').references(() => ticket.id, { onDelete: 'cascade' }),
+    role: text('role').$type<RunRole>(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (t) => [index('conversation_updated_at').on(t.updatedAt)],
+  (t) => [
+    index('conversation_updated_at').on(t.updatedAt),
+    index('conversation_ticket').on(t.ticketId),
+  ],
 );
 
 export const message = sqliteTable(
@@ -100,6 +259,8 @@ export const message = sqliteTable(
     /** Order within the conversation. */
     position: integer('position').notNull(),
     role: text('role', { enum: ['user', 'assistant'] }).notNull(),
+    /** `app` for a turn the app wrote for the clank, such as a ticket brief. */
+    author: text('author').$type<'app'>(),
     content: text('content').notNull(),
     /** Text, tool calls and notes in order. Null for messages saved before tools, which are text. */
     parts: text('parts', { mode: 'json' }).$type<MessagePart[]>(),
