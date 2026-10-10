@@ -31,10 +31,12 @@ export interface RouteStep {
 }
 
 /**
- * How a ticket is doing where it is: waiting its turn, being worked, waiting on the user's answer,
- * stopped part way, failed, or bounced so often it came to the user.
+ * How a ticket is doing where it is: waiting its turn, its turn come but waiting for a free slot,
+ * being worked, waiting on the user's answer, stopped part way, failed, or bounced so often it came
+ * to the user.
  */
-export type TicketState = 'idle' | 'working' | 'question' | 'paused' | 'failed' | 'looping';
+export type TicketState =
+  'idle' | 'waiting' | 'working' | 'question' | 'paused' | 'failed' | 'looping';
 
 /** A checker's pass, as it handed it in with `review_pass`. */
 export interface TicketReview extends Record<string, unknown> {
@@ -44,6 +46,54 @@ export interface TicketReview extends Record<string, unknown> {
 
 /** Where a ticket came from: a chat, a spec's planning, the board, or a clank's proposal. */
 export type TicketOrigin = 'chat' | 'spec' | 'board' | 'proposal';
+
+/** An optional check dropped from one ticket, and why. */
+export interface SkippedCheck {
+  clankId: ClankId;
+  reason: string;
+  /** `user`, or the clank that dropped it. */
+  by: string;
+}
+
+/**
+ * A ticket sent to a clank outside its route, such as Forge asking Scribe about a gap in the spec.
+ * It goes back to the clank that sent it once the question is answered.
+ */
+export interface TicketDetour {
+  clankId: ClankId;
+  /** The clank that sent it, which gets it back. */
+  from: ClankId;
+}
+
+/** How a ticket ended: approved by the user, or rejected. */
+export type TicketOutcome = 'approved' | 'rejected';
+
+/** A pull request opened for a ticket's branch. */
+export interface TicketPullRequest {
+  number: number;
+  url: string;
+  state: 'open' | 'merged' | 'closed';
+  /** The checks GitHub runs on it: null until they report. */
+  ci: 'pending' | 'passing' | 'failing' | null;
+}
+
+/** Where a ticket's work is: its branch, whether it's pushed, its pull request, and its merge. */
+export interface TicketDelivery {
+  /** `clanks/SURF-3`. */
+  branch: string;
+  /** The branch it merges into. */
+  base: string;
+  /** The commit at the tip of the branch when it was last handed in. */
+  head: string | null;
+  /** It has commits its base doesn't. */
+  changed: boolean;
+  pushedAt: string | null;
+  pr: TicketPullRequest | null;
+  /** The merge commit, once it's merged. */
+  merged: string | null;
+  /** Why the last push, pull request or merge didn't work. */
+  error: string | null;
+}
 
 /** The plan a clank posted with `post_progress`, which its card shows as progress. */
 export interface TicketProgress {
@@ -91,6 +141,16 @@ export interface Ticket {
   conversationId: string | null;
   /** The tickets it waits on, by id. */
   dependsOn: string[];
+  /** Optional checks dropped from its route, with why. */
+  skipped: SkippedCheck[];
+  /** Set while it's with a clank outside its route, answering a bounce. */
+  detour: TicketDetour | null;
+  /** What the next run on it is told when the scheduler starts it. Set while it's waiting. */
+  queued: string | null;
+  /** Its branch, pull request and merge, once its maker has handed something in. */
+  delivery: TicketDelivery | null;
+  /** How it ended. Null until it's done. */
+  outcome: TicketOutcome | null;
   createdAt: Date;
   updatedAt: Date;
   doneAt: Date | null;
@@ -116,10 +176,22 @@ export function columnOf(ticket: Pick<Ticket, 'step' | 'route' | 'doneAt'>): Tic
   return ticket.route[ticket.step]!.role === 'maker' ? 'build' : 'review';
 }
 
-/** The clank whose turn it is, if it's a clank's. */
-export function currentClank(ticket: Pick<Ticket, 'step' | 'route' | 'doneAt'>): ClankId | null {
+/** The clank whose turn it is, if it's a clank's: one answering a bounce has it meanwhile. */
+export function currentClank(
+  ticket: Pick<Ticket, 'step' | 'route' | 'doneAt'> & { detour?: TicketDetour | null },
+): ClankId | null {
   if (ticket.doneAt || ticket.step < 0) return null;
+  if (ticket.detour) return ticket.detour.clankId;
   return ticket.route[ticket.step]?.clankId ?? null;
+}
+
+/** What the clank whose turn it is does on the ticket now. */
+export function currentRole(
+  ticket: Pick<Ticket, 'step' | 'route' | 'doneAt'> & { detour?: TicketDetour | null },
+): RunRole | null {
+  if (ticket.doneAt || ticket.step < 0 || ticket.step >= ticket.route.length) return null;
+  if (ticket.detour) return 'helper';
+  return ticket.route[ticket.step]!.role;
 }
 
 /** A clank as the workflow sees it: what it makes, which tickets it checks, who it bounces to. */
@@ -140,25 +212,52 @@ export function makersOf(type: OutputType, crew: WorkflowMember[]): WorkflowMemb
   return crew.filter((c) => c.kind === 'maker' && c.outputs.includes(type));
 }
 
-/**
- * A ticket's route: its maker, then every checker that applies to its type, in stage order, so a
- * `pr` goes Forge → Gauge → Atlas and a `spec` goes Scribe → Atlas. The user comes after.
- */
-export function routeFor(
-  type: OutputType,
-  maker: ClankId | null,
-  crew: WorkflowMember[],
-): RouteStep[] {
+/** The checkers that apply to a type, in stage order: sign-off comes last. */
+export function checkersFor(type: OutputType, crew: WorkflowMember[]): WorkflowMember[] {
   const stages = orderStages(crew);
-  const checkers = crew
+  return crew
     .map((c, i) => ({ c, i }))
     .filter(
       ({ c }) =>
         c.kind === 'checker' && (c.appliesTo.includes('all') || c.appliesTo.includes(type)),
     )
     .sort((a, b) => stages.indexOf(a.c.stage) - stages.indexOf(b.c.stage) || a.i - b.i)
-    .map(({ c }) => ({ clankId: c.id, role: 'checker' as const }));
+    .map(({ c }) => c);
+}
+
+/**
+ * A ticket's route: its maker, then every checker that applies to its type, in stage order, so a
+ * `pr` goes Forge → Gauge → Atlas and a `spec` goes Scribe → Atlas. Checks skipped on the ticket
+ * are left out. The user comes after.
+ */
+export function routeFor(
+  type: OutputType,
+  maker: ClankId | null,
+  crew: WorkflowMember[],
+  skipped: Pick<SkippedCheck, 'clankId'>[] = [],
+): RouteStep[] {
+  const checkers = checkersFor(type, crew)
+    .filter((c) => !skipped.some((s) => s.clankId === c.id))
+    .map((c) => ({ clankId: c.id, role: 'checker' as const }));
   return [{ clankId: maker, role: 'maker' }, ...checkers];
+}
+
+/** The key a project's optional checks are listed under: `gauge:pr`. */
+export function checkKey(clankId: ClankId, type: OutputType): string {
+  return `${clankId}:${type}`;
+}
+
+/**
+ * Whether a check is required on a type in a project. Sign-off always is; the rest are unless the
+ * project made them optional. Only an optional check can be skipped on a ticket.
+ */
+export function checkRequired(
+  checker: Pick<WorkflowMember, 'id' | 'stage'>,
+  type: OutputType,
+  optionalChecks: readonly string[],
+): boolean {
+  if (checker.stage === 'signoff') return true;
+  return !optionalChecks.includes(checkKey(checker.id, type));
 }
 
 /** Who a clank can send a ticket back to, on this ticket, among the crew. */
@@ -180,8 +279,22 @@ export function bounceTargets(
 }
 
 /**
+ * What a bounce to a clank does. One that had the ticket earlier on its route gets it back, and the
+ * route runs again from there, so fixed work goes through every check again. Anyone else answers
+ * from outside the route, and the ticket comes back to the sender.
+ */
+export function bounceKind(
+  ticket: Pick<Ticket, 'route' | 'step'>,
+  to: ClankId,
+): { kind: 'restart'; step: number } | { kind: 'detour' } {
+  const step = ticket.route.slice(0, ticket.step).findIndex((s) => s.clankId === to);
+  return step === -1 ? { kind: 'detour' } : { kind: 'restart', step };
+}
+
+/**
  * Why the board can't move a ticket to a column by a drag, or null when it can. The board never
- * moves a ticket itself; it asks, and the workflow decides.
+ * moves a ticket itself; it asks, and the workflow decides. A drag from Backlog to Build starts a
+ * ticket now; one from Build back to Backlog stops its run.
  */
 export function moveRefusal(ticket: Ticket, to: TicketColumn): string | null {
   const from = columnOf(ticket);
@@ -192,7 +305,29 @@ export function moveRefusal(ticket: Ticket, to: TicketColumn): string | null {
     return 'Tickets reach you when Atlas signs them off, and approving always opens the ticket. Nothing is approved by a drag.';
   }
   if (from === 'done') return 'Done tickets stay done.';
+  if (from === 'backlog' && to === 'build') {
+    if (ticket.proposed) return `${ticket.key} is a proposal. Take it on first.`;
+    return null;
+  }
+  if (from === 'build' && to === 'backlog') {
+    if (ticket.type === 'spec')
+      return 'A spec ticket keeps going once it has started. Pause it instead.';
+    return null;
+  }
   return 'The crew moves tickets through Build and QA + review as they work them.';
+}
+
+/**
+ * The clank that picks up an open ticket, among the makers of its type that are free: the one that
+ * made the tickets it depends on, since it knows that work, then the one with the shortest queue.
+ */
+export function pickMaker(
+  free: ClankId[],
+  input: { madeDependencies: ClankId[]; queue: (clankId: ClankId) => number },
+): ClankId | null {
+  if (free.length === 0) return null;
+  const knows = (id: ClankId) => input.madeDependencies.filter((m) => m === id).length;
+  return [...free].sort((a, b) => knows(b) - knows(a) || input.queue(a) - input.queue(b))[0]!;
 }
 
 /** Things to show for each kind of board event, in the feed. */
@@ -210,12 +345,21 @@ export type BoardEventKind =
   | 'failed'
   | 'looping'
   | 'approved'
+  | 'rejected'
   | 'changes'
   | 'planned'
   | 'moved'
   | 'updated'
   | 'linked'
-  | 'deleted';
+  | 'deleted'
+  | 'skipped'
+  | 'answered'
+  | 'pushed'
+  | 'merged'
+  | 'noted'
+  | 'paused'
+  | 'stopped'
+  | 'budget';
 
 /** One line in a project's activity feed. Append-only. */
 export interface BoardEvent {
@@ -239,18 +383,36 @@ export interface TicketRun {
   replying: boolean;
 }
 
-/** What a clank is doing in a run: making the ticket, checking it, or planning from the spec. */
-export type RunRole = 'maker' | 'checker' | 'planner';
+/**
+ * What a clank is doing in a run: making the ticket, checking it, answering a bounce from outside
+ * its route, or planning from the spec.
+ */
+export type RunRole = 'maker' | 'checker' | 'helper' | 'planner';
 
 /** What's happening on a ticket right now, for its card. */
 export interface TicketLive {
   conversationId: string;
   clankId: ClankId;
-  /** "Running `npm test`", "Thinking", "Waiting for gemma4:26b". */
+  /** "Running `npm test`", "Thinking", "Loading gemma4:26b". */
   label: string;
   /** A tool call waits for the user's approval. */
   asking: boolean;
+  /** When the reply being written began. */
+  since: Date;
 }
+
+/** Tokens, time and money spent: on a ticket, by a clank, or in a project. */
+export interface Usage {
+  tokens: number;
+  /** Time models spent writing, in milliseconds. */
+  ms: number;
+  /** Cloud spend in dollars, from the prices in Settings. Local models cost nothing. */
+  dollars: number;
+  /** Cloud calls with no price set, so `dollars` leaves them out. */
+  unpriced: number;
+}
+
+export const emptyUsage = (): Usage => ({ tokens: 0, ms: 0, dollars: 0, unpriced: 0 });
 
 /** A ticket as the board shows it. */
 export interface TicketCard extends Ticket {
@@ -258,6 +420,7 @@ export interface TicketCard extends Ticket {
   live: TicketLive | null;
   runs: TicketRun[];
   bounceHistory: Bounce[];
+  usage: Usage;
 }
 
 /** One version of the spec, in brief. */
@@ -275,6 +438,8 @@ export interface NeedsYouItem {
   ticketId: string;
   key: string;
   kind: 'ready' | 'question' | 'approval' | 'paused' | 'failed' | 'looping' | 'proposal';
+  /** The project it's in, for Home. */
+  projectId: string;
   text: string;
   /** The run to answer in, when there is one. */
   conversationId: string | null;

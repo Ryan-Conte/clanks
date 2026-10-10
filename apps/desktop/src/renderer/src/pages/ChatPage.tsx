@@ -27,7 +27,14 @@ import {
   inputClass,
 } from '../components/ui';
 import { Workbench } from '../components/workbench/Workbench';
-import { useClank, useClankModel, useCrew, useProviders, whereItRuns } from '../lib/crew';
+import {
+  useClank,
+  useClankModel,
+  useConversations,
+  useCrew,
+  useProviders,
+  whereItRuns,
+} from '../lib/crew';
 import { useModels } from '../lib/models';
 import { useNav } from '../lib/nav';
 import { folderName, useProject } from '../lib/projects';
@@ -575,6 +582,7 @@ function ChatHeader(props: {
           )}
         </div>
       </div>
+      {conversation?.projectId && <RunningNow conversation={conversation} />}
       {renaming && conversation && (
         <form
           className="flex gap-2"
@@ -601,6 +609,44 @@ function ChatHeader(props: {
       )}
       {error && <ErrorText>{error.message}</ErrorText>}
     </header>
+  );
+}
+
+/** The project's other runs going now, to switch between while watching the crew. */
+function RunningNow({ conversation }: { conversation: ConversationSummary }) {
+  const { go } = useNav();
+  const crew = useCrew();
+  const conversations = useConversations() ?? [];
+  const others = conversations.filter(
+    (c) =>
+      c.projectId === conversation.projectId &&
+      c.role &&
+      c.role !== 'planner' &&
+      c.replying &&
+      c.id !== conversation.id,
+  );
+  if (others.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+      <span className="text-dim">Also working:</span>
+      {others.map((c) => {
+        const clank = crew.find((m) => m.id === c.clankId);
+        return (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => go({ page: 'chat', id: c.id })}
+            title={`Watch ${clank?.name ?? c.clankId} on ${c.title}`}
+            className="flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-2.5 pl-0.5 text-white/80 hover:bg-white/[0.05]"
+          >
+            <Avatar colour={clank?.avatar ?? 'slate'} size="xs" live={!c.asking} />
+            {clank?.name ?? c.clankId}
+            <span className="font-mono text-[11px] text-dim">{c.title.split(':')[0]}</span>
+            {c.asking && <span className="text-amber-200">!</span>}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

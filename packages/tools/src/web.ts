@@ -1,6 +1,7 @@
 import { headOnly } from '@clanks/workspace';
 import { z } from 'zod';
 import { redactUrl } from './redact';
+import { LOW_RISK, urlRisk } from './risk';
 import { type SearchResult, ToolFailure, defineTool, short } from './spec';
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -125,6 +126,7 @@ export const webFetch = defineTool({
     }
     return { kind: 'url', subject: args.url, pattern };
   },
+  risk: (args) => urlRisk(args.url),
   async run(args, ctx) {
     if (!/^https?:\/\//i.test(args.url))
       throw new ToolFailure('Only http and https addresses work.');
@@ -185,6 +187,7 @@ export const webSearch = defineTool({
   mutates: false,
   label: (args) => `Searching the web for "${short(args.query, 40)}"`,
   approval: (args) => ({ kind: 'tool', subject: args.query, pattern: '*' }),
+  risk: () => LOW_RISK,
   async run(args, ctx) {
     const count = args.count ?? 5;
     let results: SearchResult[];

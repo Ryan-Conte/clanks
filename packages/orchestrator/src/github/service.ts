@@ -188,6 +188,120 @@ export class GitHubService extends EventEmitter<{ change: [] }> {
     return { fullName: repo.fullName, url: repo.url, private: repo.private };
   }
 
+  /**
+   * Pushes a branch of a clone to GitHub. Only the crew's own `clanks/*` branches are ever pushed,
+   * and never with force, so nothing the user pushed can be overwritten.
+   */
+  async push(folder: string, branch: string): Promise<void> {
+    if (!/^clanks\/[\w.-]+$/.test(branch)) {
+      throw new GitHubError(`Only the crew's own branches are pushed, not ${branch}`);
+    }
+    const token = this.token();
+    try {
+      await git(['push', '--quiet', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], {
+        cwd: folder,
+        env: authEnv(token),
+      });
+    } catch (error) {
+      throw new GitHubError(
+        `Couldn't push ${branch}: ${error instanceof GitError ? error.stderr.split('\n').find((l) => l.trim()) || error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** Fetches a branch from GitHub, so new work starts from what's merged there. */
+  async fetch(folder: string, branch: string): Promise<void> {
+    const token = this.token();
+    try {
+      await git(['fetch', '--quiet', 'origin', branch], { cwd: folder, env: authEnv(token) });
+    } catch (error) {
+      throw new GitHubError(
+        `Couldn't fetch ${branch}: ${error instanceof GitError ? error.stderr.split('\n').find((l) => l.trim()) || error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** Opens a pull request, or finds the one already open for the branch. */
+  async openPullRequest(input: {
+    repo: string;
+    head: string;
+    base: string;
+    title: string;
+    body: string;
+  }): Promise<PullRequest> {
+    const [owner] = input.repo.split('/');
+    const open = await this.api(
+      `/repos/${input.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${input.head}`)}`,
+    );
+    const found = ((await open.json()) as PullJson[])[0];
+    if (found) return toPull(found);
+    const response = await this.api(`/repos/${input.repo}/pulls`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: input.title,
+        head: input.head,
+        base: input.base,
+        body: input.body,
+      }),
+    });
+    return toPull((await response.json()) as PullJson);
+  }
+
+  async pullRequest(repo: string, number: number): Promise<PullRequest> {
+    const response = await this.api(`/repos/${repo}/pulls/${number}`);
+    return toPull((await response.json()) as PullJson);
+  }
+
+  /**
+   * Merges a pull request, as the user who approved it. Throws `GitHubError` with GitHub's reason
+   * when it can't, such as a conflict or a required check that hasn't passed.
+   */
+  async mergePullRequest(repo: string, number: number, title: string): Promise<string> {
+    const response = await this.api(`/repos/${repo}/pulls/${number}/merge`, {
+      method: 'PUT',
+      body: JSON.stringify({ merge_method: 'merge', commit_title: title }),
+    });
+    const body = (await response.json()) as { sha?: string; merged?: boolean; message?: string };
+    if (!body.merged || !body.sha) {
+      throw new GitHubError(`GitHub didn't merge it: ${body.message ?? 'no reason given'}`);
+    }
+    return body.sha;
+  }
+
+  async closePullRequest(repo: string, number: number): Promise<void> {
+    await this.api(`/repos/${repo}/pulls/${number}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ state: 'closed' }),
+    });
+  }
+
+  /** How the checks on a commit are doing, from check runs and commit statuses together. */
+  async checks(repo: string, sha: string): Promise<'pending' | 'passing' | 'failing' | null> {
+    const [runs, status] = await Promise.all([
+      this.api(`/repos/${repo}/commits/${sha}/check-runs?per_page=100`).then(
+        (r) => r.json() as Promise<{ check_runs: { status: string; conclusion: string | null }[] }>,
+      ),
+      this.api(`/repos/${repo}/commits/${sha}/status`).then(
+        (r) => r.json() as Promise<{ state: string; total_count: number }>,
+      ),
+    ]);
+    const conclusions = runs.check_runs.map((r) =>
+      r.status === 'completed' ? r.conclusion : null,
+    );
+    if (runs.check_runs.length === 0 && status.total_count === 0) return null;
+    const bad = ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'];
+    if (conclusions.some((c) => c !== null && bad.includes(c)) || status.state === 'failure') {
+      return 'failing';
+    }
+    if (
+      conclusions.some((c) => c === null) ||
+      (status.total_count > 0 && status.state === 'pending')
+    ) {
+      return 'pending';
+    }
+    return 'passing';
+  }
+
   private async poll(
     clientId: string,
     deviceCode: string,
@@ -330,6 +444,37 @@ export function authEnv(token: string): Record<string, string> {
     GIT_CONFIG_COUNT: '1',
     GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
     GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+  };
+}
+
+/** A pull request, as the app keeps track of it. */
+export interface PullRequest {
+  number: number;
+  url: string;
+  state: 'open' | 'merged' | 'closed';
+  /** The commit at the tip of its branch. */
+  head: string;
+  /** Whether GitHub can merge it as it is. Null while GitHub is still working it out. */
+  mergeable: boolean | null;
+}
+
+interface PullJson {
+  number: number;
+  html_url: string;
+  state: 'open' | 'closed';
+  merged?: boolean;
+  merged_at?: string | null;
+  mergeable?: boolean | null;
+  head: { sha: string };
+}
+
+function toPull(json: PullJson): PullRequest {
+  return {
+    number: json.number,
+    url: json.html_url,
+    state: json.merged || json.merged_at ? 'merged' : json.state,
+    head: json.head.sha,
+    mergeable: json.mergeable ?? null,
   };
 }
 

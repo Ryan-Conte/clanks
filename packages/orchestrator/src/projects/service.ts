@@ -1,4 +1,8 @@
 import {
+  type Budget,
+  DEFAULT_BOUNCE_LIMIT,
+  DEFAULT_MAX_RUNS,
+  DEFAULT_SANDBOX,
   LEAD_CLANK,
   type ModelChoice,
   type NewProject,
@@ -56,7 +60,15 @@ function toProject(row: ProjectRow): Project {
     key: row.key,
     folder: row.folder,
     repo: row.repo ?? null,
+    baseBranch: row.baseBranch ?? null,
     model: row.provider && row.model ? { provider: row.provider, model: row.model } : null,
+    maxRuns: row.maxRuns,
+    bounceLimit: row.bounceLimit,
+    optionalChecks: row.optionalChecks ?? [],
+    budget: row.budget ?? null,
+    clankBudgets: row.clankBudgets ?? {},
+    sandbox: row.sandbox ?? DEFAULT_SANDBOX,
+    held: row.held,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -165,9 +177,17 @@ export class ProjectService extends EventEmitter<{ change: [projectId: string] }
       key: values.key,
       folder,
       repo,
+      baseBranch: null,
       provider: values.model?.provider ?? null,
       model: values.model?.model ?? null,
       nextNumber: 1,
+      maxRuns: DEFAULT_MAX_RUNS,
+      bounceLimit: DEFAULT_BOUNCE_LIMIT,
+      optionalChecks: [],
+      budget: null,
+      clankBudgets: {},
+      sandbox: null,
+      held: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -198,6 +218,20 @@ export class ProjectService extends EventEmitter<{ change: [projectId: string] }
       changes.provider = patch.model?.provider ?? null;
       changes.model = patch.model?.model ?? null;
     }
+    if (patch.baseBranch !== undefined) changes.baseBranch = patch.baseBranch;
+    if (patch.maxRuns !== undefined) changes.maxRuns = patch.maxRuns;
+    if (patch.bounceLimit !== undefined) changes.bounceLimit = patch.bounceLimit;
+    if (patch.optionalChecks !== undefined) changes.optionalChecks = patch.optionalChecks;
+    if (patch.budget !== undefined) changes.budget = cleanBudget(patch.budget);
+    if (patch.clankBudgets !== undefined) {
+      changes.clankBudgets = Object.fromEntries(
+        Object.entries(patch.clankBudgets)
+          .map(([id, budget]) => [id, cleanBudget(budget)] as const)
+          .filter((entry): entry is [string, Budget] => entry[1] !== null),
+      );
+    }
+    if (patch.sandbox !== undefined) changes.sandbox = patch.sandbox;
+    if (patch.held !== undefined) changes.held = patch.held;
     this.options.db.update(projectTable).set(changes).where(eq(projectTable.id, id)).run();
     this.emit('change', id);
     return this.get(id);
@@ -293,4 +327,12 @@ export class ProjectService extends EventEmitter<{ change: [projectId: string] }
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+/** A budget with no limits set is no budget at all. */
+function cleanBudget(budget: Budget | null): Budget | null {
+  if (!budget) return null;
+  return budget.tokens === null && budget.minutes === null && budget.dollars === null
+    ? null
+    : budget;
 }

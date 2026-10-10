@@ -8,7 +8,7 @@ import {
 } from '@clanks/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
-import { TYPE_LABELS, actorName, cardStatus, namer } from '../../lib/board';
+import { TYPE_LABELS, actorName, cardStatus, ciText, namer, usageText } from '../../lib/board';
 import { useCrew } from '../../lib/crew';
 import { formatAgo } from '../../lib/format';
 import { useNav } from '../../lib/nav';
@@ -22,6 +22,7 @@ export function TicketDrawer(props: {
   snapshot: BoardSnapshot;
   card: TicketCard;
   onClose: () => void;
+  onWatch: (card: TicketCard) => void;
 }) {
   const { snapshot, card } = props;
   const trpc = useTRPC();
@@ -42,6 +43,7 @@ export function TicketDrawer(props: {
   const stories = spec.data ? parseSpec(spec.data.body).stories : [];
   const events = snapshot.events.filter((e) => e.ticketId === card.id);
   const draft = snapshot.specs.find((s) => s.ticketId === card.id && s.status !== 'approved');
+  const watchable = card.runs.length > 0;
 
   return (
     <aside className="flex w-[30rem] shrink-0 flex-col border-l border-line bg-panel/60">
@@ -54,15 +56,30 @@ export function TicketDrawer(props: {
           </span>
           <h2 className="text-base leading-snug font-medium">{card.title}</h2>
           <span className="flex items-center gap-1.5 text-[12px] text-white/75">
-            <span>{status.icon}</span>
-            {status.live && <Dot tone="mint" live />}
+            {status.live ? <Dot tone="mint" live /> : <span>{status.icon}</span>}
             {status.text}
           </span>
-          {card.live && <span className="font-mono text-[11px] text-dim">{card.live.label}</span>}
+          {card.live && (
+            <span className="font-mono text-[11px] text-dim">
+              <InlineCode text={card.live.label} />
+            </span>
+          )}
         </div>
-        <IconButton label="Close" onClick={props.onClose}>
-          <XIcon />
-        </IconButton>
+        <span className="flex shrink-0 items-center gap-1">
+          {watchable && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Follow its run in the workbench"
+              onClick={() => props.onWatch(card)}
+            >
+              Watch
+            </Button>
+          )}
+          <IconButton label="Close" onClick={props.onClose}>
+            <XIcon />
+          </IconButton>
+        </span>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
@@ -75,9 +92,13 @@ export function TicketDrawer(props: {
 
         <Section title="Route">
           <Route card={card} name={name} />
+          <Checks card={card} snapshot={snapshot} name={name} />
         </Section>
 
-        {card.column === 'backlog' && <Assignee card={card} snapshot={snapshot} />}
+        {(card.column === 'backlog' || (card.column === 'build' && !card.detour)) &&
+          card.type !== 'spec' && <Assignee card={card} snapshot={snapshot} />}
+
+        {card.delivery && <Delivery card={card} hasRepo={snapshot.project.repo !== null} />}
 
         {card.description && (
           <Section title="Description">
@@ -169,7 +190,7 @@ export function TicketDrawer(props: {
               <li key={run.conversationId}>
                 <ChatLink
                   onClick={() => go({ page: 'chat', id: run.conversationId })}
-                  label={`${name(run.clankId)}'s ${run.role === 'maker' ? 'work' : run.role === 'checker' ? 'check' : 'planning'}`}
+                  label={`${name(run.clankId)}'s ${{ maker: 'work', checker: 'check', helper: 'answer', planner: 'planning' }[run.role]}`}
                   colour={crew.find((c) => c.id === run.clankId)?.avatar}
                   live={run.replying}
                 />
@@ -180,6 +201,12 @@ export function TicketDrawer(props: {
             )}
           </ul>
         </Section>
+
+        {(card.usage.tokens > 0 || card.usage.ms > 0) && (
+          <Section title="Spent">
+            <p className="text-[13px] text-white/80">{usageText(card.usage)}</p>
+          </Section>
+        )}
 
         <Section title="Activity">
           <ol className="flex flex-col gap-1 font-mono text-[12px]">
@@ -200,6 +227,14 @@ export function TicketDrawer(props: {
   );
 }
 
+/** What approving does with the ticket's work, in words. */
+function mergeWords(card: TicketCard): string | null {
+  const d = card.delivery;
+  if (!d?.changed) return null;
+  if (d.pr) return `Approving merges PR #${d.pr.number} on GitHub, as you.`;
+  return `Approving merges \`${d.branch}\` into \`${d.base}\` in the project's folder.`;
+}
+
 /** What the user can do about the ticket where it is now. */
 function Actions(props: {
   card: TicketCard;
@@ -211,7 +246,7 @@ function Actions(props: {
   const trpc = useTRPC();
   const { go } = useNav();
   const crew = useCrew();
-  const [writing, setWriting] = useState<'changes' | 'retry' | null>(null);
+  const [writing, setWriting] = useState<'changes' | 'retry' | 'reject' | null>(null);
   const [text, setText] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const done = () => {
@@ -220,14 +255,21 @@ function Actions(props: {
   };
   const approve = useMutation(trpc.board.approve.mutationOptions());
   const changes = useMutation(trpc.board.requestChanges.mutationOptions({ onSuccess: done }));
+  const reject = useMutation(trpc.board.reject.mutationOptions({ onSuccess: done }));
   const retry = useMutation(trpc.board.retry.mutationOptions({ onSuccess: done }));
   const accept = useMutation(trpc.board.accept.mutationOptions());
+  const pause = useMutation(trpc.board.pause.mutationOptions());
+  const move = useMutation(trpc.board.move.mutationOptions());
+  const resolve = useMutation(trpc.board.resolveConflicts.mutationOptions());
   const remove = useMutation(trpc.board.remove.mutationOptions({ onSuccess: props.onClose }));
-  const error = [approve, changes, retry, accept, remove].find((m) => m.error)?.error;
-  const run = card.runs.find(
-    (r) => r.clankId === card.route[card.step]?.clankId && r.role !== 'planner',
-  );
+  const error = [approve, changes, reject, retry, accept, pause, move, resolve, remove].find(
+    (m) => m.error,
+  )?.error;
+  const turn = card.detour?.clankId ?? card.route[card.step]?.clankId;
+  const run = card.runs.find((r) => r.clankId === turn && r.role !== 'planner');
   const clank = crew.find((c) => c.id === run?.clankId);
+  const merge = mergeWords(card);
+  const conflict = card.delivery?.error && /conflict/i.test(card.delivery.error);
 
   let body: ReactNode = null;
   if (card.column === 'ready') {
@@ -240,6 +282,16 @@ function Actions(props: {
               ? `Atlas signed off spec v${props.draftVersion ?? card.specVersion ?? ''}. Read it on the Spec tab, then approve it, and Atlas plans the board from it.`
               : 'Signed off and ready for you.'}
         </p>
+        {merge && !card.delivery?.error && (
+          <p className="text-[12px] text-dim">
+            <InlineCode text={merge} />
+          </p>
+        )}
+        {card.delivery?.error && (
+          <p className="text-[13px] text-amber-100">
+            <InlineCode text={card.delivery.error} />
+          </p>
+        )}
         <span className="flex flex-wrap gap-2">
           <Button
             size="sm"
@@ -249,10 +301,24 @@ function Actions(props: {
           >
             {card.type === 'spec'
               ? `Approve spec v${props.draftVersion ?? card.specVersion ?? ''}`
-              : 'Approve'}
+              : approve.isPending
+                ? 'Merging…'
+                : merge
+                  ? card.delivery?.error
+                    ? 'Try the merge again'
+                    : 'Approve and merge'
+                  : 'Approve'}
           </Button>
+          {conflict && card.route[0]?.clankId && (
+            <Button size="sm" disabled={resolve.isPending} onClick={() => resolve.mutate(card.id)}>
+              Send back to resolve the conflicts
+            </Button>
+          )}
           <Button size="sm" onClick={() => setWriting('changes')}>
             Request changes…
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setWriting('reject')}>
+            Reject…
           </Button>
           {card.type === 'spec' && (
             <Button
@@ -285,7 +351,7 @@ function Actions(props: {
         <p className="text-[13px] text-white/85">
           {card.reason ?? (card.state === 'paused' ? 'Paused.' : 'It failed.')}
         </p>
-        <span className="flex gap-2">
+        <span className="flex flex-wrap gap-2">
           <Button
             size="sm"
             variant="primary"
@@ -305,6 +371,9 @@ function Actions(props: {
               Open the run
             </Button>
           )}
+          <Button size="sm" variant="ghost" onClick={() => setWriting('reject')}>
+            Reject…
+          </Button>
         </span>
       </>
     );
@@ -331,6 +400,8 @@ function Actions(props: {
       </>
     );
   }
+  const working = card.state === 'working' || card.state === 'waiting';
+  const underway = card.column === 'build' || card.column === 'review';
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -345,17 +416,22 @@ function Actions(props: {
           onSubmit={(e) => {
             e.preventDefault();
             if (writing === 'changes') changes.mutate({ id: card.id, comment: text });
+            else if (writing === 'reject') reject.mutate({ id: card.id, reason: text });
             else retry.mutate({ id: card.id, note: text });
           }}
         >
           <textarea
             autoFocus
             rows={3}
-            aria-label={writing === 'changes' ? 'What to change' : 'A note'}
+            aria-label={
+              writing === 'changes' ? 'What to change' : writing === 'reject' ? 'Why' : 'A note'
+            }
             placeholder={
               writing === 'changes'
                 ? `What should change? ${card.route[0]?.clankId ? (crew.find((c) => c.id === card.route[0]!.clankId)?.name ?? 'Its maker') : 'Its maker'} gets this.`
-                : 'A note to go with it'
+                : writing === 'reject'
+                  ? "Why not (optional). It's done without merging, its pull request closes and the crew's notes from it go."
+                  : 'A note to go with it'
             }
             className={`${inputClass} h-auto py-2`}
             value={text}
@@ -364,13 +440,16 @@ function Actions(props: {
           <span className="flex gap-2">
             <Button
               size="sm"
-              variant="primary"
+              variant={writing === 'reject' ? 'danger' : 'primary'}
               type="submit"
               disabled={
-                (writing === 'changes' && !text.trim()) || changes.isPending || retry.isPending
+                (writing === 'changes' && !text.trim()) ||
+                changes.isPending ||
+                retry.isPending ||
+                reject.isPending
               }
             >
-              Send
+              {writing === 'reject' ? `Reject ${card.key}` : 'Send'}
             </Button>
             <Button size="sm" variant="ghost" onClick={done}>
               Cancel
@@ -378,26 +457,59 @@ function Actions(props: {
           </span>
         </form>
       )}
-      {card.column === 'backlog' && (
-        <span className="flex justify-end">
-          {confirmDelete ? (
-            <span className="flex gap-2">
-              <Button size="sm" variant="danger" onClick={() => remove.mutate(card.id)}>
-                Delete {card.key}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-                Keep
-              </Button>
-            </span>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
-              <TrashIcon /> Delete
+      {(working && underway) || card.column === 'backlog' ? (
+        <span className="flex flex-wrap justify-end gap-2">
+          {working && underway && (
+            <Button size="sm" variant="ghost" onClick={() => pause.mutate(card.id)}>
+              Pause
             </Button>
           )}
+          {card.column === 'backlog' && !card.proposed && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Start it now, if what it waits on is done and there's a free slot"
+              onClick={() => move.mutate({ id: card.id, column: 'build' })}
+            >
+              Start now
+            </Button>
+          )}
+          {card.column === 'backlog' &&
+            (confirmDelete ? (
+              <span className="flex gap-2">
+                <Button size="sm" variant="danger" onClick={() => remove.mutate(card.id)}>
+                  Delete {card.key}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+                  Keep
+                </Button>
+              </span>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
+                <TrashIcon /> Delete
+              </Button>
+            ))}
         </span>
-      )}
+      ) : null}
       {error && <ErrorText>{error.message}</ErrorText>}
     </div>
+  );
+}
+
+/** Text with `code` in mono, as the orchestrator writes it. */
+function InlineCode({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(`[^`]+`)/).map((piece, i) =>
+        piece.startsWith('`') && piece.endsWith('`') ? (
+          <code key={i} className="font-mono text-[12px] text-white">
+            {piece.slice(1, -1)}
+          </code>
+        ) : (
+          <span key={i}>{piece}</span>
+        ),
+      )}
+    </>
   );
 }
 
@@ -406,7 +518,7 @@ function Route({ card, name }: { card: TicketCard; name: (id: string) => string 
   const steps = [
     ...card.route.map((s, i) => ({
       label: s.clankId ? name(s.clankId) : `Any ${TYPE_LABELS[card.type]} maker`,
-      at: i === card.step && !card.doneAt,
+      at: i === card.step && !card.doneAt && !card.detour,
       past: i < card.step || card.doneAt !== null,
     })),
     {
@@ -416,21 +528,171 @@ function Route({ card, name }: { card: TicketCard; name: (id: string) => string 
     },
   ];
   return (
-    <ol className="flex flex-wrap items-center gap-1.5 text-[12px]">
-      {steps.map((step, i) => (
-        <li key={i} className="flex items-center gap-1.5">
-          {i > 0 && <span className="text-dim">→</span>}
-          <span
-            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 ${step.at ? 'border-accent/60 bg-accent/10 text-white' : step.past ? 'border-line text-white/70' : 'border-line text-dim'}`}
-          >
+    <>
+      <ol className="flex flex-wrap items-center gap-1.5 text-[12px]">
+        {steps.map((step, i) => (
+          <li key={i} className="flex items-center gap-1.5">
+            {i > 0 && <span className="text-dim">→</span>}
             <span
-              className={`size-1.5 rounded-full ${step.at ? 'bg-accent' : step.past ? 'bg-accent-2' : 'bg-white/20'}`}
-            />
-            {step.label}
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 ${step.at ? 'border-accent/60 bg-accent/10 text-white' : step.past ? 'border-line text-white/70' : 'border-line text-dim'}`}
+            >
+              <span
+                className={`size-1.5 rounded-full ${step.at ? 'bg-accent' : step.past ? 'bg-accent-2' : 'bg-white/20'}`}
+              />
+              {step.label}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {card.detour && (
+        <p className="text-[12px] text-accent">
+          With {name(card.detour.clankId)} meanwhile, answering {name(card.detour.from)}. It goes
+          back to {name(card.detour.from)} after.
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Checks dropped from the ticket, and dropping an optional one that hasn't happened yet. */
+function Checks(props: {
+  card: TicketCard;
+  snapshot: BoardSnapshot;
+  name: (id: string) => string;
+}) {
+  const { card, snapshot } = props;
+  const trpc = useTRPC();
+  const crew = useCrew();
+  const [skipping, setSkipping] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const skip = useMutation(
+    trpc.board.skip.mutationOptions({
+      onSuccess: () => {
+        setSkipping(null);
+        setReason('');
+      },
+    }),
+  );
+  const restore = useMutation(trpc.board.restore.mutationOptions());
+  if (card.doneAt) return null;
+  const optional = card.route
+    .map((s, i) => ({ ...s, i }))
+    .filter(
+      (s) =>
+        s.role === 'checker' &&
+        s.clankId &&
+        s.i > card.step &&
+        snapshot.project.optionalChecks.includes(`${s.clankId}:${card.type}`),
+    );
+  return (
+    <div className="flex flex-col gap-1.5">
+      {card.skipped.map((s) => (
+        <p key={s.clankId} className="flex items-center gap-2 text-[12px] text-dim">
+          <span className="flex-1">
+            {props.name(s.clankId)}'s check skipped by {s.by === 'user' ? 'you' : props.name(s.by)}:{' '}
+            {s.reason}
           </span>
-        </li>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => restore.mutate({ id: card.id, clankId: s.clankId })}
+          >
+            Put it back
+          </Button>
+        </p>
       ))}
-    </ol>
+      {skipping ? (
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            skip.mutate({ id: card.id, clankId: skipping, reason });
+          }}
+        >
+          <input
+            autoFocus
+            aria-label="Why it can be skipped"
+            placeholder={`Why ${props.name(skipping)}'s check isn't needed, shown on the card`}
+            className={`${inputClass} h-8 flex-1 text-[13px]`}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <Button size="sm" type="submit" disabled={!reason.trim()}>
+            Skip it
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSkipping(null)}>
+            Cancel
+          </Button>
+        </form>
+      ) : (
+        optional.length > 0 && (
+          <span className="flex flex-wrap gap-1.5">
+            {optional.map((s) => (
+              <Button
+                key={s.clankId}
+                size="sm"
+                variant="ghost"
+                onClick={() => setSkipping(s.clankId)}
+              >
+                Skip {crew.find((c) => c.id === s.clankId)?.name ?? s.clankId}'s check…
+              </Button>
+            ))}
+          </span>
+        )
+      )}
+      {(skip.error ?? restore.error) && (
+        <ErrorText>{(skip.error ?? restore.error)!.message}</ErrorText>
+      )}
+    </div>
+  );
+}
+
+/** Where the ticket's work is: its branch, its pull request, and pushing it again. */
+function Delivery({ card, hasRepo }: { card: TicketCard; hasRepo: boolean }) {
+  const trpc = useTRPC();
+  const republish = useMutation(trpc.board.republish.mutationOptions());
+  const d = card.delivery!;
+  return (
+    <Section title="Branch">
+      <p className="text-[13px] text-white/85">
+        <code className="font-mono text-[12px]">{d.branch}</code> into{' '}
+        <code className="font-mono text-[12px]">{d.base}</code>
+        {!d.changed && <span className="text-dim"> · no changes</span>}
+        {d.merged && <span className="text-accent-2"> · merged as {d.merged.slice(0, 7)}</span>}
+      </p>
+      {d.pr && (
+        <p className="flex items-center gap-2 text-[13px]">
+          <a
+            href={d.pr.url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-accent hover:underline"
+          >
+            PR #{d.pr.number}
+          </a>
+          <span className="text-dim">{d.pr.state}</span>
+          {d.pr.ci && (
+            <span className="font-mono text-[12px] text-white/70">{ciText(d.pr.ci)}</span>
+          )}
+        </p>
+      )}
+      {d.error && !card.doneAt && card.column !== 'ready' && (
+        <p className="text-[12px] text-amber-200">
+          <InlineCode text={d.error} />
+        </p>
+      )}
+      {hasRepo && d.changed && !d.merged && (d.error || !d.pr) && (
+        <Button
+          size="sm"
+          className="self-start"
+          disabled={republish.isPending}
+          onClick={() => republish.mutate(card.id)}
+        >
+          {d.pr ? 'Push again' : 'Push and open the pull request'}
+        </Button>
+      )}
+      {republish.error && <ErrorText>{republish.error.message}</ErrorText>}
+    </Section>
   );
 }
 
@@ -441,23 +703,30 @@ function Assignee({ card, snapshot }: { card: TicketCard; snapshot: BoardSnapsho
   const makers = crew.filter(
     (c) => c.outputs.includes(card.type) && snapshot.project.crew.some((m) => m.clankId === c.id),
   );
+  const started = card.step >= 0;
+  const current = started ? card.route[0]?.clankId : card.assignee;
   return (
     <Section title="Who makes it">
       <select
         aria-label="Who makes it"
         className={`${inputClass} h-9 text-[13px]`}
-        value={card.assignee ?? ''}
+        value={current ?? ''}
+        disabled={assign.isPending}
         onChange={(e) => assign.mutate({ id: card.id, clankId: e.target.value || null })}
       >
-        {card.type !== 'spec' && (
-          <option value="">Open: the first free {TYPE_LABELS[card.type]} maker</option>
-        )}
+        {!started && <option value="">Open: the first free {TYPE_LABELS[card.type]} maker</option>}
         {makers.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
           </option>
         ))}
       </select>
+      {started && (
+        <p className="text-[12px] text-dim">
+          Giving it to another maker stops this run; the work so far stays on its branch, and the
+          new maker carries on from there.
+        </p>
+      )}
       {assign.error && <ErrorText>{assign.error.message}</ErrorText>}
     </Section>
   );

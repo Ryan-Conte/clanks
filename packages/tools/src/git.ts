@@ -114,8 +114,26 @@ export const gitCommit = defineTool({
   async run(args, ctx) {
     const ws = workspaceOf(ctx);
     await inWorkspace(ctx, ['add', ...(args.paths?.length ? ['--', ...args.paths] : ['-A'])]);
-    const staged = await runGit(['diff', '--cached', '--quiet'], { cwd: ws.cwd, okCodes: [1] });
-    if (staged.exitCode === 0) return { content: 'Nothing to commit: no changes are staged.' };
+    // A merge the app started, with its conflicts resolved, needs its commit even with no change.
+    const merging = await runGit(['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'], {
+      cwd: ws.cwd,
+      okCodes: [1],
+    });
+    if (merging.exitCode !== 0) {
+      const staged = await runGit(['diff', '--cached', '--quiet'], { cwd: ws.cwd, okCodes: [1] });
+      if (staged.exitCode === 0) return { content: 'Nothing to commit: no changes are staged.' };
+    } else {
+      const conflicted = await inWorkspace(
+        ctx,
+        ['grep', '--cached', '-l', '-E', '^(<{7}|>{7})( |$)'],
+        [1],
+      );
+      if (conflicted) {
+        throw new ToolFailure(
+          `These files still have merge conflicts: ${conflicted.split('\n').join(', ')}. Resolve the conflict markers in each, then commit.`,
+        );
+      }
+    }
     // The clank is the author; the user, as git knows them, commits.
     const env = {
       ...(await identity(ws.cwd, { name: 'clanks', email: 'clanks@localhost' })),

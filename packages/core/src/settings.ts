@@ -72,6 +72,19 @@ export const settingsSchema = z.object({
       (url) => url === '' || /^https?:\/\/\S+$/i.test(url),
       'Use an http:// or https:// address',
     ),
+  /**
+   * When a tool a clank's policy asks about stops for the user's approval: only for risky calls,
+   * such as pushing, deleting outside the worktree or deploying, or for every call.
+   */
+  approvals: z.enum(['risky', 'all']),
+  /**
+   * What cloud models cost, in dollars per million tokens, by provider id, as the user set them.
+   * Budgets in money and the day's spend are worked out from these; local models cost nothing.
+   */
+  cloudPrices: z.record(
+    z.string().regex(/^[a-z][\w-]*$/),
+    z.object({ input: z.number().min(0).max(10_000), output: z.number().min(0).max(10_000) }),
+  ),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -93,6 +106,8 @@ export const defaultSettings: Settings = {
   localApiPort: 11434,
   webSearch: 'none',
   searxngUrl: '',
+  approvals: 'risky',
+  cloudPrices: {},
 };
 
 export const settingsPatchSchema = settingsSchema.partial().strict();

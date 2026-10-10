@@ -2,6 +2,7 @@ import { type UserProfile, defaultClankBrowser } from '@clanks/core';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { runPort } from '../chat/service';
 import { openStore } from '../store/store';
 import { crewFolder, migrationsFolder, tempDir } from '../test-helpers';
 import { type Clank, CrewService } from './crew';
@@ -182,6 +183,19 @@ describe('assemblePrompt', () => {
     expect(run.text).not.toContain('No tools are connected');
     const unsupported = assemblePrompt(input({ run: chat({ toolsUnsupported: true }) }));
     expect(unsupported.layers.at(-1)!.text).toContain("The model you run on can't call tools");
+  });
+
+  it("gives a ticket's run a port of its own for servers, so parallel runs don't meet", () => {
+    const run = assemblePrompt(
+      input({ run: chat({ tools: ['shell_start'], shell: 'bash', port: 43210 }) }),
+    ).layers.at(-1)!;
+    expect(run.text).toContain('any server you start listens on port 43210, which is in $PORT');
+    expect(runPort('a')).toBe(runPort('a'));
+    expect(runPort('a')).not.toBe(runPort('b'));
+    for (const id of ['x', '0f8a1b2c-1111-4222-8333-944445555666', 'zz']) {
+      expect(runPort(id)).toBeGreaterThanOrEqual(41_000);
+      expect(runPort(id)).toBeLessThan(49_000);
+    }
   });
 
   it("adds the project's instructions for this clank, untemplated", () => {

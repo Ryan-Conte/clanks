@@ -429,6 +429,17 @@ export class ModelManager extends EventEmitter<{ change: [] }> {
     return this.supervisor.acquire(id, signal);
   }
 
+  /** How many replies a model writes at once: its slots as loaded, or as it would load. */
+  slotsFor(id: ModelId): number {
+    const loaded = this.supervisor.status().find((s) => s.modelId === id);
+    return loaded?.slots ?? this.shape().slots;
+  }
+
+  /** Whether loading a model now would wait for busy models to finish, for want of memory. */
+  wouldWait(id: ModelId): boolean {
+    return this.supervisor.wouldWait(id);
+  }
+
   // Storage
 
   async storage(): Promise<ModelStorage> {

@@ -172,6 +172,8 @@ export interface ClankSummary {
   avatar: Avatar;
   kind: 'maker' | 'checker';
   stage: string;
+  /** For a checker, the ticket types it checks. */
+  appliesTo: (OutputType | 'all')[];
   outputs: OutputType[];
   /** Its own model, or null when it runs on the crew's. */
   model: ModelChoice | null;

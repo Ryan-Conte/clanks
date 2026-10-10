@@ -123,7 +123,85 @@ function CloudRow({
       {(save.error ?? remove.error) && (
         <ErrorText>{(save.error ?? remove.error)!.message}</ErrorText>
       )}
+      {provider.hasKey && <PriceEditor providerId={provider.id} />}
     </li>
+  );
+}
+
+/**
+ * What a cloud provider charges, as the user knows it from their plan, so budgets in money and the
+ * day's spend can be worked out. clanks doesn't guess prices.
+ */
+function PriceEditor({ providerId }: { providerId: string }) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const settings = useQuery(trpc.settings.get.queryOptions());
+  const update = useMutation(
+    trpc.settings.update.mutationOptions({
+      onSuccess: (next) => queryClient.setQueryData(trpc.settings.get.queryKey(), next),
+    }),
+  );
+  const saved = settings.data?.cloudPrices[providerId];
+  const [input, setInput] = useState<string | null>(null);
+  const [output, setOutput] = useState<string | null>(null);
+  if (!settings.data) return null;
+  const shownIn = input ?? (saved ? String(saved.input) : '');
+  const shownOut = output ?? (saved ? String(saved.output) : '');
+  const valid = (v: string) => v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0;
+  const dirty = input !== null || output !== null;
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2 text-[12px] text-dim"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const prices = { ...settings.data.cloudPrices };
+        if (!shownIn.trim() && !shownOut.trim()) delete prices[providerId];
+        else prices[providerId] = { input: Number(shownIn), output: Number(shownOut) };
+        update.mutate(
+          { cloudPrices: prices },
+          {
+            onSuccess: () => {
+              setInput(null);
+              setOutput(null);
+            },
+          },
+        );
+      }}
+    >
+      <span>Price per million tokens, for budgets: $</span>
+      <input
+        aria-label="Dollars per million input tokens"
+        inputMode="decimal"
+        className={`${inputClass} h-7 w-20 text-[12px]`}
+        placeholder="in"
+        value={shownIn}
+        onChange={(e) => setInput(e.target.value)}
+      />
+      <span>in, $</span>
+      <input
+        aria-label="Dollars per million output tokens"
+        inputMode="decimal"
+        className={`${inputClass} h-7 w-20 text-[12px]`}
+        placeholder="out"
+        value={shownOut}
+        onChange={(e) => setOutput(e.target.value)}
+      />
+      <span>out</span>
+      {dirty && (
+        <Button
+          size="sm"
+          type="submit"
+          disabled={
+            update.isPending ||
+            ((shownIn.trim() !== '' || shownOut.trim() !== '') &&
+              !(valid(shownIn) && valid(shownOut)))
+          }
+        >
+          Save
+        </Button>
+      )}
+      {update.error && <ErrorText>{update.error.message}</ErrorText>}
+    </form>
   );
 }
 

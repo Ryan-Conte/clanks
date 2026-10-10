@@ -4,9 +4,11 @@ import { useSubscription } from '@trpc/tanstack-react-query';
 import { useState } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Board } from '../components/project/Board';
+import { ContextView } from '../components/project/ContextView';
 import { ProjectSettings } from '../components/project/ProjectSettings';
 import { SpecView } from '../components/project/SpecView';
 import { Button, Dot, ErrorText, FolderIcon, IconButton } from '../components/ui';
+import { usageText } from '../lib/board';
 import { useCrew } from '../lib/crew';
 import { type ProjectTab, useNav } from '../lib/nav';
 import { folderName } from '../lib/projects';
@@ -15,6 +17,7 @@ import { useTRPC } from '../lib/trpc';
 const TABS: [ProjectTab, string][] = [
   ['board', 'Board'],
   ['spec', 'Spec'],
+  ['context', 'Context'],
   ['settings', 'Settings'],
 ];
 
@@ -46,6 +49,7 @@ export function ProjectPage({
       <ProjectHeader snapshot={snapshot} tab={tab} />
       {tab === 'board' && <Board snapshot={snapshot} ticket={ticket} />}
       {tab === 'spec' && <SpecView snapshot={snapshot} />}
+      {tab === 'context' && <ContextView snapshot={snapshot} />}
       {tab === 'settings' && <ProjectSettings snapshot={snapshot} />}
     </div>
   );
@@ -58,6 +62,7 @@ function ProjectHeader({ snapshot, tab }: { snapshot: BoardSnapshot; tab: Projec
   const { project } = snapshot;
   const [chatting, setChatting] = useState(false);
   const openFolder = useMutation(trpc.projects.openFolder.mutationOptions());
+  const update = useMutation(trpc.projects.update.mutationOptions());
   const members = crew.filter((c) => project.crew.some((m) => m.clankId === c.id));
 
   return (
@@ -81,6 +86,19 @@ function ProjectHeader({ snapshot, tab }: { snapshot: BoardSnapshot; tab: Projec
               </>
             )}
           </span>
+          <BudgetMeter project={project} />
+          <Button
+            size="sm"
+            variant={project.held ? 'primary' : 'ghost'}
+            title={
+              project.held
+                ? 'The crew starts nothing new until you let it go on'
+                : 'Let the crew finish what it has going, and start nothing new'
+            }
+            onClick={() => update.mutate({ id: project.id, patch: { held: !project.held } })}
+          >
+            {project.held ? 'Let the crew go on' : 'Hold new work'}
+          </Button>
           <span
             className="ml-2 flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-2.5 text-[12px] text-white/80"
             title={
@@ -143,5 +161,31 @@ function ProjectHeader({ snapshot, tab }: { snapshot: BoardSnapshot; tab: Projec
         ))}
       </nav>
     </header>
+  );
+}
+
+/** What the project has spent, against its budget when it has one. */
+function BudgetMeter({ project }: { project: BoardSnapshot['project'] }) {
+  const { spend, budget } = project;
+  if (!budget) return null;
+  const fractions = [
+    budget.tokens !== null ? spend.usage.tokens / budget.tokens : null,
+    budget.minutes !== null ? spend.usage.ms / (budget.minutes * 60_000) : null,
+    budget.dollars !== null ? spend.usage.dollars / budget.dollars : null,
+  ].filter((f): f is number => f !== null);
+  const used = Math.min(1, Math.max(0, ...fractions));
+  return (
+    <span
+      className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[12px] ${spend.reached ? 'border-amber-300/30 text-amber-200' : 'border-line text-dim'}`}
+      title={`Spent so far: ${usageText(spend.usage)}`}
+    >
+      {spend.reached ? `Budget spent: ${spend.reached}` : `Budget ${Math.round(used * 100)}%`}
+      <span className="h-1 w-14 overflow-hidden rounded-full bg-white/10">
+        <span
+          className={`block h-full rounded-full ${spend.reached ? 'bg-amber-300' : 'bg-accent'}`}
+          style={{ width: `${Math.round(used * 100)}%` }}
+        />
+      </span>
+    </span>
   );
 }

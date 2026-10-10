@@ -61,6 +61,14 @@ export class ShadowRepo {
     return snapshot!;
   }
 
+  /**
+   * A checkpoint of a commit's tree, without touching the worktree, such as the commit a branch
+   * came from, so the run's changes can be shown from there.
+   */
+  async commitOf(commit: string, message: string): Promise<string> {
+    return git(['commit-tree', `${commit}^{tree}`, '-m', message], this.options());
+  }
+
   /** The latest checkpoint's commit. */
   async head(): Promise<string | null> {
     const sha = await git(

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { userProcedure as modelProcedure } from './procedures';
 import { browserRouter } from './routers/browser';
 import { chatRouter } from './routers/chat';
+import { contextRouter, homeRouter } from './routers/context';
 import { crewRouter } from './routers/crew';
 import { githubRouter } from './routers/github';
 import { boardRouter, projectsRouter } from './routers/projects';
@@ -67,6 +68,8 @@ export const appRouter = router({
   mcp: mcpRouter,
   projects: projectsRouter,
   board: boardRouter,
+  context: contextRouter,
+  home: homeRouter,
   github: githubRouter,
 
   app: router({

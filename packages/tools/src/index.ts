@@ -1,5 +1,6 @@
 import { BOARD_TOOLS, CREW_TOOLS } from './board';
 import { BROWSER_TOOLS } from './browser';
+import { CONTEXT_TOOLS } from './context';
 import { FILE_TOOLS } from './files';
 import { GIT_TOOLS } from './git';
 import { SHELL_TOOLS } from './shell';
@@ -8,11 +9,13 @@ import { WEB_TOOLS } from './web';
 
 export * from './board';
 export * from './browser';
+export * from './context';
 export * from './files';
 export * from './git';
 export * from './mcp';
 export * from './policy';
 export * from './redact';
+export * from './risk';
 export * from './shell';
 export * from './spec';
 export * from './web';
@@ -26,6 +29,7 @@ export const BUILTIN_TOOLS: ToolSpec[] = [
   ...BROWSER_TOOLS,
   ...BOARD_TOOLS,
   ...CREW_TOOLS,
+  ...CONTEXT_TOOLS,
 ] as ToolSpec[];
 
 export function builtinTool(name: string): ToolSpec | undefined {

@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   type Ticket,
   type WorkflowMember,
+  bounceKind,
   bounceTargets,
+  checkRequired,
   columnOf,
+  currentClank,
+  currentRole,
   moveRefusal,
   parseCriterion,
+  pickMaker,
   routeFor,
 } from './board';
-import { suggestKey } from './projects';
+import { looksSecret } from './context';
+import { budgetReached, suggestKey } from './projects';
 import { changedStories, criteriaOf, normalizeStoryId, parseSpec } from './spec';
 
 const member = (m: Partial<WorkflowMember> & Pick<WorkflowMember, 'id'>): WorkflowMember => ({
@@ -79,11 +85,78 @@ describe('columns', () => {
     expect(columnOf(ticket(4, true))).toBe('done');
   });
 
-  it('only let the user reorder the backlog by dragging', () => {
+  it('let the user reorder the backlog, start a ticket and stop one, but never approve', () => {
     expect(moveRefusal(ticket(-1), 'backlog')).toBeNull();
+    expect(moveRefusal(ticket(-1), 'build')).toBeNull();
+    expect(moveRefusal(ticket(0), 'backlog')).toBeNull();
+    expect(moveRefusal({ ...ticket(0), type: 'spec' }, 'backlog')).toMatch(/Pause it/);
+    expect(moveRefusal({ ...ticket(-1), proposed: true, key: 'X-1' }, 'build')).toMatch(/proposal/);
     expect(moveRefusal(ticket(-1), 'done')).toMatch(/approving/);
     expect(moveRefusal(ticket(0), 'review')).toMatch(/crew moves/);
     expect(moveRefusal(ticket(4, true), 'backlog')).toMatch(/Done/);
+  });
+
+  it('hand a bounced ticket to the clank answering it meanwhile', () => {
+    const t = { ...ticket(1), detour: { clankId: 'scribe', from: 'gauge' } };
+    expect(currentClank(t)).toBe('scribe');
+    expect(currentRole(t)).toBe('helper');
+    expect(currentClank({ ...t, detour: null })).toBe('gauge');
+    expect(currentRole(ticket(4))).toBeNull();
+  });
+});
+
+describe('the workflow', () => {
+  it('leaves skipped checks out of a route, but never sign-off', () => {
+    expect(routeFor('pr', 'forge', crew, [{ clankId: 'sentinel' }]).map((s) => s.clankId)).toEqual([
+      'forge',
+      'gauge',
+      'atlas',
+    ]);
+    const atlas = crew[0]!;
+    const gauge = crew[4]!;
+    expect(checkRequired(atlas, 'pr', ['atlas:pr'])).toBe(true);
+    expect(checkRequired(gauge, 'pr', [])).toBe(true);
+    expect(checkRequired(gauge, 'pr', ['gauge:pr'])).toBe(false);
+  });
+
+  it('restarts the route for a bounce back along it, and detours for anyone else', () => {
+    const t = { route: routeFor('pr', 'forge', crew), step: 2 };
+    expect(bounceKind(t, 'forge')).toEqual({ kind: 'restart', step: 0 });
+    expect(bounceKind(t, 'gauge')).toEqual({ kind: 'restart', step: 1 });
+    expect(bounceKind(t, 'scribe')).toEqual({ kind: 'detour' });
+    // Not back to itself, or forward.
+    expect(bounceKind(t, 'sentinel')).toEqual({ kind: 'detour' });
+  });
+
+  it('gives an open ticket to the maker that built what it depends on, then the least busy', () => {
+    const queue = (id: string) => ({ forge: 2, 'forge-2': 0 })[id] ?? 0;
+    expect(pickMaker(['forge', 'forge-2'], { madeDependencies: [], queue })).toBe('forge-2');
+    expect(pickMaker(['forge', 'forge-2'], { madeDependencies: ['forge'], queue })).toBe('forge');
+    expect(pickMaker([], { madeDependencies: [], queue })).toBeNull();
+  });
+
+  it('says which budget ran out', () => {
+    const usage = { tokens: 600_000, ms: 30 * 60_000, dollars: 2, unpriced: 0 };
+    expect(budgetReached(null, usage)).toBeNull();
+    expect(budgetReached({ tokens: 500_000, minutes: null, dollars: null }, usage)).toBe(
+      '500k tokens',
+    );
+    expect(budgetReached({ tokens: null, minutes: 30, dollars: null }, usage)).toBe(
+      '30 minutes of model time',
+    );
+    expect(budgetReached({ tokens: null, minutes: null, dollars: 5 }, usage)).toBeNull();
+  });
+});
+
+describe('secrets', () => {
+  it('are spotted in notes, and plain words are not', () => {
+    expect(looksSecret('Stripe test key: sk_test_51HabcdefGHIJKLmnop')).toBe(true);
+    expect(looksSecret('token ghp_abcdefghijklmnopqrstuvwxyz0123456789')).toBe(true);
+    expect(looksSecret('password: hunter2hunter2')).toBe(true);
+    expect(looksSecret('https://sam:pa55word@example.com/repo')).toBe(true);
+    expect(looksSecret('Prices include 10% GST.')).toBe(false);
+    expect(looksSecret('Set STRIPE_KEY=<your key> in .env')).toBe(false);
+    expect(looksSecret('The password field must be 8 characters or more')).toBe(false);
   });
 });
 

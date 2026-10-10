@@ -1,4 +1,6 @@
+export * from './branches';
 export * from './commands';
+export * from './docker';
 export * from './git';
 export * from './hunks';
 export * from './paths';

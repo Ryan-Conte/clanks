@@ -1,154 +1,6 @@
-import {
-  type ChatEvent,
-  type ChatRequest,
-  type ModelRecord,
-  type ToolPart,
-  columnOf,
-} from '@clanks/core';
-import { createFakeProvider } from '@clanks/providers';
-import { git } from '@clanks/workspace';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { type ToolPart, columnOf } from '@clanks/core';
 import { describe, expect, it } from 'vitest';
-import { sqliteModelRepository } from '../store/models';
-import { startTestOrchestrator, tempDir } from '../test-helpers';
-
-const MODEL = 'tiny:1b';
-
-const model: ModelRecord = {
-  id: MODEL,
-  source: 'catalog',
-  title: MODEL,
-  repo: 'test/repo',
-  revision: 'a'.repeat(40),
-  quant: 'Q4_0',
-  params: '1B',
-  license: 'mit',
-  tags: ['general'],
-  capabilities: { tools: true, vision: false, reasoning: false },
-  files: [{ role: 'model', path: 'm.gguf', sha256: 'b'.repeat(64), size: 1000 }],
-  facts: {
-    architecture: 'llama',
-    blockCount: 2,
-    contextLength: 32_768,
-    kvPerToken: 10,
-    swaKvPerToken: 0,
-    slidingWindow: 0,
-    parameterCount: null,
-  },
-  size: 1000,
-  keepLoaded: false,
-  pulledAt: new Date(),
-};
-
-const SPEC = `# Surf shop: spec
-
-## Overview
-A website that sells surf boards in Australia.
-
-## Stories
-
-### US-1 Browse boards
-As a shopper, I want to see every board with its price, so that I can pick one.
-
-Acceptance criteria
-- AC-1.1: Given the shop, when I open it, then I see every board with its price.
-- AC-1.2: Given a sold-out board, when I see it, then it says sold out.
-
-### US-2 Checkout
-As a shopper, I want to pay by card, so that I can buy a board.
-
-Acceptance criteria
-- AC-2.1: Given a cart, when I pay with a valid card, then I see an order number.
-`;
-
-const call = (name: string, args: object): ChatEvent => ({
-  type: 'tool_call',
-  call: {
-    id: `${name}-${Math.random().toString(36).slice(2, 8)}`,
-    name,
-    arguments: JSON.stringify(args),
-  },
-});
-const say = (text: string): ChatEvent[] => [{ type: 'text', text }];
-
-/** Which conversation a request is from, by what its system prompt says. */
-function who(request: ChatRequest): string {
-  const system = request.messages[0]!.content;
-  const name = /^You are (\w+)/.exec(system)?.[1] ?? '?';
-  const mode = /Mode: (\w+)/.exec(system)?.[1] ?? '?';
-  return `${name.toLowerCase()} ${mode}`;
-}
-
-type Script = ChatEvent[][] | ((request: ChatRequest) => ChatEvent[]);
-
-/**
- * Replays a script per conversation: each reply is picked by who's asking and how many times the
- * model has spoken in that conversation already, or by a function of the request.
- */
-function scripted(scripts: Record<string, Script>) {
-  return (request: ChatRequest): ChatEvent[] => {
-    const key = who(request);
-    const script = scripts[key];
-    if (typeof script === 'function') return script(request);
-    const turn = request.messages.filter((m) => m.role === 'assistant').length;
-    const reply = script?.[turn];
-    if (!reply) throw new Error(`No reply scripted for ${key}, turn ${turn}`);
-    return reply;
-  };
-}
-
-async function repository(): Promise<string> {
-  const root = join(tempDir(), 'surf');
-  mkdirSync(root);
-  const env = {
-    GIT_AUTHOR_NAME: 'Test',
-    GIT_AUTHOR_EMAIL: 'test@example.com',
-    GIT_COMMITTER_NAME: 'Test',
-    GIT_COMMITTER_EMAIL: 'test@example.com',
-  };
-  await git(['init', '--quiet', '-b', 'main'], { cwd: root });
-  writeFileSync(join(root, 'README.md'), '# Surf shop\n');
-  await git(['add', '-A'], { cwd: root });
-  await git(['commit', '--quiet', '-m', 'Start'], { cwd: root, env });
-  return root;
-}
-
-async function setup(scripts: Record<string, Script>) {
-  const orchestrator = startTestOrchestrator();
-  const { context } = orchestrator;
-  sqliteModelRepository(context.store.db).putModel(model);
-  const blobs = join(orchestrator.paths.models, 'blobs');
-  mkdirSync(blobs, { recursive: true });
-  writeFileSync(join(blobs, `sha256-${'b'.repeat(64)}`), 'gguf');
-  context.settings.update({
-    crewModel: MODEL,
-    profile: { name: 'Sam', timeZone: 'UTC', language: '', preferences: '' },
-  });
-  const fake = createFakeProvider({ id: 'builtin', replies: scripted(scripts) });
-  context.providers.replace(fake);
-  const project = await context.projects.create({
-    name: 'Surf shop',
-    brief: 'A website that sells surf boards.',
-    key: 'SURF',
-    workspace: { kind: 'folder', path: await repository() },
-    crew: ['scribe', 'prism', 'forge', 'gauge'],
-    model: null,
-    models: {},
-  });
-  return { context, fake, project, board: context.board, chat: context.chat };
-}
-
-async function until(check: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 2000; i++) {
-    if (check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`Timed out waiting until ${what}`);
-}
-
-const quiet = (context: Awaited<ReturnType<typeof setup>>['context']) =>
-  context.chat.list().every((c) => !c.replying);
+import { MODEL, SPEC, call, quiet, say, setup, until, who } from './test-kit';
 
 describe('the spec flow', () => {
   it('turns an idea into an approved spec and a board of tickets with dependencies', async () => {
@@ -290,8 +142,10 @@ describe('the spec flow', () => {
     const runMessages = chat.get(scribeRun).messages;
     expect(runMessages[0]).toMatchObject({ role: 'user', author: 'app' });
 
-    // Sam approves, and Atlas plans the board from it.
-    board.approve(spec.id);
+    // Sam approves, and Atlas plans the board from it. Holding new work keeps the tickets in the
+    // backlog, so this test sees the plan rather than the crew working it.
+    context.projects.update(project.id, { held: true });
+    await board.approve(spec.id);
     await until(
       () => context.chat.list().some((c) => c.role === 'planner') && quiet(context),
       'Atlas has planned',
@@ -573,6 +427,8 @@ describe('the spec flow', () => {
 describe('the board', () => {
   it('takes cards from the user, and keeps to the workflow', async () => {
     const { project, board, context } = await setup({});
+    // Held, nothing starts: this is about the board, not the crew working it.
+    context.projects.update(project.id, { held: true });
     const add = (title: string, type: 'pr' | 'design', assignee: string | null = null) =>
       board.addTicket({
         projectId: project.id,
@@ -595,8 +451,10 @@ describe('the board', () => {
     expect(a.criteria).toEqual([{ id: null, text: 'It works' }]);
 
     // Only a clank that makes the type can have it.
-    expect(() => board.assignTicket(c.id, 'scribe')).toThrow("Scribe doesn't make pr tickets");
-    expect(board.assignTicket(c.id, 'forge').assignee).toBe('forge');
+    await expect(board.assignTicket(c.id, 'scribe')).rejects.toThrow(
+      "Scribe doesn't make pr tickets",
+    );
+    expect((await board.assignTicket(c.id, 'forge')).assignee).toBe('forge');
     add('Add checkout', 'pr');
     expect(() =>
       board.addTicket({
@@ -627,8 +485,8 @@ describe('the board', () => {
     ]);
     board.reorder(c.id, null);
     expect(board.tickets(project.id).at(-1)!.key).toBe('SURF-3');
-    expect(() => board.move(a.id, 'done')).toThrow(/Nothing is approved by a drag/);
-    expect(() => board.approve(a.id)).toThrow("SURF-1 isn't ready for you yet");
+    await expect(board.move(a.id, 'done')).rejects.toThrow(/Nothing is approved by a drag/);
+    await expect(board.approve(a.id)).rejects.toThrow("SURF-1 isn't ready for you yet");
 
     await board.removeTicket(b.id);
     expect(board.ticket(c.id).dependsOn).toEqual([a.id]);

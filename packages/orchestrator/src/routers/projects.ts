@@ -77,7 +77,12 @@ export const projectsRouter = router({
 
   update: userProcedure
     .input(z.object({ id: projectIdSchema, patch: projectPatchSchema }))
-    .mutation(({ ctx, input }) => ctx.projects.update(input.id, input.patch)),
+    .mutation(({ ctx, input }) => {
+      const project = ctx.projects.update(input.id, input.patch);
+      // Limits, budgets and holding change what can start.
+      ctx.board.pumpAll();
+      return project;
+    }),
 
   /** Adds a clank to the crew, or takes one out. */
   setMember: userProcedure
@@ -100,6 +105,9 @@ export const projectsRouter = router({
   delete: userProcedure
     .input(projectIdSchema)
     .mutation(({ ctx, input }) => ctx.board.deleteProject(input)),
+
+  /** Whether Docker is installed and running, for running the crew's commands in it. */
+  docker: publicProcedure.query(({ ctx }) => ctx.sandbox.docker()),
 
   openFolder: userProcedure.input(projectIdSchema).mutation(async ({ ctx, input }) => {
     await ctx.host?.openFolder(ctx.projects.get(input).folder);
@@ -169,9 +177,41 @@ export const boardRouter = router({
 
   accept: userProcedure.input(ticketIdSchema).mutation(({ ctx, input }) => ctx.board.accept(input)),
 
+  /** Approves a ticket that's ready, which merges its work. */
   approve: userProcedure
     .input(ticketIdSchema)
     .mutation(({ ctx, input }) => ctx.board.approve(input)),
+
+  reject: userProcedure
+    .input(z.object({ id: ticketIdSchema, reason: z.string().trim().max(2000).default('') }))
+    .mutation(({ ctx, input }) => ctx.board.reject(input.id, input.reason)),
+
+  pause: userProcedure.input(ticketIdSchema).mutation(({ ctx, input }) => ctx.board.pause(input)),
+
+  /** Drops an optional check from a ticket, with why. */
+  skip: userProcedure
+    .input(
+      z.object({
+        id: ticketIdSchema,
+        clankId: clankIdSchema,
+        reason: z.string().trim().min(1).max(300),
+      }),
+    )
+    .mutation(({ ctx, input }) => ctx.board.skipCheck(input.id, input.clankId, input.reason)),
+
+  restore: userProcedure
+    .input(z.object({ id: ticketIdSchema, clankId: clankIdSchema }))
+    .mutation(({ ctx, input }) => ctx.board.restoreCheck(input.id, input.clankId)),
+
+  /** Sends a ticket whose work conflicts with its base back to its maker, to resolve. */
+  resolveConflicts: userProcedure
+    .input(ticketIdSchema)
+    .mutation(({ ctx, input }) => ctx.board.resolveConflicts(input)),
+
+  /** Pushes a ticket's branch and opens its pull request again. */
+  republish: userProcedure
+    .input(ticketIdSchema)
+    .mutation(({ ctx, input }) => ctx.board.republish(input)),
 
   requestChanges: userProcedure
     .input(z.object({ id: ticketIdSchema, comment: z.string().trim().min(1).max(8000) }))

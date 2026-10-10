@@ -14,6 +14,17 @@ const anyCall = (subject: string) => ({ kind: 'tool' as const, subject, pattern:
 const named = (id: string) => id.charAt(0).toUpperCase() + id.slice(1);
 
 const keyArg = z.string().trim().min(1).max(20).describe('The ticket key, such as SURF-12');
+const skipArg = z
+  .array(
+    z.object({
+      clank: z.string().trim().min(1).max(40).describe("The checker's id, such as sentinel"),
+      reason: z.string().trim().min(1).max(300).describe('Why this ticket needs no such check'),
+    }),
+  )
+  .max(10)
+  .describe(
+    "Optional checks this ticket doesn't need, each with a reason shown on its card. Required checks and sign-off can't be skipped.",
+  );
 const listArg = (what: string) =>
   z.array(z.string().trim().min(1).max(2000)).max(50).describe(what);
 
@@ -82,6 +93,7 @@ export const boardCreateTicket = defineTool({
       .max(30)
       .default([])
       .describe('Keys of tickets that must be done first, such as ["SURF-2"]'),
+    skip_checks: skipArg.default([]),
   }),
   needs: ['project'],
   mutates: false,
@@ -97,6 +109,7 @@ export const boardCreateTicket = defineTool({
         criteria: args.criteria,
         assignee: args.assignee,
         dependsOn: args.depends_on,
+        skipChecks: args.skip_checks,
       }),
     }),
 });
@@ -104,19 +117,25 @@ export const boardCreateTicket = defineTool({
 export const boardUpdateTicket = defineTool({
   name: 'board_update_ticket',
   description:
-    "Changes a ticket's title, description, stories or acceptance criteria. Lists replace what's there. A done ticket can't change.",
+    "Changes a ticket's title, description, stories or acceptance criteria, or skips optional checks it doesn't need. Lists replace what's there. A done ticket can't change.",
   schema: z.object({
     key: keyArg,
     title: z.string().trim().min(1).max(200).optional(),
     description: z.string().max(20_000).optional(),
     stories: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
     criteria: listArg('The full list of acceptance criteria').optional(),
+    skip_checks: skipArg.optional(),
   }),
   needs: ['project'],
   mutates: false,
   label: (args) => `Updating ${args.key.toUpperCase()}`,
   approval: (args) => anyCall(`Update ${args.key}`),
-  run: (args, ctx) => Promise.resolve({ content: boardOf(ctx).update(args) }),
+  run: (args, ctx) => {
+    const { skip_checks: skipChecks, ...rest } = args;
+    return Promise.resolve({
+      content: boardOf(ctx).update({ ...rest, ...(skipChecks ? { skipChecks } : {}) }),
+    });
+  },
 });
 
 export const boardLinkDependency = defineTool({
@@ -247,7 +266,7 @@ export const submitOutput = defineTool({
   mutates: false,
   label: (args) => `Submitting the ${args.type}`,
   approval: (args) => anyCall(`Submit the ${args.type}`),
-  run: (args, ctx) => Promise.resolve({ content: boardOf(ctx).submit(args), finish: true }),
+  run: async (args, ctx) => ({ content: await boardOf(ctx).submit(args), finish: true }),
 });
 
 export const reviewPass = defineTool({
@@ -268,13 +287,13 @@ export const reviewPass = defineTool({
   mutates: false,
   label: () => 'Passing the ticket',
   approval: () => anyCall('Pass the ticket'),
-  run: (args, ctx) => Promise.resolve({ content: boardOf(ctx).pass(args), finish: true }),
+  run: async (args, ctx) => ({ content: await boardOf(ctx).pass(args), finish: true }),
 });
 
 export const ticketBounce = defineTool({
   name: 'ticket_bounce',
   description:
-    'Sends the ticket back to the clank that can fix it, with the reason and a numbered list of specific issues. This ends your run.',
+    'Sends the ticket to the clank that can fix it, with the reason and a numbered list of specific issues: back along its route, which then runs again from there, or to another clank you may send work to, who answers and hands it back to you. This ends your run.',
   schema: z.object({
     to: z.string().trim().min(1).max(40).describe("The clank's id"),
     reason: z.string().trim().min(1).max(1000).describe('One line on why'),
@@ -288,7 +307,7 @@ export const ticketBounce = defineTool({
   mutates: false,
   label: (args) => `Sending it back to ${named(args.to)}`,
   approval: (args) => anyCall(`Send it back to ${args.to}`),
-  run: (args, ctx) => Promise.resolve({ content: boardOf(ctx).bounce(args), finish: true }),
+  run: async (args, ctx) => ({ content: await boardOf(ctx).bounce(args), finish: true }),
 });
 
 export const fail = defineTool({

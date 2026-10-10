@@ -22,17 +22,18 @@ import {
 } from '@clanks/core';
 import { BUILTIN_PROVIDER, ProviderError, type ProviderRegistry } from '@clanks/providers';
 import { type ToolContext, ToolArgumentsError, ToolFailure, type ToolResult } from '@clanks/tools';
-import { commandShell } from '@clanks/workspace';
+import { type Sandbox, commandShell } from '@clanks/workspace';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ActivityService } from '../activity/service';
-import type { ChatScope, ReplyOutcome } from '../board/service';
+import type { ActiveReply, ChatScope, ReplyOutcome } from '../board/service';
 import type { BrowserService } from '../browser/service';
 import type { CrewService } from '../crew/crew';
 import { readProjectInstructions } from '../crew/instructions';
 import { type AssembledPrompt, type RunContext, assemblePrompt } from '../crew/prompt';
+import type { SandboxService } from '../sandbox/service';
 import type { TerminalService } from '../terminal/service';
 import type { Toolset, ToolService } from '../tools/service';
 import type { WorkspaceService } from '../workspace/service';
@@ -48,8 +49,16 @@ export class ChatError extends Error {
 
 /** What chats need from the board: projects, their runs, and what each run is for. */
 export interface ChatBoard {
-  /** What a chat or run in a project knows. Null outside one. */
-  scope(conversation: Conversation): ChatScope | null;
+  /**
+   * What a chat or run in a project knows. Null outside one. `hint` is what the chat is about
+   * now; `window` the model's context, which the layers' budgets scale to.
+   */
+  scope(
+    conversation: Conversation,
+    options?: { hint?: string; window?: number; preview?: boolean },
+  ): ChatScope | null;
+  /** Why a run may not go on to its next round, such as a spent budget. Null when it may. */
+  gate(conversation: Conversation): string | null;
   /** A project's workspace, for a chat with a clank in its crew. Throws for anyone else. */
   chatFolder(projectId: string, clankId: string): string;
   /** A clank's model in a project, if the project picks one. */
@@ -86,6 +95,8 @@ export interface ChatServiceOptions {
   activity: ActivityService;
   tools: ToolService;
   browser: BrowserService;
+  /** Docker containers for projects that run commands in them. */
+  sandbox?: SandboxService;
   /** Projects' boards. Without one, chats can't be in projects. */
   board?: ChatBoard;
   /** Pictures tools took, one folder per chat. */
@@ -104,6 +115,8 @@ interface Run {
   approvals: Map<string, (decision: ApprovalDecision) => void>;
   /** A finishing call handed the ticket on, so the run is over. */
   finished: boolean;
+  /** The app stopped the reply between rounds, and why. */
+  stopped: string | null;
 }
 
 /** The longest reply a local model is asked for: room enough for thinking and a long answer. */
@@ -264,6 +277,49 @@ export class ChatService extends EventEmitter<{
     return this.runs.has(conversationId);
   }
 
+  /** Every reply being written now, with what it runs on and whether it waits for the user. */
+  active(): ActiveReply[] {
+    const replies: ActiveReply[] = [];
+    for (const [id, run] of this.runs) {
+      const conversation = this.store.conversation(id);
+      if (!conversation) continue;
+      replies.push({
+        conversationId: id,
+        projectId: conversation.projectId,
+        ticketId: conversation.ticketId,
+        clankId: conversation.clankId,
+        role: conversation.role,
+        model: run.message.model,
+        asking: run.message.parts.some((p) => p.type === 'tool' && p.status === 'asking'),
+        since: run.message.createdAt,
+      });
+    }
+    return replies;
+  }
+
+  /** Stops a reply, and settles once it has ended and the board has heard. */
+  async halt(conversationId: string): Promise<void> {
+    const run = this.runs.get(conversationId);
+    if (!run) return;
+    run.controller.abort();
+    await run.done;
+  }
+
+  /** A chat in brief, for its clank's memory: what was asked first, and the latest answer. */
+  recap(conversationId: string): string | null {
+    const conversation = this.store.conversation(conversationId);
+    if (!conversation) return null;
+    const messages = this.store.messages(conversationId);
+    const first = messages.find((m) => m.role === 'user' && !m.author);
+    const last = messages.findLast((m) => m.role === 'assistant' && m.status === 'done');
+    if (!first || !last) return null;
+    const answer = textOf(last.parts).replace(/\s+/g, ' ').trim();
+    if (!answer) return null;
+    const clip = (text: string, max: number) =>
+      text.length > max ? `${text.slice(0, max - 1)}…` : text;
+    return `Chat "${conversation.title}": asked "${clip(first.content.replace(/\s+/g, ' ').trim(), 200)}". Last answer: ${clip(answer, 400)}`;
+  }
+
   /**
    * Sends a message. Notes the user left in the diff editor since the clank last heard from them
    * go with it, so they're never lost.
@@ -370,6 +426,7 @@ export class ChatService extends EventEmitter<{
     }
     this.options.terminal.closeConversation(conversationId);
     this.options.browser.closeConversation(conversationId);
+    await this.options.sandbox?.remove(conversationId);
     await this.options.workspace.remove(conversationId);
     this.queued.delete(conversationId);
     this.store.deleteConversation(conversationId);
@@ -444,20 +501,63 @@ export class ChatService extends EventEmitter<{
   /** What the clank in a conversation would be told right now: its assembled system prompt. */
   async preview(clankId: string, conversationId: string | null): Promise<AssembledPrompt> {
     const conversation = conversationId ? this.require(conversationId) : null;
+    const history = conversation ? this.store.messages(conversation.id) : [];
+    return this.previewFor(clankId, conversation, lastAsk(history));
+  }
+
+  /**
+   * What a clank would be told working a ticket in a project, or chatting there when `ticketId` is
+   * null: the Context tab's Preview. Nothing is saved.
+   */
+  async previewTicket(
+    projectId: string,
+    clankId: string,
+    ticketId: string | null,
+    role: RunRole | null,
+  ): Promise<AssembledPrompt> {
     const clank = this.options.crew.get(clankId);
-    const scope = conversation ? (this.options.board?.scope(conversation) ?? null) : null;
-    const run = conversation ? this.options.workspace.run(conversation.id) : null;
-    const status = conversation
-      ? (await this.options.workspace.state(conversation.id)).status
-      : null;
+    const folder = this.board().chatFolder(projectId, clank.id);
+    const now = this.now();
+    const conversation: Conversation = {
+      id: `preview-${randomUUID()}`,
+      clankId: clank.id,
+      title: 'Preview',
+      folder,
+      projectId,
+      ticketId,
+      role: ticketId ? role : null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    return this.previewFor(clank.id, conversation, '', true);
+  }
+
+  private async previewFor(
+    clankId: string,
+    conversation: Conversation | null,
+    hint: string,
+    preview = false,
+  ): Promise<AssembledPrompt> {
+    const clank = this.options.crew.get(clankId);
     let choice: ModelChoice | null = null;
     try {
       choice = this.modelFor(clank.id, conversation?.projectId ?? null);
     } catch {
       // No model yet: show what it would be told on one that calls tools.
     }
+    const window = choice ? this.contextWindow(choice) : undefined;
+    const scope = conversation
+      ? (this.options.board?.scope(conversation, {
+          hint,
+          preview,
+          ...(window ? { window } : {}),
+        }) ?? null)
+      : null;
+    const saved = conversation && this.store.conversation(conversation.id) ? conversation : null;
+    const run = saved ? this.options.workspace.run(saved.id) : null;
+    const status = saved ? (await this.options.workspace.state(saved.id)).status : null;
     const toolset = await this.options.tools.forChat(clank, {
-      workspace: run !== null || status === 'ready',
+      workspace: run !== null || status === 'ready' || (conversation !== null && !saved),
       browser: this.options.browser.available,
       vision: choice !== null && this.seesImages(choice),
       project: scope !== null,
@@ -475,6 +575,7 @@ export class ChatService extends EventEmitter<{
         problems: toolset.problems,
       },
       scope,
+      window,
     );
   }
 
@@ -588,6 +689,7 @@ export class ChatService extends EventEmitter<{
       done: Promise.resolve(),
       approvals: new Map(),
       finished: false,
+      stopped: null,
     };
     this.runs.set(conversation.id, run);
     this.options.board?.replyStarted(conversation);
@@ -604,11 +706,16 @@ export class ChatService extends EventEmitter<{
 
   /** Tells the board how a reply ended, then starts what the app wrote meanwhile. */
   private ended(conversation: Conversation, run: Run): void {
+    // A run that handed its ticket on is over: servers it left running would hold their ports.
+    if (run.finished && isTicketRun(conversation)) {
+      this.options.terminal.stopBackground(conversation.id);
+    }
     try {
       this.options.board?.replyEnded(conversation, {
         status: run.message.status,
         finished: run.finished,
         error: run.message.error,
+        stopped: run.stopped,
       });
     } catch (error) {
       console.error('The board missed the end of a reply', error);
@@ -642,7 +749,9 @@ export class ChatService extends EventEmitter<{
     };
     try {
       const clank = this.options.crew.get(conversation.clankId);
-      const scope = this.options.board?.scope(conversation) ?? null;
+      const window = this.contextWindow(choice);
+      const scope =
+        this.options.board?.scope(conversation, { hint: lastAsk(history), window }) ?? null;
       const role = scope?.run?.role ?? null;
       const { run: workspace, problem, status } = await this.prepareWorkspace(conversation);
       const vision = this.seesImages(choice);
@@ -657,9 +766,12 @@ export class ChatService extends EventEmitter<{
       const offered: Toolset = callsTools
         ? toolset
         : { specs: new Map(), levels: new Map(), definitions: [], problems: [] };
+      const sandbox = scope?.project.sandbox;
       const shellName =
         offered.specs.has('shell_exec') || offered.specs.has('shell_start')
-          ? (await commandShell()).name
+          ? sandbox?.kind === 'docker'
+            ? `bash, inside a Docker container (${sandbox.image}) ${sandbox.network ? 'that can reach the network' : 'with no network, so nothing can be downloaded'}`
+            : (await commandShell()).name
           : null;
       const prompt = this.prompt(
         clank.id,
@@ -669,12 +781,16 @@ export class ChatService extends EventEmitter<{
           status,
           tools: [...offered.specs.keys()],
           shell: shellName,
+          port:
+            isTicketRun(conversation) && sandbox?.kind !== 'docker'
+              ? runPort(conversation.id)
+              : null,
           toolsUnsupported: !callsTools && toolset.specs.size > 0,
           problems: [...toolset.problems, ...(problem ? [problem] : [])],
         },
         scope,
+        window,
       );
-      const window = this.contextWindow(choice);
       const toolTokens = estimateTokens(JSON.stringify(offered.definitions));
       const maxChars = Math.max(4000, Math.min(40_000, Math.floor(window * 4 * 0.12)));
       const turns = fitHistory(
@@ -684,7 +800,8 @@ export class ChatService extends EventEmitter<{
       const messages: ChatMessage[] = [{ role: 'system', content: prompt.system }, ...turns];
       const local = choice.provider === BUILTIN_PROVIDER;
       // A run on a ticket must end by handing it on, not with a plain reply.
-      const mustFinish = (role === 'maker' || role === 'checker') && callsTools;
+      const mustFinish =
+        (role === 'maker' || role === 'checker' || role === 'helper') && callsTools;
       let malformed = 0;
       let nudges = 0;
       const totals = {
@@ -700,6 +817,19 @@ export class ChatService extends EventEmitter<{
         if (signal.aborted) {
           message.status = 'cancelled';
           message.finishReason = 'cancelled';
+          break;
+        }
+        // A run whose budget is spent stops between rounds, never in the middle of one.
+        const stop = this.options.board?.gate(conversation) ?? null;
+        if (stop) {
+          run.stopped = stop;
+          this.addPart(conversation.id, message, {
+            type: 'note',
+            round,
+            text: `Paused: ${stop}.`,
+          });
+          message.status = 'done';
+          message.finishReason = 'stop';
           break;
         }
         compactTurns(messages, window * 0.85 - toolTokens);
@@ -796,16 +926,21 @@ export class ChatService extends EventEmitter<{
           break;
         }
         if (calls.length === 0) {
-          if (mustFinish && nudges < MAX_NUDGES && finish !== 'length') {
+          // A run that stops talking, or runs out of room thinking, is asked to decide. Its
+          // thinking isn't sent back, so a model going round in circles starts afresh.
+          if (mustFinish && nudges < MAX_NUDGES) {
             nudges++;
+            const outOfRoom = finish === 'length';
             messages.push(
               { role: 'assistant', content: text.trim() || '…' },
-              { role: 'user', content: nudgeText(role) },
+              { role: 'user', content: nudgeText(role, outOfRoom) },
             );
             this.addPart(conversation.id, message, {
               type: 'note',
               round,
-              text: `Reminded ${clank.name} to end the run by handing the ticket on.`,
+              text: outOfRoom
+                ? `${clank.name} ran out of room before deciding, so it was asked to decide now.`
+                : `Reminded ${clank.name} to end the run by handing the ticket on.`,
             });
             continue;
           }
@@ -1056,11 +1191,22 @@ export class ChatService extends EventEmitter<{
       );
     }
     if (level === 'ask') {
-      const approval = { ...spec.approval(args), scope: workspace?.repoRoot ?? null };
+      // An everyday call runs without asking, unless the user wants to be asked about every one.
+      const risk = spec.risk?.(args, {
+        worktree: workspace?.worktree ?? null,
+        browserUrl: this.browserUrl(conversation.id),
+      }) ?? { level: 'high' as const, reason: null };
+      const approval = {
+        ...spec.approval(args),
+        scope: workspace?.repoRoot ?? null,
+        reason: risk.reason,
+      };
       const rule = approval.scope
         ? this.options.tools.ruleFor(approval.scope, call.name, approval.subject)
         : undefined;
-      if (rule) {
+      if (risk.level === 'low' && this.options.settings.get().approvals === 'risky') {
+        part.decidedBy = 'risk';
+      } else if (rule) {
         part.decidedBy = 'rule';
       } else {
         part.status = 'asking';
@@ -1087,6 +1233,18 @@ export class ChatService extends EventEmitter<{
       part.decidedBy = 'policy';
     }
 
+    // A project that runs commands in Docker gets a container per run; without Docker, nothing runs.
+    let sandbox: Sandbox | null = null;
+    const settings = input.scope?.project.sandbox;
+    if (workspace && spec.needs.includes('shell') && settings?.kind === 'docker') {
+      if (!this.options.sandbox) return finish('failed', "Commands can't run in Docker here.");
+      try {
+        sandbox = await this.options.sandbox.forRun(conversation.id, workspace, settings);
+      } catch (error) {
+        return finish('failed', error instanceof Error ? error.message : String(error));
+      }
+    }
+
     part.status = 'running';
     part.startedAt = this.now();
     update();
@@ -1106,6 +1264,10 @@ export class ChatService extends EventEmitter<{
               cwd: workspace.cwd,
               toolCallId: part.id,
               maxChars: input.maxChars,
+              sandbox,
+              ...(isTicketRun(conversation) && !sandbox
+                ? { env: { PORT: String(runPort(conversation.id)) } }
+                : {}),
             })
           : null,
       web: this.options.tools.web(),
@@ -1117,6 +1279,7 @@ export class ChatService extends EventEmitter<{
             })
           : null,
       board: input.scope?.access ?? null,
+      context: input.scope?.contextAccess ?? null,
       signal,
       clank: input.clank,
       maxChars: input.maxChars,
@@ -1167,6 +1330,16 @@ export class ChatService extends EventEmitter<{
           }
         : {}),
     });
+  }
+
+  /** The page a chat's browser is on, for judging how risky a click or typing there is. */
+  private browserUrl(conversationId: string): string | null {
+    try {
+      const state = this.options.browser.state(conversationId);
+      return state.tabs.find((t) => t.id === state.current)?.url ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** Keeps a picture a tool took in the chat's artifacts. Returns its path there. */
@@ -1270,6 +1443,7 @@ export class ChatService extends EventEmitter<{
       status: RunContext['workspaceStatus'];
     },
     scope: ChatScope | null,
+    window?: number,
   ): AssembledPrompt {
     const { crew } = this.options;
     const settings = this.options.settings.get();
@@ -1282,6 +1456,8 @@ export class ChatService extends EventEmitter<{
       profile: settings.profile,
       instructions: folder ? readProjectInstructions(folder) : null,
       context: scope?.context ?? null,
+      memory: scope?.memory ?? null,
+      ...(window ? { window } : {}),
       run: {
         mode,
         project: scope?.project.name ?? null,
@@ -1350,13 +1526,42 @@ function checkFolder(folder: string): string {
   return path;
 }
 
+/** A run on a ticket: making it, checking it, or answering a bounce. */
+function isTicketRun(conversation: Conversation): boolean {
+  return (
+    conversation.role === 'maker' ||
+    conversation.role === 'checker' ||
+    conversation.role === 'helper'
+  );
+}
+
+/**
+ * The port a ticket's run starts its servers on, so parallel runs never meet on one: the same for
+ * the run every time, somewhere from 41000 to 48999.
+ */
+export function runPort(conversationId: string): number {
+  let hash = 0;
+  for (const ch of conversationId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return 41_000 + (hash % 8000);
+}
+
+/** What the user last asked in a chat, so the notes and memories that fit it come along. */
+function lastAsk(history: MessageRecord[]): string {
+  return history.findLast((m) => m.role === 'user')?.content.slice(0, 1000) ?? '';
+}
+
 /** What a run that stopped with a plain reply is told, so it hands the ticket on. */
-function nudgeText(role: RunRole | null): string {
+function nudgeText(role: RunRole | null, outOfRoom = false): string {
   const done =
     role === 'checker'
       ? 'If it passes, call `review_pass`. If it needs fixing, call `ticket_bounce` with the issues.'
-      : 'If the work is done, call `submit_output`.';
-  return `You're working this ticket on your own, so nobody reads a plain reply. ${done} If you can't go on, call \`ask_user\` with your question, or \`fail\` with what went wrong. End with one of these calls.`;
+      : role === 'helper'
+        ? 'When you have the answer, hand it back with `submit_output`.'
+        : 'If the work is done, call `submit_output`.';
+  const opening = outOfRoom
+    ? "You ran out of room while thinking, before you called anything. Don't go over what you've checked again: decide from what the tool results above show, now."
+    : "You're working this ticket on your own, so nobody reads a plain reply.";
+  return `${opening} ${done} If you can't go on, call \`ask_user\` with your question, or \`fail\` with what went wrong. End with one of these calls.`;
 }
 
 function isSettled(part: ToolPart): boolean {

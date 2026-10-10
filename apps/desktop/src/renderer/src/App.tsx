@@ -99,7 +99,7 @@ function TitleBar({ route, welcome }: { route: Route; welcome: boolean }) {
   else if (route.page === 'draft') title = clank ? `New chat with ${clank.name}` : 'New chat';
   else if (route.page === 'crew') title = clank?.name ?? 'Crew';
   else if (route.page === 'project') {
-    title = { board: 'Board', spec: 'Spec', settings: 'Settings' }[route.tab];
+    title = { board: 'Board', spec: 'Spec', context: 'Context', settings: 'Settings' }[route.tab];
   } else {
     title = {
       home: 'Home',

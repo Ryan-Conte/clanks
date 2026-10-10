@@ -1,5 +1,6 @@
 import type { ToolApproval, ToolDefinition } from '@clanks/core';
 import { z } from 'zod';
+import type { Risk, RiskContext } from './risk';
 
 /** The run's copy of a repository. Files and git tools work only inside it. */
 export interface WorkspaceAccess {
@@ -101,6 +102,8 @@ export interface TicketDraft {
   assignee: string | null;
   /** Keys of tickets it waits on. */
   dependsOn: string[];
+  /** Optional checks it doesn't need, with why. */
+  skipChecks: { clank: string; reason: string }[];
 }
 
 /**
@@ -118,6 +121,7 @@ export interface BoardAccess {
     description?: string;
     criteria?: string[];
     stories?: string[];
+    skipChecks?: { clank: string; reason: string }[];
   }): string;
   link(input: { key: string; dependsOn: string; remove: boolean }): string;
   /** A clank's id, or null to make it open. */
@@ -126,11 +130,35 @@ export interface BoardAccess {
   readSpec(version: number | 'draft' | null): string;
   writeSpec(content: string): string;
   progress(input: { message: string; steps: { title: string; done: boolean }[] }): string;
-  submit(output: Record<string, unknown> & { type: string }): string;
-  pass(review: Record<string, unknown>): string;
-  bounce(input: { to: string; reason: string; issues: string[] }): string;
+  submit(output: Record<string, unknown> & { type: string }): string | Promise<string>;
+  pass(review: Record<string, unknown>): string | Promise<string>;
+  bounce(input: { to: string; reason: string; issues: string[] }): string | Promise<string>;
   fail(input: { reason: string; tried: string }): string;
   ask(input: { question: string; options: string[]; recommendation: string }): string;
+}
+
+/** A note as `context_write` takes it. */
+export interface NoteDraft {
+  kind: string;
+  title: string;
+  body: string;
+  why: string;
+  /** A note this replaces, by its reference or title. */
+  supersedes: string | null;
+  /** A note to take back instead, by its reference or title. */
+  drop: string | null;
+}
+
+/**
+ * The project's shared context and this clank's own memory of the project. Each method returns
+ * what the clank reads, or throws a `ToolFailure` saying what's wrong.
+ */
+export interface ContextAccess {
+  search(query: string): string;
+  write(note: NoteDraft): string;
+  /** Another clank's memory only for Atlas, about a ticket it's signing off. */
+  searchMemory(query: string, clank: string | null): string;
+  remember(input: { kind: 'decision' | 'note'; body: string }): string;
 }
 
 export interface ToolContext {
@@ -141,6 +169,8 @@ export interface ToolContext {
   browser: BrowserAccess | null;
   /** The project's board, in a chat or run in a project. */
   board: BoardAccess | null;
+  /** The project's context and the clank's memory, in a chat or run in a project. */
+  context: ContextAccess | null;
   signal: AbortSignal;
   clank: { id: string; name: string };
   /** The most a result may hold, in characters, so it doesn't crowd out the conversation. */
@@ -196,6 +226,11 @@ export interface ToolSpec<A = unknown> {
   label(args: A): string;
   /** What an approval prompt shows, and what "always allow" would cover. */
   approval(args: A): Omit<ToolApproval, 'scope'>;
+  /**
+   * How risky this call is. A tool the clank's policy asks about asks only for high-risk calls,
+   * unless the user wants to be asked about every one. A tool without this is always high risk.
+   */
+  risk?(args: A, ctx: RiskContext): Risk;
   run(args: A, ctx: ToolContext): Promise<ToolResult>;
 }
 

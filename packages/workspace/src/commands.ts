@@ -93,6 +93,8 @@ export interface CommandExit {
   /** Why it ended: on its own, out of time, stopped by someone, or it never started. */
   reason: 'exited' | 'timeout' | 'stopped' | 'error';
   error: string | null;
+  /** It left something running that held its output open, which was stopped. */
+  lingered?: boolean;
 }
 
 export interface CommandHandle {
@@ -139,28 +141,80 @@ export function runCommand(options: CommandOptions): CommandHandle {
 
   const timer =
     options.timeoutMs !== undefined ? setTimeout(() => stop('timeout'), options.timeoutMs) : null;
+  let grace: NodeJS.Timeout | null = null;
   const done = new Promise<CommandExit>((resolve) => {
-    child.on('error', (error) => {
+    let settled = false;
+    const finish = (exit: CommandExit) => {
+      if (settled) return;
+      settled = true;
       if (timer) clearTimeout(timer);
-      resolve({ exitCode: null, reason: 'error', error: error.message });
-    });
-    child.on('close', (code) => {
-      if (timer) clearTimeout(timer);
+      if (grace) clearTimeout(grace);
       const rest = decoders[0].end() + decoders[1].end();
       if (rest) options.onOutput(rest);
-      resolve({ exitCode: code, reason, error: null });
+      resolve(exit);
+    };
+    child.on('error', (error) => finish({ exitCode: null, reason: 'error', error: error.message }));
+    child.on('close', (code) => finish({ exitCode: code, reason, error: null, lingered: false }));
+    // Something it started, such as a server put in the background with `&`, can hold its output
+    // open after it exits. It's done when it exits; what it left behind is stopped.
+    child.on('exit', (code) => {
+      if (settled) return;
+      grace = setTimeout(
+        () => {
+          if (settled) return;
+          child.stdout.destroy();
+          child.stderr.destroy();
+          if (child.pid !== undefined) killTree(child.pid);
+          finish({ exitCode: code, reason, error: null, lingered: true });
+        },
+        reason === 'exited' ? EXIT_GRACE_MS : 0,
+      );
     });
   });
   return { pid: child.pid, done, stop: () => stop('stopped') };
 }
 
-/** Stops a process and its children. */
+/**
+ * A command that stops what it put in the background when it ends, such as a server started with
+ * `&` before a test, so nothing it started outlives it or keeps a port. For bash and sh; cmd has no
+ * background jobs to stop. In Git's bash on Windows a job is a stand-in for the Windows program it
+ * runs, so the program's whole process tree is stopped, through the job's Windows process id.
+ */
+export function withJobsStopped(
+  command: string,
+  shell: Pick<Shell, 'name'>,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (shell.name === 'cmd') return command;
+  const stop =
+    platform === 'win32'
+      ? 'for p in $(jobs -p); do taskkill //F //T //PID $(cat /proc/$p/winpid) >/dev/null 2>&1; done'
+      : 'kill $(jobs -p) 2>/dev/null';
+  return `trap '${stop}' EXIT\n${command}`;
+}
+
+/** How long output may go on after a command exits, from what it started, before it's cut off. */
+const EXIT_GRACE_MS = 1500;
+
+/**
+ * Stops a process and everything it started. On Windows a process tree can come apart, as Git's
+ * bash launcher does when it's killed, so the processes are also found from the process table,
+ * where an orphan still names the parent it was started by. That runs as a process of its own, so
+ * it finishes even when the app is quitting.
+ */
 export function killTree(pid: number): void {
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' }).on(
-      'error',
-      () => {},
-    );
+    const quiet = { windowsHide: true, stdio: 'ignore' as const, detached: true };
+    spawn('taskkill', ['/f', '/t', '/pid', String(pid)], quiet)
+      .on('error', () => {})
+      .unref();
+    spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', treeKillScript(pid)],
+      quiet,
+    )
+      .on('error', () => {})
+      .unref();
     return;
   }
   const signal = (name: NodeJS.Signals) => {
@@ -172,4 +226,14 @@ export function killTree(pid: number): void {
   };
   signal('SIGTERM');
   setTimeout(() => signal('SIGKILL'), 3000).unref();
+}
+
+/** PowerShell that stops a Windows process and its descendants, found from the process table. */
+export function treeKillScript(root: number): string {
+  return [
+    `$found = [System.Collections.Generic.List[int]]::new(); $found.Add(${root})`,
+    '$all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId',
+    'for ($i = 0; $i -lt $found.Count; $i++) { foreach ($p in $all) { if ($p.ParentProcessId -eq $found[$i] -and -not $found.Contains([int]$p.ProcessId)) { $found.Add([int]$p.ProcessId) } } }',
+    'foreach ($id in $found) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }',
+  ].join('; ');
 }

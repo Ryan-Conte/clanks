@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { commandShell, runCommand } from './commands';
+import { commandShell, runCommand, withJobsStopped } from './commands';
 import { git } from './git';
 import { changedRanges, computeHunks, excerptOf, revertHunk } from './hunks';
 import { PathError, resolveInside } from './paths';
@@ -229,7 +229,12 @@ describe('commands', () => {
       shell,
       onOutput: (text) => (output += text),
     });
-    expect(await command.done).toEqual({ exitCode: 3, reason: 'exited', error: null });
+    expect(await command.done).toEqual({
+      exitCode: 3,
+      reason: 'exited',
+      error: null,
+      lingered: false,
+    });
     expect(output.trim()).toBe('hello');
   });
 
@@ -246,6 +251,35 @@ describe('commands', () => {
     const exit = await command.done;
     expect(exit.reason).toBe('timeout');
   });
+
+  it('finishes a command that leaves something running in the background, and stops that', async () => {
+    const shell = await commandShell();
+    if (shell.name === 'cmd') return;
+    let output = '';
+    const started = Date.now();
+    const cwd = join(tempDir(), 'run');
+    mkdirSync(cwd);
+    const command = runCommand({
+      command: withJobsStopped('node -e "setInterval(() => {}, 1000)" & echo started', shell),
+      cwd,
+      shell,
+      onOutput: (text) => (output += text),
+    });
+    const exit = await command.done;
+    expect(exit).toMatchObject({ exitCode: 0, reason: 'exited' });
+    expect(output.trim()).toBe('started');
+    expect(Date.now() - started).toBeLessThan(15_000);
+    // What it left is stopped: on Windows its folder can't go while it runs there.
+    for (let i = 0; ; i++) {
+      try {
+        rmSync(cwd, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        if (i > 100) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+  }, 30_000);
 });
 
 describe('text', () => {

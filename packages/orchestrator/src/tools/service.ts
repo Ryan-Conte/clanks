@@ -89,8 +89,9 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       browser: chat.browser ?? false,
       vision: chat.vision ?? false,
       project: chat.project ?? false,
-      ticket: chat.role === 'maker' || chat.role === 'checker',
-      maker: chat.role === 'maker',
+      ticket: chat.role === 'maker' || chat.role === 'checker' || chat.role === 'helper',
+      // A clank answering a bounce from outside the route hands its answer back as a maker would.
+      maker: chat.role === 'maker' || chat.role === 'helper',
       checker: chat.role === 'checker',
     };
     for (const spec of BUILTIN_TOOLS) {

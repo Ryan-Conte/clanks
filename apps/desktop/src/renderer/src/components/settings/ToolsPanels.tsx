@@ -133,6 +133,54 @@ function SearchKey({ refName }: { refName: string }) {
 }
 
 /** Every "always allow" given from an approval prompt, by project. */
+/** When the crew stops for approval: only before risky calls, or before every call it asks about. */
+export function ApprovalsPanel() {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const settings = useQuery(trpc.settings.get.queryOptions());
+  const update = useMutation(
+    trpc.settings.update.mutationOptions({
+      onSuccess: (next) => queryClient.setQueryData(trpc.settings.get.queryKey(), next),
+    }),
+  );
+  if (!settings.data) return null;
+  const options: [Settings['approvals'], string, string][] = [
+    [
+      'risky',
+      'Only risky calls',
+      "Everyday work in the clank's own worktree runs without asking: builds, tests, installing the project's packages, reading pages, clicking on its dev server. You approve pushing, deleting or writing outside the worktree, global installs, deploys, sending data to other sites, and anything run as an administrator.",
+    ],
+    [
+      'all',
+      'Every call',
+      "Every command, fetch and browser step a clank's policy asks about waits for you.",
+    ],
+  ];
+  return (
+    <Panel
+      title="Approvals"
+      description="What the crew stops to ask you about. A tool a clank's profile allows never asks, and one it denies never runs."
+    >
+      <div className="flex flex-col gap-2" role="radiogroup" aria-label="Ask before">
+        {options.map(([value, title, description]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={settings.data.approvals === value}
+            onClick={() => update.mutate({ approvals: value })}
+            className={`flex flex-col gap-1 rounded-2xl border px-4 py-3 text-left transition-colors ${settings.data.approvals === value ? 'border-accent/50 bg-accent/[0.07]' : 'border-line hover:bg-white/[0.03]'}`}
+          >
+            <span className="text-sm font-medium">{title}</span>
+            <span className="text-[13px] text-dim">{description}</span>
+          </button>
+        ))}
+      </div>
+      {update.error && <ErrorText>{update.error.message}</ErrorText>}
+    </Panel>
+  );
+}
+
 export function RulesPanel() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();

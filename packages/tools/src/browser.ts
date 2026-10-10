@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { redactUrl } from './redact';
+import { LOW_RISK, pageActionRisk, urlRisk } from './risk';
 import {
   type BrowserAccess,
   type BrowserResult,
@@ -64,6 +65,7 @@ export const browserOpen = defineTool({
   mutates: false,
   label: (args) => `Opening \`${short(redactUrl(args.url))}\``,
   approval: (args) => urlApproval(args.url),
+  risk: (args) => urlRisk(args.url),
   run: async (args, ctx) => result(await browserOf(ctx).open(args.url)),
 });
 
@@ -76,6 +78,7 @@ export const browserNavigate = defineTool({
   mutates: false,
   label: (args) => `Going to \`${short(redactUrl(args.url))}\``,
   approval: (args) => urlApproval(args.url),
+  risk: (args) => urlRisk(args.url),
   run: async (args, ctx) => result(await browserOf(ctx).navigate(args.url)),
 });
 
@@ -95,6 +98,7 @@ export const browserRead = defineTool({
   mutates: false,
   label: (args) => (args.from_line && args.from_line > 1 ? 'Reading on' : 'Reading the page'),
   approval: () => ({ kind: 'tool', subject: 'Read the page', pattern: '*' }),
+  risk: () => LOW_RISK,
   run: async (args, ctx) => result(await browserOf(ctx).read(args.from_line ?? 1)),
 });
 
@@ -108,6 +112,7 @@ export const browserClick = lenientRef(
     mutates: false,
     label: (args) => `Clicking [${args.ref}]`,
     approval: (args) => ({ kind: 'tool', subject: `Click [${args.ref}]`, pattern: '*' }),
+    risk: (_args, ctx) => pageActionRisk(ctx, 'Clicks'),
     run: async (args, ctx) => result(await browserOf(ctx).click(args.ref)),
   }),
 );
@@ -130,6 +135,7 @@ export const browserType = lenientRef(
       subject: `Type "${args.text}" into [${args.ref}]${args.submit ? ', then press Enter' : ''}`,
       pattern: '*',
     }),
+    risk: (_args, ctx) => pageActionRisk(ctx, 'Types'),
     run: async (args, ctx) =>
       result(await browserOf(ctx).type(args.ref, args.text, args.submit ?? false)),
   }),
@@ -144,6 +150,7 @@ export const browserPress = defineTool({
   mutates: false,
   label: (args) => `Pressing ${short(args.keys, 30)}`,
   approval: (args) => ({ kind: 'tool', subject: `Press ${args.keys}`, pattern: '*' }),
+  risk: (_args, ctx) => pageActionRisk(ctx, 'Presses keys'),
   run: async (args, ctx) => result(await browserOf(ctx).press(args.keys)),
 });
 
@@ -161,6 +168,7 @@ export const browserScroll = lenientRef(
     label: (args) =>
       args.ref ? `Scrolling to [${args.ref}]` : `Scrolling ${args.direction ?? 'down'}`,
     approval: () => ({ kind: 'tool', subject: 'Scroll the page', pattern: '*' }),
+    risk: () => LOW_RISK,
     run: async (args, ctx) =>
       result(await browserOf(ctx).scroll(args.direction ?? 'down', args.ref ?? null)),
   }),
@@ -175,6 +183,7 @@ export const browserScreenshot = defineTool({
   mutates: false,
   label: () => 'Taking a screenshot',
   approval: () => ({ kind: 'tool', subject: 'Take a screenshot of the page', pattern: '*' }),
+  risk: () => LOW_RISK,
   async run(_args, ctx) {
     const step = await browserOf(ctx).screenshot();
     return { ...result(step), showModel: step.image !== undefined };
@@ -190,6 +199,7 @@ export const browserConsole = defineTool({
   mutates: false,
   label: () => 'Reading the console',
   approval: () => ({ kind: 'tool', subject: "Read the page's console", pattern: '*' }),
+  risk: () => LOW_RISK,
   run: async (_args, ctx) => result(await browserOf(ctx).console()),
 });
 
@@ -201,6 +211,7 @@ export const browserBack = defineTool({
   mutates: false,
   label: () => 'Going back',
   approval: () => ({ kind: 'tool', subject: 'Go back a page', pattern: '*' }),
+  risk: () => LOW_RISK,
   run: async (_args, ctx) => result(await browserOf(ctx).back()),
 });
 
@@ -213,6 +224,7 @@ export const browserClose = defineTool({
   mutates: false,
   label: () => 'Closing the tab',
   approval: () => ({ kind: 'tool', subject: 'Close the tab', pattern: '*' }),
+  risk: () => LOW_RISK,
   run: async (_args, ctx) => result(await browserOf(ctx).close()),
 });
 

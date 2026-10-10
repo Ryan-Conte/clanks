@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 
 /** A project's views. */
-export type ProjectTab = 'board' | 'spec' | 'settings';
+export type ProjectTab = 'board' | 'spec' | 'context' | 'settings';
 
 /** Where the window is. Chats aren't saved until their first message, so a new one is a draft. */
 export type Route =

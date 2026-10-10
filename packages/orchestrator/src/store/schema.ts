@@ -2,6 +2,7 @@ import type {
   ActivityEvent,
   Avatar,
   BoardEventKind,
+  Budget,
   ChangedFile,
   ClankBrowser,
   ChatUsage,
@@ -12,14 +13,22 @@ import type {
   MessageStatus,
   ModelCapabilities,
   ModelFile,
+  MemoryKind,
   ModelTag,
+  NoteKind,
+  NoteStatus,
   OutputType,
   ProjectRepo,
   ReviewNoteKind,
   RouteStep,
   RunRole,
+  Sandbox,
+  SkippedCheck,
   SpecStatus,
+  TicketDelivery,
+  TicketDetour,
   TicketOrigin,
+  TicketOutcome,
   TicketProgress,
   TicketReview,
   TicketState,
@@ -102,11 +111,25 @@ export const project = sqliteTable('project', {
   key: text('key').notNull(),
   folder: text('folder').notNull(),
   repo: text('repo', { mode: 'json' }).$type<ProjectRepo>(),
+  /** The branch tickets start from and merge into. Null uses the folder's checked-out branch. */
+  baseBranch: text('base_branch'),
   /** The model for the whole crew. Both null leaves each clank on its own. */
   provider: text('provider'),
   model: text('model'),
   /** The number the next ticket gets. */
   nextNumber: integer('next_number').notNull().default(1),
+  maxRuns: integer('max_runs').notNull().default(3),
+  bounceLimit: integer('bounce_limit').notNull().default(3),
+  /** Checks made optional, as `clank:type`. */
+  optionalChecks: text('optional_checks', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  budget: text('budget', { mode: 'json' }).$type<Budget>(),
+  clankBudgets: text('clank_budgets', { mode: 'json' })
+    .$type<Record<string, Budget>>()
+    .notNull()
+    .default({}),
+  sandbox: text('sandbox', { mode: 'json' }).$type<Sandbox>(),
+  /** The crew finishes what's running and starts nothing new. */
+  held: integer('held', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
@@ -174,11 +197,64 @@ export const ticket = sqliteTable(
     reviews: text('reviews', { mode: 'json' }).$type<TicketReview[]>().notNull(),
     /** The chat it came from. Not a foreign key: deleting the chat keeps the ticket. */
     conversationId: text('conversation_id'),
+    skipped: text('skipped', { mode: 'json' }).$type<SkippedCheck[]>().notNull().default([]),
+    detour: text('detour', { mode: 'json' }).$type<TicketDetour>(),
+    /** What the next run is told when the scheduler starts it. */
+    queued: text('queued'),
+    delivery: text('delivery', { mode: 'json' }).$type<TicketDelivery>(),
+    outcome: text('outcome').$type<TicketOutcome>(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
     doneAt: integer('done_at', { mode: 'timestamp_ms' }),
   },
   (t) => [uniqueIndex('ticket_project_number').on(t.projectId, t.number)],
+);
+
+/**
+ * A project note: something the whole crew on a project should know. Searched through
+ * `context_note_fts`, a full-text index the migration keeps in step with triggers.
+ */
+export const contextNote = sqliteTable(
+  'context_note',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<NoteKind>().notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    why: text('why').notNull(),
+    author: text('author').notNull(),
+    /** Not a foreign key: a deleted ticket's notes stay, as the crew learned them. */
+    ticketId: text('ticket_id'),
+    status: text('status').$type<NoteStatus>().notNull(),
+    supersedes: text('supersedes'),
+    pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('context_note_project').on(t.projectId, t.status)],
+);
+
+/** One entry in a clank's memory of a project. Searched through `memory_fts`. */
+export const memory = sqliteTable(
+  'memory',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    clankId: text('clank_id').notNull(),
+    kind: text('kind').$type<MemoryKind>().notNull(),
+    body: text('body').notNull(),
+    ticketId: text('ticket_id'),
+    conversationId: text('conversation_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('memory_project_clank').on(t.projectId, t.clankId)],
 );
 
 /** A ticket waiting on another. */

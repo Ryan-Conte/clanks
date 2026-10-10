@@ -103,6 +103,11 @@ function ToolRow({ part }: { part: ToolPart }) {
       {open && (
         <div className="flex flex-col gap-2.5 border-t border-line px-3 py-2.5">
           <Section title="Arguments">{pretty(part.arguments)}</Section>
+          {part.decidedBy === 'risk' && (
+            <p className="text-[12px] text-dim">
+              Ran without asking: an everyday call inside the clank's own worktree.
+            </p>
+          )}
           {part.reason && <p className="text-dim">Why not: {part.reason}</p>}
           {part.result !== null && <Section title="Result">{part.result}</Section>}
           {part.image && part.name === 'browser_screenshot' && <Picture path={part.image} />}
@@ -169,6 +174,11 @@ function ApprovalCard({ part, conversationId, clank }: Parameters<typeof ToolCar
       <pre className="max-h-48 overflow-auto rounded-xl border border-line bg-black/40 px-3.5 py-2.5 font-mono text-[12.5px] whitespace-pre-wrap text-white">
         {approval.subject}
       </pre>
+      {approval.reason && (
+        <p className="text-[13px] text-amber-100/90">
+          <span className="text-dim">Why it asks:</span> {approval.reason}.
+        </p>
+      )}
       {denying ? (
         <form
           className="flex gap-2"

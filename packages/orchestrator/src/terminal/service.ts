@@ -3,14 +3,18 @@ import type { CommandResult, ShellAccess } from '@clanks/tools';
 import {
   type CommandHandle,
   type PtyHandle,
+  type Sandbox,
   commandEnv,
   commandShell,
   headTail,
+  markedExecArgs,
   openPty,
   plainOutput,
   runCommand,
   scrubbedEnv,
+  stopMarked,
   userShell,
+  withJobsStopped,
 } from '@clanks/workspace';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -69,6 +73,10 @@ export class TerminalService extends EventEmitter<{
     cwd: string;
     toolCallId: string;
     maxChars: number;
+    /** A Docker container to run commands in, rather than on this computer. */
+    sandbox?: Sandbox | null;
+    /** Variables commands get besides the usual, such as the port a run's servers use. */
+    env?: Record<string, string>;
   }): Promise<ShellAccess> {
     return commandShell().then((shell) => {
       const find = (handle: string) =>
@@ -98,21 +106,51 @@ export class TerminalService extends EventEmitter<{
           background,
           toolCallId: options.toolCallId,
         });
+        const sandbox = options.sandbox ?? null;
+        // In a container, a marker in the command line lets it be stopped there too.
+        const marker = sandbox ? `clanks-cmd-${randomUUID().slice(0, 12)}` : null;
         const handle = runCommand({
-          command,
+          command: background
+            ? command
+            : withJobsStopped(
+                command,
+                sandbox ? { name: 'bash' } : shell,
+                sandbox ? 'linux' : process.platform,
+              ),
           cwd: options.cwd,
-          shell,
-          env: commandEnv(),
+          shell: sandbox
+            ? {
+                name: 'bash',
+                file: 'docker',
+                verbatim: false,
+                args: (wrapped) => markedExecArgs(sandbox, wrapped, marker!),
+              }
+            : shell,
+          env: commandEnv(options.env),
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           onOutput: (text) => this.write(session, text),
         });
-        session.command = handle;
+        session.command = sandbox
+          ? {
+              ...handle,
+              stop: () => {
+                handle.stop();
+                void stopMarked(sandbox, marker!);
+              },
+            }
+          : handle;
         session.done = handle.done.then((exit) => {
           session.info.exitCode = exit.exitCode;
           session.info.state =
             exit.reason === 'exited' ? 'exited' : exit.reason === 'error' ? 'failed' : 'stopped';
           session.reason = exit.reason;
           if (exit.error) this.write(session, `\n${exit.error}\n`);
+          if (exit.lingered && exit.reason === 'exited') {
+            this.write(
+              session,
+              '\n[It left something running in the background, which was stopped. Start servers and watchers with shell_start, so they keep running.]\n',
+            );
+          }
           this.finish(session);
         });
         return session;
@@ -220,6 +258,19 @@ export class TerminalService extends EventEmitter<{
       }
     }
     this.emit('sessions', conversationId);
+  }
+
+  /** Stops the commands a clank left running in a chat, such as a dev server, when its run ends. */
+  stopBackground(conversationId: string): void {
+    for (const session of this.sessions.values()) {
+      if (
+        session.info.conversationId === conversationId &&
+        session.info.kind === 'clank' &&
+        session.info.state === 'running'
+      ) {
+        session.command?.stop();
+      }
+    }
   }
 
   /** Stops everything a chat started, when it's deleted or its folder changes. */

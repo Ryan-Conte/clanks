@@ -5,7 +5,12 @@ import { GitHubAccount, GitHubSignIn } from '../components/project/GitHub';
 import { LocalApiPanel } from '../components/settings/LocalApiPanel';
 import { ProfilePanel } from '../components/settings/ProfilePanel';
 import { CloudPanel, ServersPanel } from '../components/settings/ProvidersPanels';
-import { McpPanel, RulesPanel, WebSearchPanel } from '../components/settings/ToolsPanels';
+import {
+  ApprovalsPanel,
+  McpPanel,
+  RulesPanel,
+  WebSearchPanel,
+} from '../components/settings/ToolsPanels';
 import { Button, Dot, ErrorText, Panel, Row, Toggle, inputClass } from '../components/ui';
 import { formatTokens } from '../lib/format';
 import { useGitHub } from '../lib/github';
@@ -27,6 +32,7 @@ export function SettingsPage() {
       <ServersPanel />
       <McpPanel />
       <WebSearchPanel />
+      <ApprovalsPanel />
       <RulesPanel />
       <LocalApiPanel />
       <GitHubPanel />

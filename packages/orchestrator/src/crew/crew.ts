@@ -241,6 +241,7 @@ function summarize(clank: Clank): ClankSummary {
     avatar: clank.avatar,
     kind: frontmatter.workflow.kind,
     stage: frontmatter.workflow.stage,
+    appliesTo: frontmatter.workflow.applies_to ?? [],
     outputs: frontmatter.outputs,
     model: clank.overrides.model,
     doc: clank.doc,

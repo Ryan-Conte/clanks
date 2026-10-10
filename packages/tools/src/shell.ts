@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { redactCommand } from './redact';
+import { commandRisk } from './risk';
 import {
   type CommandResult,
   type ShellAccess,
@@ -50,6 +51,7 @@ export const shellExec = defineTool({
   mutates: true,
   label: (args) => `Running \`${short(redactCommand(args.command))}\``,
   approval: (args) => ({ kind: 'command', subject: args.command, pattern: args.command }),
+  risk: (args, ctx) => commandRisk(args.command, ctx),
   async run(args, ctx) {
     const timeoutS = args.timeout_seconds ?? DEFAULT_TIMEOUT_S;
     const result = await shellOf(ctx).exec(args.command, {
@@ -73,6 +75,7 @@ export const shellStart = defineTool({
   mutates: true,
   label: (args) => `Starting \`${short(redactCommand(args.command))}\``,
   approval: (args) => ({ kind: 'command', subject: args.command, pattern: args.command }),
+  risk: (args, ctx) => commandRisk(args.command, ctx),
   async run(args, ctx) {
     const result = await shellOf(ctx).start(args.command, { signal: ctx.signal });
     const intro = result.running

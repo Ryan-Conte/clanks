@@ -5,6 +5,7 @@ import type { ActivityService } from './activity/service';
 import type { BoardService } from './board/service';
 import type { BrowserService } from './browser/service';
 import type { ChatService } from './chat/service';
+import type { ContextService } from './context/service';
 import type { CrewService } from './crew/crew';
 import type { GitHubService } from './github/service';
 import type { LocalApi } from './local-api/server';
@@ -12,6 +13,7 @@ import type { McpService } from './mcp/service';
 import type { AppDataLayout } from './paths';
 import type { ProjectService } from './projects/service';
 import type { ProviderService } from './providers';
+import type { SandboxService } from './sandbox/service';
 import type { SecretStore } from './secrets';
 import type { SettingsService } from './settings';
 import type { Store } from './store/store';
@@ -65,6 +67,10 @@ export interface OrchestratorContext {
   projects: ProjectService;
   /** Each project's tickets, spec and activity feed, and the runs that work them. */
   board: BoardService;
+  /** Each project's notes, and each clank's memory of it. */
+  context: ContextService;
+  /** Docker containers for projects that run commands in them. */
+  sandbox: SandboxService;
   /** The user's GitHub account, for cloning and making repositories. */
   github: GitHubService;
   /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */

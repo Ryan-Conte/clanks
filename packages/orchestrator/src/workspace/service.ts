@@ -15,14 +15,19 @@ import {
   ShadowRepo,
   addWorktree,
   changedRanges,
+  commitAll,
   computeHunks,
   excerptOf,
   git,
   gitVersion,
   initRepo,
   isBinary,
+  mergeBase,
+  mergeIntoWorktree,
   removeWorktree,
   repoInfo,
+  resetWorktree,
+  resolveCommit,
   resolveInside,
   revertHunk,
   sameHunk,
@@ -59,6 +64,19 @@ const MAX_SHOWN_BYTES = 2 * 1024 * 1024;
 /** A live file's hash when it doesn't exist. */
 const ABSENT = 'absent';
 
+/**
+ * Where a run's worktree starts. A ticket's maker starts from the project's base branch; a checker
+ * from the maker's branch, which its copy then follows.
+ */
+export interface WorkBase {
+  /** A branch, remote branch or commit to start from. */
+  from: string;
+  /** The commit the run's changes are measured against, when it isn't where it started. */
+  base?: string;
+  /** Keep the worktree at `from`'s tip: a checker checks exactly what the maker handed in. */
+  follow?: boolean;
+}
+
 export interface WorkspaceServiceOptions {
   db: Db;
   /** `<app data>/worktrees`. */
@@ -74,6 +92,8 @@ export interface WorkspaceServiceOptions {
   };
   /** The name a run's worktree and branch get, such as a ticket's key. Chats get `chat-<id>`. */
   workName?: (conversationId: string) => string | null;
+  /** Where a run's worktree starts. Without one, from the folder's checked-out commit. */
+  workBase?: (conversationId: string) => Promise<WorkBase | null>;
   now?: () => Date;
 }
 
@@ -137,6 +157,7 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
     const existing = this.row(conversationId);
     if (existing && existing.folder === folder) {
       await this.repair(existing);
+      await this.follow(existing);
       return toRun(existing);
     }
     if (existing) await this.remove(conversationId);
@@ -149,7 +170,19 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
     const worktree = join(this.options.worktreesDir, repoKey(info.root), name);
     const branch = `clanks/${name}`;
     try {
-      await addWorktree({ repoRoot: info.root, path: worktree, branch, base: info.head! });
+      const start = await this.options.workBase?.(conversationId);
+      const from = start ? await resolveCommit(info.root, start.from) : info.head!;
+      if (!from) throw new WorkspaceError(`There's nothing called ${start!.from} to start from`);
+      const existed = await resolveCommit(info.root, `refs/heads/${branch}`);
+      await addWorktree({ repoRoot: info.root, path: worktree, branch, base: from });
+      // A checker's copy is the maker's work as it was handed in, whatever its branch had before.
+      if (start?.follow && existed && existed !== from) await resetWorktree(worktree, from);
+      const head = await git(['rev-parse', 'HEAD'], { cwd: worktree });
+      // A branch an earlier run left is picked up where it was; its changes count from its base.
+      const baseCommit =
+        (start?.base ? await resolveCommit(info.root, start.base) : null) ??
+        (existed && !start?.follow ? await mergeBase(info.root, head, from) : null) ??
+        from;
       const row: RunRow = {
         id,
         conversationId,
@@ -158,41 +191,122 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
         repoRoot: info.root,
         worktree,
         branch,
-        baseCommit: info.head!,
+        baseCommit,
         checkpointsDir: join(this.options.checkpointsDir, `${id}.git`),
         createdAt: this.now(),
       };
       const shadow = new ShadowRepo(row.checkpointsDir, worktree);
       const exclude = readText(join(info.commonDir, 'info', 'exclude'));
-      const base = await shadow.init(info.head!, join(info.commonDir, 'objects'), exclude);
+      const base = await shadow.init(head, join(info.commonDir, 'objects'), exclude);
+      // A run that starts on work already on its branch, such as a checker on the maker's, shows
+      // that work too: its changes count from where the branch came from.
+      const origin = baseCommit !== head ? await shadow.commitOf(baseCommit, 'Branch base') : null;
+      const first = {
+        runId: id,
+        author: 'base' as const,
+        messageId: null,
+        toolCallId: null,
+        // Rewinding to the start keeps the chat up to the message that began the work.
+        afterMessageId: this.options.conversations.lastMessageId(conversationId),
+        rewound: false,
+        createdAt: row.createdAt,
+      };
+      const startFiles = origin ? await shadow.changes(origin, base) : [];
       this.options.db.transaction((tx) => {
         tx.insert(runTable).values(row).run();
+        if (origin) {
+          tx.insert(checkpointTable)
+            .values({
+              ...first,
+              id: randomUUID(),
+              seq: 0,
+              commit: origin,
+              label: `Branched from ${baseCommit.slice(0, 7)}`,
+              files: [],
+              head: baseCommit,
+            })
+            .run();
+        }
         tx.insert(checkpointTable)
           .values({
+            ...first,
             id: randomUUID(),
-            runId: id,
-            seq: 0,
+            seq: origin ? 1 : 0,
             commit: base,
-            author: 'base',
-            label: `Started from ${info.head!.slice(0, 7)}`,
-            messageId: null,
-            toolCallId: null,
-            // Rewinding to the start keeps the chat up to the message that began the work.
-            afterMessageId: this.options.conversations.lastMessageId(conversationId),
-            files: [],
-            head: info.head,
-            rewound: false,
-            createdAt: row.createdAt,
+            label: origin
+              ? `The branch as it was, at ${head.slice(0, 7)}`
+              : `Started from ${head.slice(0, 7)}`,
+            files: startFiles,
+            head,
           })
           .run();
       });
       this.emit('change', conversationId);
       return toRun(row);
     } catch (error) {
+      if (error instanceof WorkspaceError) throw error;
       throw new WorkspaceError(
         `Couldn't make a workspace for ${folder}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  /**
+   * Brings a checker's copy up to the maker's latest hand-in, when it's moved on since. The checker
+   * never commits, so nothing of its own is lost; what it changed shows as a checkpoint.
+   */
+  private async follow(row: RunRow): Promise<void> {
+    const start = await this.options.workBase?.(row.conversationId);
+    if (!start?.follow) return;
+    const tip = await resolveCommit(row.repoRoot, start.from);
+    if (!tip) return;
+    const moved = await this.lock(row.id, async () => {
+      const head = await git(['rev-parse', 'HEAD'], { cwd: row.worktree }).catch(() => null);
+      if (head === tip) return false;
+      await resetWorktree(row.worktree, tip);
+      await this.snapshot(row, { author: 'user', label: `Caught up with ${start.from}` });
+      return true;
+    });
+    if (moved) this.emit('change', row.conversationId);
+  }
+
+  /**
+   * Commits whatever a run left uncommitted to its branch, as its clank, and returns the commit at
+   * the branch's tip. For a maker handing in: what's handed in is what's on the branch.
+   */
+  async commitLeftovers(
+    conversationId: string,
+    message: string,
+    author: { name: string; email: string },
+  ): Promise<{ head: string; committed: boolean; baseCommit: string; branch: string } | null> {
+    const row = this.row(conversationId);
+    if (!row) return null;
+    const result = await this.lock(row.id, async () => {
+      const done = await commitAll(row.worktree, message, author);
+      if (done.committed) await this.snapshot(row, { author: 'clank', label: message });
+      return done;
+    });
+    if (result.committed) this.emit('change', conversationId);
+    return { ...result, baseCommit: row.baseCommit, branch: row.branch };
+  }
+
+  /**
+   * Merges a commit, such as the base branch's tip, into a run's branch. Conflicts are left in the
+   * files for the run's clank to resolve and commit; their paths come back.
+   */
+  async mergeInto(conversationId: string, ref: string): Promise<string[]> {
+    const row = this.require(conversationId);
+    const conflicts = await this.lock(row.id, async () => {
+      await commitAll(row.worktree, 'Work in progress', null);
+      const files = await mergeIntoWorktree(row.worktree, ref);
+      await this.snapshot(row, {
+        author: 'user',
+        label: files.length > 0 ? `Merged ${ref}, with conflicts` : `Merged ${ref}`,
+      });
+      return files;
+    });
+    this.emit('change', conversationId);
+    return conflicts;
   }
 
   /** A worktree deleted from outside the app is made again from its branch. */

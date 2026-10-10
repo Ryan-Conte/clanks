@@ -4,7 +4,9 @@ import { ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
 import { BoardError } from './board/service';
 import { ChatError } from './chat/service';
+import { ContextError } from './context/service';
 import { CrewDocError } from './crew/docs';
+import { DeliveryError } from './delivery/service';
 import { GitHubError } from './github/service';
 import { McpError } from './mcp/service';
 import { ProjectError } from './projects/service';
@@ -25,6 +27,8 @@ export function isUserError(error: unknown): error is Error {
     error instanceof BrowserError ||
     error instanceof ProjectError ||
     error instanceof BoardError ||
+    error instanceof ContextError ||
+    error instanceof DeliveryError ||
     error instanceof GitHubError
   );
 }

@@ -1,5 +1,5 @@
 import type { BoardEvent, Bounce, SpecVersion, Ticket } from '@clanks/core';
-import { and, asc, desc, eq, inArray, max } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, max, sql } from 'drizzle-orm';
 import {
   boardEvent,
   bounce as bounceTable,
@@ -15,7 +15,21 @@ type TicketRow = typeof ticketTable.$inferSelect;
 export type TicketChanges = Partial<Omit<TicketRow, 'id' | 'projectId' | 'number' | 'key'>>;
 
 function toTicket(row: TicketRow, dependsOn: string[]): Ticket {
-  return { ...row, reviews: row.reviews ?? [], dependsOn };
+  return { ...row, reviews: row.reviews ?? [], skipped: row.skipped ?? [], dependsOn };
+}
+
+/** Model use in a project, added up per ticket, clank and provider. */
+export interface UsageRow {
+  projectId: string;
+  /** Null for chats. */
+  ticketId: string | null;
+  clankId: string;
+  provider: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  ms: number;
+  /** Replies counted. */
+  calls: number;
 }
 
 /** Tickets, their dependencies and bounces, specs and the activity feed, in SQLite. */
@@ -119,6 +133,23 @@ export class BoardStore {
 
   addBounce(bounce: Bounce): void {
     this.db.insert(bounceTable).values(bounce).run();
+  }
+
+  /** Replies' model use, added up per ticket, clank and provider: in one project, or every one. */
+  usage(projectId: string | null, since?: Date): UsageRow[] {
+    const where = [sql`m.usage is not null`, sql`c.project_id is not null`];
+    if (projectId) where.push(sql`c.project_id = ${projectId}`);
+    if (since) where.push(sql`m.created_at >= ${since.getTime()}`);
+    return this.db.all<UsageRow>(sql`
+      select c.project_id as projectId, c.ticket_id as ticketId, c.clank_id as clankId,
+        m.provider as provider,
+        coalesce(sum(json_extract(m.usage, '$.promptTokens')), 0) as promptTokens,
+        coalesce(sum(json_extract(m.usage, '$.completionTokens')), 0) as completionTokens,
+        coalesce(sum(json_extract(m.usage, '$.durationMs')), 0) as ms,
+        count(*) as calls
+      from message m join conversation c on c.id = m.conversation_id
+      where ${sql.join(where, sql` and `)}
+      group by c.project_id, c.ticket_id, c.clank_id, m.provider`);
   }
 
   /** The newest events, oldest first. */

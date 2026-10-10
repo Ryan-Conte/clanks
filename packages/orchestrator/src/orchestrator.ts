@@ -1,17 +1,20 @@
 import type { BrowserHost } from '@clanks/browser';
 import { ModelManager, type ModelManagerOptions, parseModelRef } from '@clanks/models';
-import { ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
+import { BUILTIN_PROVIDER, ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
 import { McpManager } from '@clanks/tools';
 import { ActivityService } from './activity/service';
 import { BoardService } from './board/service';
 import { BrowserService } from './browser/service';
 import { ChatService } from './chat/service';
 import { ChatStore } from './chat/store';
+import { ContextService } from './context/service';
 import { CrewService } from './crew/crew';
+import { DeliveryService } from './delivery/service';
 import { GitHubService } from './github/service';
 import { LocalApi } from './local-api/server';
 import { McpService } from './mcp/service';
 import { ProjectService } from './projects/service';
+import { SandboxService } from './sandbox/service';
 import { TerminalService } from './terminal/service';
 import { ToolService } from './tools/service';
 import { WorkspaceService } from './workspace/service';
@@ -23,6 +26,7 @@ import { SettingsService } from './settings';
 import { sqliteModelRepository } from './store/models';
 import { openStore } from './store/store';
 import type { AppInfo, Host, OrchestratorContext } from './trpc';
+import { join } from 'node:path';
 
 /** The keychain entry for a Hugging Face token, used for gated and private repos. */
 export const HF_TOKEN = 'hf:token';
@@ -125,16 +129,11 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     ...(options.githubSleep ? { sleep: options.githubSleep } : {}),
   });
   const projects = new ProjectService({ db: store.db, crew, github });
-  const board = new BoardService({
-    db: store.db,
-    projects,
-    crew,
-    userName: () => settings.get().profile.name || 'the user',
-  });
+  const contextNotes = new ContextService({ db: store.db });
 
   const chatStore = new ChatStore(store.db);
   const activity = new ActivityService(store.db);
-  const workspace = new WorkspaceService({
+  const workspace: WorkspaceService = new WorkspaceService({
     db: store.db,
     worktreesDir: paths.worktrees,
     checkpointsDir: paths.checkpoints,
@@ -145,6 +144,33 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     workName: (id) => {
       const conversation = chatStore.conversation(id);
       return conversation ? board.workName(conversation) : null;
+    },
+    workBase: (id) => {
+      const conversation = chatStore.conversation(id);
+      return conversation ? board.workBase(conversation) : Promise.resolve(null);
+    },
+  });
+  const delivery: DeliveryService = new DeliveryService({
+    github,
+    workspace,
+    scratchDir: join(paths.worktrees, '_merges'),
+  });
+  const board: BoardService = new BoardService({
+    db: store.db,
+    projects,
+    crew,
+    context: contextNotes,
+    delivery,
+    userName: () => settings.get().profile.name || 'the user',
+    prices: () => settings.get().cloudPrices,
+    capacity: {
+      slots: (choice) =>
+        choice.provider === BUILTIN_PROVIDER ? models.slotsFor(choice.model) : null,
+      wouldWait: (choice) => choice.provider === BUILTIN_PROVIDER && models.wouldWait(choice.model),
+      state: (choice) =>
+        choice.provider === BUILTIN_PROVIDER
+          ? (models.runtime().loaded.find((l) => l.modelId === choice.model)?.state ?? null)
+          : null,
     },
   });
   const terminal = new TerminalService();
@@ -165,6 +191,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     userName: () => settings.get().profile.name || 'The user',
   });
 
+  const sandbox = new SandboxService();
   const chat = new ChatService({
     store: chatStore,
     crew,
@@ -184,6 +211,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     activity,
     tools,
     browser,
+    sandbox,
     board,
     artifactsDir: paths.artifacts,
   });
@@ -191,11 +219,20 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     createRun: (input) => chat.createRun(input),
     post: (id, text) => chat.post(id, text),
     delete: (id) => chat.delete(id),
+    stop: (id) => chat.halt(id),
+    release: async (id) => {
+      terminal.closeConversation(id);
+      await sandbox.remove(id);
+      await workspace.remove(id);
+    },
     inFlight: (id) => chat.inFlight(id),
     replying: (id) => chat.replying(id),
+    active: () => chat.active(),
     conversation: (id) => chatStore.conversation(id),
     inProject: (id) => chatStore.inProject(id),
     forTicket: (id) => chatStore.forTicket(id),
+    modelFor: (clankId, projectId) => chat.modelFor(clankId, projectId),
+    recap: (id) => chat.recap(id),
   });
   // A run's tool calls show on its ticket's card as they happen.
   chat.on('live', (id, event) => {
@@ -203,6 +240,22 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
   });
   chat.recover();
   board.recover();
+  // Models loading, unloading and freeing up may let waiting runs start; so may a crew model.
+  let pumpTimer: NodeJS.Timeout | null = null;
+  const pumpSoon = () => {
+    if (pumpTimer) return;
+    pumpTimer = setTimeout(() => {
+      pumpTimer = null;
+      board.pumpAll();
+    }, 1000);
+    pumpTimer.unref();
+  };
+  models.on('change', pumpSoon);
+  settings.on('change', pumpSoon);
+  board.pumpAll();
+  // Pull requests' checks, and any merged on GitHub, every few minutes.
+  const prTimer = setInterval(() => void board.refreshPullRequests(), 3 * 60_000);
+  prTimer.unref();
 
   const localApi = new LocalApi({
     providers,
@@ -238,6 +291,8 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     browser,
     projects,
     board,
+    context: contextNotes,
+    sandbox,
     github,
     localApi,
     host: options.host ?? null,
@@ -252,9 +307,12 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     router: appRouter,
     ready,
     close: () => {
+      clearInterval(prTimer);
+      if (pumpTimer) clearTimeout(pumpTimer);
       void localApi.stop();
       github.cancelDeviceFlow();
       chat.close();
+      sandbox.closeAll();
       browser.closeAll();
       terminal.closeAll();
       void mcpManager.closeAll();

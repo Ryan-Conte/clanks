@@ -1,5 +1,13 @@
-import type { BoardSnapshot, ClankSummary, OutputType, TicketCard } from '@clanks/core';
+import {
+  type BoardSnapshot,
+  type ClankSummary,
+  type OutputType,
+  type TicketCard,
+  type Usage,
+  compactNumber,
+} from '@clanks/core';
 import type { Tone } from '../components/ui';
+import { formatSeconds } from './format';
 
 /** How each output type reads on a card. */
 export const TYPE_LABELS: Record<OutputType, string> = {
@@ -30,10 +38,14 @@ export function cardStatus(
   name: (clankId: string) => string,
 ): CardStatus {
   const step = card.route[card.step];
-  const clankId =
-    card.column === 'build' || card.column === 'review' ? (step?.clankId ?? null) : null;
+  const working = card.column === 'build' || card.column === 'review';
+  const clankId = working ? (card.detour?.clankId ?? step?.clankId ?? null) : null;
   const base = { live: false, clankId };
-  if (card.column === 'done') return { ...base, icon: '✓', text: 'Done', tone: 'dim' };
+  if (card.column === 'done') {
+    return card.outcome === 'rejected'
+      ? { ...base, icon: '✕', text: 'Rejected', tone: 'dim' }
+      : { ...base, icon: '✓', text: card.delivery?.merged ? 'Merged' : 'Done', tone: 'dim' };
+  }
   if (card.column === 'ready') {
     if (card.state === 'looping') {
       return {
@@ -42,6 +54,9 @@ export function cardStatus(
         text: `Bounced ${card.bounces} times, came to you`,
         tone: 'amber',
       };
+    }
+    if (card.delivery?.error) {
+      return { ...base, icon: '!', text: "Couldn't merge: see the ticket", tone: 'amber' };
     }
     const signer = card.route.at(-1)?.clankId;
     return {
@@ -62,13 +77,25 @@ export function cardStatus(
       tone: 'rose',
     };
   }
-  if (card.state === 'paused') return { ...base, icon: '‖', text: 'Paused', tone: 'dim' };
-  if (card.column === 'build' || card.column === 'review') {
+  if (card.state === 'paused') {
+    const budget = card.reason?.startsWith('Paused:') ? card.reason.replace(/\.$/, '') : null;
+    return { ...base, icon: '‖', text: budget ?? 'Paused', tone: budget ? 'amber' : 'dim' };
+  }
+  if (card.state === 'waiting') {
+    return {
+      ...base,
+      icon: '◐',
+      text: `${card.step < 0 ? 'Ready · ' : clankId ? `${name(clankId)} next · ` : ''}${card.reason?.replace(/\.$/, '') ?? 'Waiting for a free slot'}`,
+      tone: card.reason?.startsWith('Paused:') ? 'amber' : 'dim',
+    };
+  }
+  if (working) {
     // The card's live line says what it's doing.
+    const answering = card.detour ? ` · answering ${name(card.detour.from)}` : '';
     return {
       ...base,
       icon: '●',
-      text: clankId ? `${name(clankId)}${card.live ? '' : ' · starting'}` : 'Starting',
+      text: clankId ? `${name(clankId)}${card.live ? '' : ' · starting'}${answering}` : 'Starting',
       tone: 'mint',
       live: card.live !== null,
     };
@@ -109,4 +136,18 @@ export function progressText(card: TicketCard): string | null {
   const steps = card.progress?.steps ?? [];
   if (steps.length === 0) return null;
   return `${steps.filter((s) => s.done).length}/${steps.length} steps`;
+}
+
+/** Spending in a few words: "120k tokens · 4 min 10 s · $0.42". */
+export function usageText(usage: Usage): string {
+  const parts = [`${compactNumber(usage.tokens)} tokens`, formatSeconds(usage.ms)];
+  if (usage.dollars > 0) parts.push(`$${usage.dollars.toFixed(2)}`);
+  if (usage.unpriced > 0)
+    parts.push(`${usage.unpriced} cloud ${usage.unpriced === 1 ? 'call' : 'calls'} unpriced`);
+  return parts.join(' · ');
+}
+
+/** The pull request's checks, as a card's badge shows them. */
+export function ciText(ci: 'pending' | 'passing' | 'failing' | null): string {
+  return ci === 'passing' ? 'CI ✓' : ci === 'failing' ? 'CI ✕' : ci === 'pending' ? 'CI …' : '';
 }

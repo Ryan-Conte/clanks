@@ -47,6 +47,8 @@ export interface ToolApproval {
   pattern: string;
   /** The project an "always allow" applies to. Null when there's none to remember it in. */
   scope: string | null;
+  /** Why it asks: what makes this call risky. Missing for a tool that always asks. */
+  reason?: string | null;
 }
 
 /** Text the model wrote. `round` counts the model's turns within one reply. */
@@ -70,8 +72,11 @@ export interface ToolPart {
   status: ToolCallStatus;
   /** Set when the call needed the user's approval. */
   approval: ToolApproval | null;
-  /** What let it run, or stopped it. */
-  decidedBy: 'policy' | 'rule' | 'user' | null;
+  /**
+   * What let it run, or stopped it: the clank's policy, an "always allow" rule, the user, or its
+   * being an everyday call that didn't need asking about.
+   */
+  decidedBy: 'policy' | 'rule' | 'user' | 'risk' | null;
   /** Why the user said no, if they said. */
   reason: string | null;
   /** What the model got back. */

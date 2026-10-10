@@ -43,6 +43,8 @@ export interface RunContext {
   tools: string[];
   /** The shell commands run in, when the clank can run them. */
   shell: string | null;
+  /** The port servers a ticket's run starts should use, so parallel runs don't collide. */
+  port?: number | null;
   /** The model can't call tools, so none were offered. */
   toolsUnsupported: boolean;
   /** Tools that should be there and aren't, such as an MCP server that didn't start. */
@@ -59,13 +61,31 @@ export interface PromptInput {
   instructions: ProjectInstructions | null;
   /** The project context layer, for a chat or run in a project. */
   context: string | null;
+  /** The clank's memory layer: its own entries for this project that matter here. */
+  memory?: string | null;
+  /** The model's context window, which the layers' budgets scale to. */
+  window?: number;
   run: RunContext;
   now: Date;
   platform: NodeJS.Platform;
 }
 
 /** Layer budgets for a 32k-token model, from docs/CONTEXT.md. */
-export const BUDGETS = { profile: 300, instructions: 1500, context: 2000 } as const;
+export const BUDGETS = { profile: 300, instructions: 1500, context: 2000, memory: 1000 } as const;
+
+/**
+ * Layer budgets for a model's context window. Project context and clank memory scale with it,
+ * so a 16k model gets half; the user's own words keep theirs, and say so when they don't fit.
+ */
+export function layerBudgets(window = 32_768): Record<keyof typeof BUDGETS, number> {
+  const scale = Math.max(0.25, Math.min(1, window / 32_768));
+  return {
+    profile: BUDGETS.profile,
+    instructions: BUDGETS.instructions,
+    context: Math.round(BUDGETS.context * scale),
+    memory: Math.round(BUDGETS.memory * scale),
+  };
+}
 
 /**
  * Builds a clank's system prompt. Stable layers come first, so llama.cpp's prompt cache and
@@ -76,11 +96,12 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
   // Only the app's own text is templated. What the user wrote goes in as it is.
   const fill = (text: string) => fillVariables(text, variables);
 
+  const budgets = layerBudgets(input.window);
   const layers: PromptLayer[] = [
     layer('crew', 'Crew rules', fill(input.rules)),
     layer('clank', `${input.clank.name}'s priming doc`, fill(input.clank.body)),
-    // Integration guides and clank memory arrive with integrations and the crew's memory.
-    layer('profile', 'Your profile', profileText(input.profile, fill), BUDGETS.profile),
+    // Integration guides arrive with integrations.
+    layer('profile', 'Your profile', profileText(input.profile, fill), budgets.profile),
   ];
 
   if (input.instructions) {
@@ -93,13 +114,16 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
       const intro = fill(
         `## Project instructions\n\n{{user.name}} wrote these in \`${file}\` for this project. Follow them.`,
       );
-      layers.push(layer('instructions', file, `${intro}\n\n${own}`, BUDGETS.instructions));
+      layers.push(layer('instructions', file, `${intro}\n\n${own}`, budgets.instructions));
     }
   }
 
   // The board writes the project context and a run's brief from what's on it: not templated.
   if (input.context) {
-    layers.push(layer('context', 'Project context', input.context, BUDGETS.context));
+    layers.push(layer('context', 'Project context', input.context, budgets.context));
+  }
+  if (input.memory) {
+    layers.push(layer('memory', `${input.clank.name}'s memory`, input.memory, budgets.memory));
   }
   layers.push(layer('run', 'Run context', runText(input.run, fill)));
 
@@ -256,6 +280,11 @@ function runText(run: RunContext, fill: (text: string) => string): string {
       "A tool call that fails didn't happen. Fix it and call again, or tell {{user.name}} it failed; never say you did what a failed call didn't do.",
     );
     if (run.shell) lines.push(`Commands run in ${run.shell}.`);
+    if (run.shell && run.port) {
+      lines.push(
+        `Other clanks may be running servers at the same time, so any server you start listens on port ${run.port}, which is in $PORT. Servers you leave running stop when your run ends.`,
+      );
+    }
     if (ws) {
       lines.push(
         '{{user.name}} watches your file changes in the diff editor and your commands in the terminal, and approves the calls that need it. They may reject a change with a note; fix what the note says.',

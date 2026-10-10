@@ -193,6 +193,34 @@ export class Supervisor extends EventEmitter<{ change: [] }> {
     return this.instances.has(modelId);
   }
 
+  /**
+   * Whether loading a model now would have to wait for busy models to finish: it isn't loaded, and
+   * it won't fit beside the models in use even with the idle ones unloaded.
+   */
+  wouldWait(modelId: ModelId): boolean {
+    const existing = this.instances.get(modelId);
+    if (existing && existing.state !== 'failed') return false;
+    const model = this.options.model(modelId);
+    const hardware = this.options.hardware();
+    if (!model || !hardware) return false;
+    const config = this.options.config();
+    const slots = config.slots ?? autoSlots(hardware);
+    const { needBytes } = memoryNeed({
+      weightsBytes: model.size,
+      facts: model.facts,
+      contextPerSlot: slotContext(model.facts, config.contextPerSlot),
+      slots,
+    });
+    const budget =
+      hardware.budget.gpuBytes + (hardware.memory.unified ? 0 : hardware.budget.systemBytes);
+    const busy = [...this.instances.values()].filter(
+      (i) =>
+        i.state !== 'failed' && (i.leases > 0 || i.state === 'loading' || i.state === 'restarting'),
+    );
+    if (busy.length === 0) return false;
+    return busy.reduce((sum, i) => sum + i.needBytes, 0) + needBytes > budget;
+  }
+
   /** Re-reads a model's keep-loaded flag. */
   refreshIdle(modelId: ModelId): void {
     const instance = this.instances.get(modelId);

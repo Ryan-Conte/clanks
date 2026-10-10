@@ -203,6 +203,8 @@ describe('a clank with tools', () => {
       [call('shell_exec', { command: 'git push' }, 'x3')],
       say('Fine, I will not.'),
     ]);
+    // Asked about every call, not only risky ones.
+    context.settings.update({ approvals: 'all' });
     const { conversation } = chat.start('forge', 'Say hello', root);
     await until(() => chat.list()[0]?.asking === true, 'the command waits for approval');
     const asking = tools(chat.inFlight(conversation.id)!)[0]!;
@@ -251,9 +253,28 @@ describe('a clank with tools', () => {
     );
   });
 
+  it('runs everyday commands without asking, and asks before risky ones, saying why', async () => {
+    const root = await repository({ 'README.md': '# Surf\n' });
+    const { chat } = setup([
+      [call('shell_exec', { command: 'echo hello' }, 'x1')],
+      [call('shell_exec', { command: 'git push origin main' }, 'x2')],
+      say('Done.'),
+    ]);
+    const { conversation } = chat.start('forge', 'Say hello, then push', root);
+    await until(() => chat.list()[0]?.asking === true, 'the push waits for approval');
+    const [hello, push] = tools(chat.inFlight(conversation.id)!);
+    expect(hello).toMatchObject({ status: 'done', decidedBy: 'risk' });
+    expect(push).toMatchObject({
+      status: 'asking',
+      approval: { subject: 'git push origin main', reason: 'Pushes to a remote' },
+    });
+    chat.decide(conversation.id, 'x2', { decision: 'deny' });
+    await settled(chat, conversation.id);
+  });
+
   it('stops while waiting for approval without running anything', async () => {
     const root = await repository({ 'a.txt': 'a\n' });
-    const { chat } = setup([[call('shell_exec', { command: 'rm a.txt' }, 'x1')]]);
+    const { chat } = setup([[call('shell_exec', { command: 'rm -rf ../a.txt' }, 'x1')]]);
     const { conversation } = chat.start('forge', 'Delete a.txt', root);
     await until(() => chat.list()[0]?.asking === true, 'it asks');
     chat.stop(conversation.id);

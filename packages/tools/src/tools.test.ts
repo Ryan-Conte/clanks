@@ -49,6 +49,7 @@ function context(root: string, base: string, extra: Partial<ToolContext> = {}): 
     web: { fetch, search: null },
     browser: null,
     board: null,
+    context: null,
     signal: new AbortController().signal,
     clank: { id: 'forge', name: 'Forge' },
     maxChars: 20_000,
@@ -431,6 +432,7 @@ describe('labels', () => {
         type: 'pr',
         to: 'forge',
         clank: 'forge',
+        body: 'Picked Zustand for the cart',
       });
       expect(label.length, tool.name).toBeGreaterThan(3);
     }
