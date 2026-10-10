@@ -10,6 +10,8 @@ export type Route =
   | { page: 'draft'; clankId: string; projectId?: string | null }
   | { page: 'chat'; id: string }
   | { page: 'crew'; clankId: string | null }
+  /** The form for a custom clank. */
+  | { page: 'new-clank' }
   /** A project, with a ticket's drawer open on the board, or a run's design open in Studio. */
   | { page: 'project'; id: string; tab: ProjectTab; ticket?: string | null; run?: string | null }
   | { page: 'new-project' }

@@ -1,4 +1,12 @@
-import type { Project, Ticket, TicketDelivery, TicketPullRequest } from '@clanks/core';
+import {
+  type Project,
+  REPO_HOST_NAMES,
+  type RepoHost,
+  type Ticket,
+  type TicketDelivery,
+  type TicketPullRequest,
+  pullRequestName,
+} from '@clanks/core';
 import {
   GitError,
   MergeBlockedError,
@@ -11,10 +19,10 @@ import {
   resolveCommit,
   worktreeOf,
 } from '@clanks/workspace';
-import type { GitHubService } from '../github/service';
+import type { RepoHostClient } from '../repos/host';
 import type { WorkspaceService } from '../workspace/service';
 
-/** A delivery problem worded for the user: a conflict, a push GitHub turned down. */
+/** A delivery problem worded for the user: a conflict, a push the host turned down. */
 export class DeliveryError extends Error {
   constructor(
     message: string,
@@ -33,14 +41,15 @@ const START_TTL_MS = 30_000;
 export interface WorkStart {
   /** The base branch's name. */
   base: string;
-  /** The ref new branches start from: the base, or GitHub's copy of it. */
+  /** The ref new branches start from: the base, or the host's copy of it. */
   from: string;
   /** The repository's top folder. */
   root: string;
 }
 
 export interface DeliveryServiceOptions {
-  github: GitHubService;
+  /** Where a project's repository is hosted: GitHub or GitLab. */
+  hosts: (host: RepoHost) => RepoHostClient;
   workspace: WorkspaceService;
   /** Where scratch worktrees for merges go. */
   scratchDir: string;
@@ -48,20 +57,20 @@ export interface DeliveryServiceOptions {
 
 /**
  * Where tickets' work goes: the branch a maker starts from, what it hands in, the pull request the
- * app opens for it on GitHub, and the merge when the user approves. Only the app does these, never
+ * app opens for it on GitHub (or merge request on GitLab), and the merge when the user approves. Only the app does these, never
  * a clank: pushing is part of handing in, and merging waits for the user.
  */
 export class DeliveryService {
   /** One merge at a time per repository, so two approvals can't race for the base branch. */
   private readonly locks = new Map<string, Promise<unknown>>();
-  /** Where work starts, per project, for a short while: finding out may mean asking GitHub. */
+  /** Where work starts, per project, for a short while: finding out may mean asking the host. */
   private readonly starts = new Map<string, { at: number; start: Promise<WorkStart> }>();
 
   constructor(private readonly options: DeliveryServiceOptions) {}
 
   /**
    * The project's base branch, and the commit new work starts from: the branch in the project's
-   * folder, or GitHub's copy of it when that's further on, as after a pull request is merged there.
+   * folder, or the host's copy of it when that's further on, as after a pull request is merged there.
    */
   start(project: Project): Promise<WorkStart> {
     const key = `${project.id}:${project.baseBranch ?? ''}`;
@@ -85,15 +94,16 @@ export class DeliveryService {
     const base = await this.baseBranch(project, root);
     const local = await resolveCommit(root, `refs/heads/${base}`);
     let from = local ? `refs/heads/${base}` : null;
-    if (project.repo && this.options.github.status().signedIn) {
+    const host = this.hostOf(project);
+    if (host?.signedIn()) {
       try {
-        await this.options.github.fetch(root, base);
+        await host.fetch(root, base);
         const remote = await resolveCommit(root, `refs/remotes/origin/${base}`);
         if (remote && (!local || (await isAncestor(root, local, remote)))) {
           from = `refs/remotes/origin/${base}`;
         }
       } catch {
-        // Offline, or GitHub's having a moment: the local branch will do.
+        // Offline, or the host is having a moment: the local branch will do.
       }
     }
     if (!from) {
@@ -143,7 +153,7 @@ export class DeliveryService {
   }
 
   /**
-   * Pushes a ticket's branch to GitHub and opens its pull request, or brings the open one up to
+   * Pushes a ticket's branch to its host and opens its pull request, or brings the open one up to
    * date. Does nothing for a local folder, or a branch with nothing new on it.
    */
   async publish(input: {
@@ -154,11 +164,12 @@ export class DeliveryService {
     body: string;
   }): Promise<TicketDelivery> {
     const { project, delivery } = input;
-    if (!project.repo || !delivery.changed) return delivery;
+    const host = this.hostOf(project);
+    if (!project.repo || !host || !delivery.changed) return delivery;
     const root = await this.root(project);
     try {
-      await this.options.github.push(root, delivery.branch);
-      const pr = await this.options.github.openPullRequest({
+      await host.push(root, delivery.branch);
+      const pr = await host.openPullRequest({
         repo: project.repo.fullName,
         head: delivery.branch,
         base: delivery.base,
@@ -178,7 +189,7 @@ export class DeliveryService {
 
   /**
    * Merges a ticket's work into its base, now the user has approved it: its pull request on
-   * GitHub, or its branch in the project's folder. Returns the merge commit, or null when there was
+   * its host, or its branch in the project's folder. Returns the merge commit, or null when there was
    * nothing to merge.
    */
   async merge(project: Project, ticket: Ticket): Promise<{ commit: string; how: string } | null> {
@@ -191,11 +202,12 @@ export class DeliveryService {
         const message = `Merge ${ticket.key}: ${ticket.title}`;
         if (project.repo && delivery.pr) {
           const repo = project.repo.fullName;
-          const github = this.options.github;
+          const github = this.options.hosts(project.repo.host);
+          const named = pullRequestName(project.repo.host, delivery.pr.number);
           let pull = await github.pullRequest(repo, delivery.pr.number);
           if (pull.state === 'closed') {
             throw new DeliveryError(
-              `PR #${pull.number} was closed on GitHub. Reopen it, then approve again.`,
+              `${named} was closed on ${REPO_HOST_NAMES[project.repo.host]}. Reopen it, then approve again.`,
             );
           }
           let sha: string;
@@ -215,14 +227,14 @@ export class DeliveryService {
                 pull.mergeable === false || /not mergeable|conflict/i.test(messageOf(error));
               throw new DeliveryError(
                 conflict
-                  ? `PR #${pull.number} conflicts with ${delivery.base}. Send it back to have the conflicts resolved.`
+                  ? `${named} conflicts with ${delivery.base}. Send it back to have the conflicts resolved.`
                   : messageOf(error),
-                conflict ? ['(see the pull request)'] : [],
+                conflict ? [`(see the ${pullRequestName(project.repo.host)})`] : [],
               );
             }
           }
-          await this.catchUp(root, delivery.base);
-          return { commit: sha, how: `merged PR #${pull.number}` };
+          await this.catchUp(project, root, delivery.base);
+          return { commit: sha, how: `merged ${named}` };
         }
         try {
           const result = await mergeBranch({
@@ -257,8 +269,9 @@ export class DeliveryService {
   /** Closes a rejected ticket's pull request, if it has one. Best effort. */
   async close(project: Project, ticket: Ticket): Promise<void> {
     const pr = ticket.delivery?.pr;
-    if (!project.repo || !pr || pr.state !== 'open') return;
-    await this.options.github.closePullRequest(project.repo.fullName, pr.number).catch(() => {});
+    const host = this.hostOf(project);
+    if (!project.repo || !host || !pr || pr.state !== 'open') return;
+    await host.closePullRequest(project.repo.fullName, pr.number).catch(() => {});
   }
 
   /**
@@ -277,9 +290,10 @@ export class DeliveryService {
   /** How the checks on a ticket's pull request are doing now, and whether it was merged. */
   async refresh(project: Project, ticket: Ticket): Promise<TicketPullRequest | null> {
     const pr = ticket.delivery?.pr;
-    if (!project.repo || !pr) return null;
-    const pull = await this.options.github.pullRequest(project.repo.fullName, pr.number);
-    const ci = await this.options.github.checks(project.repo.fullName, pull.head);
+    const host = this.hostOf(project);
+    if (!project.repo || !host || !pr) return null;
+    const pull = await host.pullRequest(project.repo.fullName, pr.number);
+    const ci = pull.head ? await host.checks(project.repo.fullName, pull.head) : null;
     return { number: pull.number, url: pull.url, state: pull.state, ci };
   }
 
@@ -296,10 +310,10 @@ export class DeliveryService {
     );
   }
 
-  /** After a merge on GitHub, the user's checkout of the base gets it too, where that's safe. */
-  private async catchUp(root: string, base: string): Promise<void> {
+  /** After a merge on the host, the user's checkout of the base gets it too, where that's safe. */
+  private async catchUp(project: Project, root: string, base: string): Promise<void> {
     try {
-      await this.options.github.fetch(root, base);
+      await this.hostOf(project)?.fetch(root, base);
       const remote = await resolveCommit(root, `refs/remotes/origin/${base}`);
       const local = await resolveCommit(root, `refs/heads/${base}`);
       if (!remote || !local || !(await isAncestor(root, local, remote))) return;
@@ -309,6 +323,11 @@ export class DeliveryService {
     } catch {
       // The user's checkout has changes in the way, or the fetch failed: they'll pull themselves.
     }
+  }
+
+  /** Where the project's repository is hosted. Null for a local folder. */
+  private hostOf(project: Project): RepoHostClient | null {
+    return project.repo ? this.options.hosts(project.repo.host) : null;
   }
 
   private async root(project: Project): Promise<string> {

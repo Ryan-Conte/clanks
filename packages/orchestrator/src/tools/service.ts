@@ -6,6 +6,7 @@ import {
   type ToolGroup,
   type ToolPolicyLevel,
   type ToolRule,
+  isTicketRole,
   matchesPattern,
   toolGroupOf,
 } from '@clanks/core';
@@ -33,6 +34,36 @@ import type { Db } from '../store/store';
 
 /** Keychain entries for the search backends that take a key. */
 export const SEARCH_KEYS = { brave: 'search:brave', tavily: 'search:tavily' } as const;
+
+/**
+ * What a clank answering another's quick question may use: tools that find things out and change
+ * nothing, so an answer never has side effects the clank that asked didn't see.
+ */
+const CONSULT_TOOLS = new Set([
+  'fs_read',
+  'fs_list',
+  'fs_search',
+  'git_status',
+  'git_diff',
+  'git_log',
+  'web_search',
+  'web_fetch',
+  'browser_open',
+  'browser_navigate',
+  'browser_read',
+  'browser_click',
+  'browser_scroll',
+  'browser_screenshot',
+  'browser_back',
+  'browser_close',
+  'design_read',
+  'board_list',
+  'board_get_ticket',
+  'spec_read',
+  'context_search',
+  'memory_search',
+  'artifact_read',
+]);
 
 /** The tools a clank has in one chat, ready to offer to the model. */
 export interface Toolset {
@@ -80,6 +111,10 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       project?: boolean;
       /** What the clank does in a run. Null or missing for a chat. */
       role?: RunRole | null;
+      /** There are other clanks to put a question to. */
+      crew?: boolean;
+      /** The app keeps what's saved with the ticket or chat. */
+      artifacts?: boolean;
     },
   ): Promise<Toolset> {
     const specs = new Map<string, ToolSpec>();
@@ -93,12 +128,17 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       render: chat.render ?? false,
       vision: chat.vision ?? false,
       project: chat.project ?? false,
-      ticket: chat.role === 'maker' || chat.role === 'checker' || chat.role === 'helper',
+      ticket: isTicketRole(chat.role),
       // A clank answering a bounce from outside the route hands its answer back as a maker would.
       maker: chat.role === 'maker' || chat.role === 'helper',
       checker: chat.role === 'checker',
+      // An answer to a question doesn't ask questions of its own.
+      crew: (chat.crew ?? false) && chat.role !== 'consult',
     };
+    const consult = chat.role === 'consult';
     for (const spec of BUILTIN_TOOLS) {
+      if (consult && !CONSULT_TOOLS.has(spec.name)) continue;
+      if (spec.name.startsWith('artifact_') && !chat.artifacts) continue;
       const { level } = policyFor({
         doc: clank.frontmatter.tools,
         overrides: clank.overrides.tools,
@@ -109,7 +149,8 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       specs.set(spec.name, spec);
       levels.set(spec.name, level);
     }
-    for (const config of this.options.mcp.forClank(clank.id)) {
+    // An MCP server's tools can do anything, so a quick answer goes without them.
+    for (const config of consult ? [] : this.options.mcp.forClank(clank.id)) {
       try {
         for (const tool of await this.options.manager.tools(config)) {
           const { level } = policyFor({

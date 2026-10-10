@@ -22,6 +22,23 @@ export const TYPE_LABELS: Record<OutputType, string> = {
   other: 'Other',
 };
 
+/** The fields of a written hand-in its own view shows, so they aren't listed again below it. */
+export const SHOWN_FIELDS = new Set([
+  'type',
+  'title',
+  'body',
+  'note',
+  'plan',
+  'posts',
+  'to',
+  'cc',
+  'subject',
+  'sources',
+  'screenshots',
+  'warnings',
+  'path',
+]);
+
 /** What a card says about where its ticket is: always an icon and words, never colour alone. */
 export interface CardStatus {
   icon: string;
@@ -44,7 +61,12 @@ export function cardStatus(
   if (card.column === 'done') {
     return card.outcome === 'rejected'
       ? { ...base, icon: '✕', text: 'Rejected', tone: 'dim' }
-      : { ...base, icon: '✓', text: card.delivery?.merged ? 'Merged' : 'Done', tone: 'dim' };
+      : {
+          ...base,
+          icon: '✓',
+          text: card.sent?.at ? 'Sent' : card.delivery?.merged ? 'Merged' : 'Done',
+          tone: 'dim',
+        };
   }
   if (card.column === 'ready') {
     if (card.state === 'looping') {
@@ -57,6 +79,9 @@ export function cardStatus(
     }
     if (card.delivery?.error) {
       return { ...base, icon: '!', text: "Couldn't merge: see the ticket", tone: 'amber' };
+    }
+    if (card.sent?.error) {
+      return { ...base, icon: '!', text: "Couldn't send: see the ticket", tone: 'amber' };
     }
     const signer = card.route.at(-1)?.clankId;
     return {

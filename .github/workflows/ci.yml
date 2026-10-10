@@ -119,3 +119,6 @@ jobs:
             apps/desktop/dist/*.AppImage
             apps/desktop/dist/*.deb
             ${{ runner.temp }}/clanks-${{ runner.os }}.png
+            ${{ runner.temp }}/clanks-${{ runner.os }}-frame.svg
+            ${{ runner.temp }}/clanks-${{ runner.os }}-frame.pdf
+            ${{ runner.temp }}/clanks-${{ runner.os }}-document.pdf

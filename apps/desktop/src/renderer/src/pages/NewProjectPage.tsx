@@ -10,6 +10,7 @@ import { type ReactNode, useState } from 'react';
 import { Avatar } from '../components/Avatar';
 import { ModelPicker } from '../components/ModelPicker';
 import { RepoPicker } from '../components/project/GitHub';
+import { GitLabRepoPicker } from '../components/project/GitLab';
 import { Button, ErrorText, FolderIcon, Switch, inputClass } from '../components/ui';
 import { useCrew } from '../lib/crew';
 import { useModels } from '../lib/models';
@@ -36,7 +37,7 @@ export function NewProjectPage() {
   const [brief, setBrief] = useState('');
   const [key, setKey] = useState<string | null>(null);
   const shownKey = key ?? suggestKey(name || 'Project');
-  const [source, setSource] = useState<'folder' | 'github'>('folder');
+  const [source, setSource] = useState<'folder' | 'github' | 'gitlab'>('folder');
   const [folder, setFolder] = useState<string | null>(null);
   const [repo, setRepo] = useState<GitHubRepo | null>(null);
   const [into, setInto] = useState<string | null>(null);
@@ -84,7 +85,7 @@ export function NewProjectPage() {
       workspace:
         source === 'folder'
           ? { kind: 'folder', path: folder! }
-          : { kind: 'github', repo: repo!.fullName, into: clonePath! },
+          : { kind: source, repo: repo!.fullName, into: clonePath! },
       crew: chosen.map((c) => c.id),
       model,
       models: perClank
@@ -148,13 +149,29 @@ export function NewProjectPage() {
       </Step>
 
       <Step number={2} title="Pick a workspace">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <Choice active={source === 'folder'} onClick={() => setSource('folder')} title="A folder">
             A folder on this computer, for code or anything else.
           </Choice>
-          <Choice active={source === 'github'} onClick={() => setSource('github')} title="GitHub">
-            One of your repositories, or a new one, cloned here.
-          </Choice>
+          {(
+            [
+              ['github', 'GitHub'],
+              ['gitlab', 'GitLab'],
+            ] as const
+          ).map(([host, title]) => (
+            <Choice
+              key={host}
+              active={source === host}
+              onClick={() => {
+                setSource(host);
+                // A repository picked on one host isn't on the other.
+                if (source !== host) setRepo(null);
+              }}
+              title={title}
+            >
+              One of your repositories, or a new one, cloned here.
+            </Choice>
+          ))}
         </div>
         {source === 'folder' ? (
           <div className="flex flex-col gap-2">
@@ -175,16 +192,29 @@ export function NewProjectPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            <RepoPicker
-              value={repo}
-              onChange={(next) => {
-                setRepo(next);
-                setInto(null);
-              }}
-              suggestedName={(name.trim() || 'project')
-                .toLowerCase()
-                .replace(/[^a-z0-9._-]+/g, '-')}
-            />
+            {source === 'gitlab' ? (
+              <GitLabRepoPicker
+                value={repo}
+                onChange={(next) => {
+                  setRepo(next);
+                  setInto(null);
+                }}
+                suggestedName={(name.trim() || 'project')
+                  .toLowerCase()
+                  .replace(/[^a-z0-9._-]+/g, '-')}
+              />
+            ) : (
+              <RepoPicker
+                value={repo}
+                onChange={(next) => {
+                  setRepo(next);
+                  setInto(null);
+                }}
+                suggestedName={(name.trim() || 'project')
+                  .toLowerCase()
+                  .replace(/[^a-z0-9._-]+/g, '-')}
+              />
+            )}
             {repo && clonePath && (
               <span className="flex items-center gap-3 text-sm">
                 <span className="text-dim">Clone into</span>
@@ -285,7 +315,7 @@ export function NewProjectPage() {
       <div className="flex items-center gap-3">
         <Button variant="primary" disabled={!ready} onClick={submit}>
           {create.isPending
-            ? source === 'github'
+            ? source !== 'folder'
               ? `Cloning ${repo?.name ?? ''}…`
               : 'Setting it up…'
             : 'Start the project'}

@@ -2,13 +2,16 @@ import type { ModelManager } from '@clanks/models';
 import type { ProviderRegistry } from '@clanks/providers';
 import { initTRPC } from '@trpc/server';
 import type { ActivityService } from './activity/service';
+import type { ArtifactService } from './artifacts/service';
 import type { BoardService } from './board/service';
 import type { BrowserService } from './browser/service';
 import type { ChatService } from './chat/service';
 import type { ContextService } from './context/service';
 import type { CrewService } from './crew/crew';
 import type { DesignService } from './design/service';
+import type { EmailService } from './email/service';
 import type { GitHubService } from './github/service';
+import type { GitLabService } from './gitlab/service';
 import type { LocalApi } from './local-api/server';
 import type { McpService } from './mcp/service';
 import type { AppDataLayout } from './paths';
@@ -38,6 +41,14 @@ export interface Host {
   pickFolder(options: { title: string; defaultPath?: string }): Promise<string | null>;
   /** Opens a folder in the system file manager. */
   openFolder(path: string): Promise<void>;
+  /**
+   * Asks where to save a file, then writes it there. Resolves with the path, or null if the user
+   * cancels.
+   */
+  saveFile(
+    options: { title: string; defaultName: string; extensions: string[] },
+    data: Uint8Array,
+  ): Promise<string | null>;
 }
 
 export interface OrchestratorContext {
@@ -76,6 +87,12 @@ export interface OrchestratorContext {
   sandbox: SandboxService;
   /** The user's GitHub account, for cloning and making repositories. */
   github: GitHubService;
+  /** The user's GitLab account, the same for projects hosted there. */
+  gitlab: GitLabService;
+  /** What the crew made that isn't in a repository: documents, notes, pictures of pages. */
+  artifacts: ArtifactService;
+  /** The account emails the user approves go out through. */
+  email: EmailService;
   /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
   localApi: LocalApi;
   host: Host | null;

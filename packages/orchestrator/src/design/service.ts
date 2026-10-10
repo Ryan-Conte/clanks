@@ -1,4 +1,5 @@
 import {
+  type ComponentCode,
   DEFAULT_DESIGN,
   type Design,
   DesignFileError,
@@ -9,21 +10,25 @@ import {
   type Node,
   type Op,
   OpError,
+  type Painted,
   type Studio,
   type TokenExport,
   type TokenSet,
   applyOps,
+  componentCode,
   componentText,
   componentsUsed,
   designPath,
   emptyDesign,
   exportTokens,
+  findComponent,
   findNode,
   frameHtml,
   lint,
   locate,
   nodeLine,
   nodePath,
+  paintSvg,
   tokenLines,
   topFrames,
   treeText,
@@ -73,7 +78,14 @@ export interface PictureLimits {
   maxPixels: number;
   /** The smallest it's drawn, as a share of its real size, before it's cut instead. */
   minScale: number;
+  /** How big to draw it when there's room: 2 for twice its size. Its own size without. */
+  scale?: number;
 }
+
+/** The formats a frame exports to. */
+export const FRAME_EXPORTS = ['png', 'svg', 'pdf'] as const;
+
+export type FrameExport = (typeof FRAME_EXPORTS)[number];
 
 /** What the desktop app does for designs: draws a frame's HTML in a view nobody sees. */
 export interface DesignHost {
@@ -84,6 +96,13 @@ export interface DesignHost {
     /** Take a picture too, within these limits. */
     capture: PictureLimits | null;
   }): Promise<Drawing>;
+  /** Lays a frame out and reads back what was painted, for drawing it again as SVG. */
+  paint?(input: { html: string; width: number }): Promise<Painted>;
+  /** Prints a piece of HTML to PDF: on A4 pages, or on one page of a size given in CSS pixels. */
+  print?(input: {
+    html: string;
+    page: 'a4' | { width: number; height: number };
+  }): Promise<Uint8Array>;
 }
 
 /** A design as Studio shows it. */
@@ -118,6 +137,8 @@ export interface DesignServiceOptions {
  * server down with it.
  */
 const PICTURE: PictureLimits = { maxWidth: 1024, maxPixels: 1_150_000, minScale: 0.4 };
+/** An export is the frame itself, as big as it is: only something enormous is drawn smaller. */
+const EXPORT: PictureLimits = { maxWidth: 16_000, maxPixels: 80_000_000, minScale: 0.1 };
 /** Frames measured by one lint, so a huge file doesn't hold a run up. */
 const MAX_MEASURED = 40;
 
@@ -375,6 +396,117 @@ export class DesignService extends EventEmitter<{ change: [dir: string] }> {
     };
   }
 
+  /** A top-level frame by its id or name. Throws when there's none, or several share the name. */
+  frame(state: Studio, ref: string): Node {
+    const frames = topFrames(state.design).map((t) => t.frame);
+    const wanted = ref.trim().toLowerCase();
+    const found = frames.filter((f) => f.id === ref.trim() || f.name.toLowerCase() === wanted);
+    if (found.length === 1) return found[0]!;
+    throw new DesignError(
+      found.length === 0
+        ? `There's no frame "${ref}". Frames: ${frames.map((f) => f.name).join(', ') || 'none yet'}.`
+        : `${found.length} frames are called "${ref}". Use the id of the one you mean.`,
+    );
+  }
+
+  /**
+   * A frame as a file to take elsewhere: a PNG at its own size or bigger, an SVG of shapes and
+   * real text, or a one-page PDF. Needs the app to draw it.
+   */
+  async exportFrame(
+    dir: string,
+    input: {
+      file?: string | undefined;
+      frame: string;
+      format: FrameExport;
+      mode?: string | undefined;
+      scale?: number | undefined;
+    },
+  ): Promise<{ name: string; data: Uint8Array }> {
+    const host = this.options.host;
+    if (!host) throw new DesignError("Frames can't be drawn here, so there's nothing to export.");
+    const file = this.resolveFile(dir, input.file);
+    const { state } = this.load(dir, file);
+    const frame = this.frame(state, input.frame);
+    const mode =
+      input.mode && state.tokens.modes.includes(input.mode)
+        ? input.mode
+        : (state.tokens.modes[0] ?? 'light');
+    const html = frameHtml(frame, {
+      design: state.design,
+      tokens: state.tokens,
+      mode,
+      asset: (src) => assetUrl(dir, src),
+    });
+    const width = typeof frame.w === 'number' ? Math.max(1, Math.ceil(frame.w)) : 1440;
+    const name = `${fileName(frame.name)}.${input.format}`;
+    if (input.format === 'png') {
+      const drawing = await host.draw({
+        html,
+        width,
+        capture: { ...EXPORT, scale: Math.min(4, Math.max(1, input.scale ?? 1)) },
+      });
+      if (!drawing.png) {
+        throw new DesignError(`"${frame.name}" has no size yet, so there's nothing to draw.`);
+      }
+      return { name, data: drawing.png };
+    }
+    if (input.format === 'svg') {
+      if (!host.paint) throw new DesignError("Frames can't be exported as SVG here.");
+      const painted = await host.paint({ html, width });
+      return { name, data: Buffer.from(paintSvg(painted, { title: frame.name }), 'utf8') };
+    }
+    if (!host.print) throw new DesignError("Frames can't be exported as PDF here.");
+    const measured = await host.draw({ html, width, capture: null });
+    const data = await host.print({
+      html,
+      page: { width: Math.ceil(measured.width), height: Math.ceil(measured.height) },
+    });
+    return { name, data };
+  }
+
+  /** A component as a React component and its CSS, to start building it from. */
+  componentCode(dir: string, component: string, file?: string): ComponentCode {
+    const { state } = this.load(dir, this.resolveFile(dir, file));
+    const found = findComponent(state.design, component);
+    if (!found) {
+      throw new DesignError(
+        `There's no component "${component}". Components: ${state.design.components.map((c) => c.name).join(', ') || 'none yet'}.`,
+      );
+    }
+    return componentCode(found, state.design);
+  }
+
+  /** Prints a document's HTML to PDF on A4. Needs the app to print it. */
+  async printDocument(html: string): Promise<Uint8Array> {
+    const host = this.options.host;
+    if (!host?.print) throw new DesignError("Documents can't be printed to PDF here.");
+    return host.print({ html, page: 'a4' });
+  }
+
+  /** A frame's picture by its name, wherever in a folder's designs it is. Null when it's nowhere. */
+  async framePicture(
+    dir: string,
+    name: string,
+  ): Promise<{ png: Uint8Array; width: number; height: number; file: string } | null> {
+    const wanted = name.trim().toLowerCase();
+    for (const file of listDesigns(dir)) {
+      let state: Studio;
+      try {
+        state = this.load(dir, file).state;
+      } catch {
+        continue;
+      }
+      const frame = topFrames(state.design)
+        .map((t) => t.frame)
+        .find((f) => f.name.toLowerCase() === wanted);
+      if (!frame) continue;
+      const picture = await this.picture(dir, state, frame, state.tokens.modes[0] ?? 'light');
+      if (picture) return { png: picture.png, width: picture.width, height: picture.height, file };
+    }
+    return null;
+  }
+
   /**
    * What a clank building from a design is told: the design language, the tokens and the frames it
    * builds, within a budget of tokens. Null when the folder has no design.
@@ -489,6 +621,18 @@ function cut(text: string, max: number): string {
   if (text.length <= max) return text;
   const at = text.lastIndexOf('\n', max);
   return `${text.slice(0, at > max / 2 ? at : max).trimEnd()}\n… (cut to fit: read the rest with fs_read or design_read)`;
+}
+
+/** A frame's name as a file's: `home-desktop` for "Home / Desktop". */
+export function fileName(name: string): string {
+  return (
+    name
+      .normalize('NFKD')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'frame'
+  );
 }
 
 /** A design's name from its file: `Site` for `design/site.design`. */

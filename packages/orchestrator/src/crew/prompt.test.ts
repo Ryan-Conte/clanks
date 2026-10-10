@@ -73,6 +73,7 @@ function sentinel(): Clank {
     overrides: { name: null, avatar: null, model: null, tools: {}, browser: defaultClankBrowser },
     doc: 'bundled',
     docError: null,
+    custom: true,
   };
 }
 

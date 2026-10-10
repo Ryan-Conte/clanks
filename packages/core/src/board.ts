@@ -95,6 +95,21 @@ export interface TicketDelivery {
   error: string | null;
 }
 
+/**
+ * An email the user approved, as it went out through their own account. `error` says why the last
+ * try didn't work; `at` stays null until one does.
+ */
+export interface TicketSend {
+  at: string | null;
+  to: string[];
+  cc: string[];
+  /** The account it went from, as the recipient sees it. */
+  from: string;
+  /** The message id the server gave it. */
+  messageId: string | null;
+  error: string | null;
+}
+
 /** The plan a clank posted with `post_progress`, which its card shows as progress. */
 export interface TicketProgress {
   message: string;
@@ -149,6 +164,8 @@ export interface Ticket {
   queued: string | null;
   /** Its branch, pull request and merge, once its maker has handed something in. */
   delivery: TicketDelivery | null;
+  /** For an email: how sending it went, once the user has approved it. */
+  sent: TicketSend | null;
   /** How it ended. Null until it's done. */
   outcome: TicketOutcome | null;
   createdAt: Date;
@@ -359,7 +376,10 @@ export type BoardEventKind =
   | 'noted'
   | 'paused'
   | 'stopped'
-  | 'budget';
+  | 'budget'
+  | 'sent'
+  | 'saved'
+  | 'asked';
 
 /** One line in a project's activity feed. Append-only. */
 export interface BoardEvent {
@@ -385,9 +405,16 @@ export interface TicketRun {
 
 /**
  * What a clank is doing in a run: making the ticket, checking it, answering a bounce from outside
- * its route, or planning from the spec.
+ * its route, planning from the spec, or answering another clank's quick question (`ask_clank`).
  */
-export type RunRole = 'maker' | 'checker' | 'helper' | 'planner';
+export type RunRole = 'maker' | 'checker' | 'helper' | 'planner' | 'consult';
+
+/** The roles that work a ticket along its route, and so end with a finishing call. */
+export function isTicketRole(
+  role: RunRole | null | undefined,
+): role is 'maker' | 'checker' | 'helper' {
+  return role === 'maker' || role === 'checker' || role === 'helper';
+}
 
 /** What's happening on a ticket right now, for its card. */
 export interface TicketLive {

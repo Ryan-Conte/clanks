@@ -4,6 +4,7 @@ import { git } from '@clanks/workspace';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DesignHost } from '../design/service';
+import type { OrchestratorOptions } from '../orchestrator';
 import { sqliteModelRepository } from '../store/models';
 import { startTestOrchestrator, tempDir } from '../test-helpers';
 
@@ -123,11 +124,14 @@ export async function setup(
     githubFetch?: typeof fetch;
     /** Stands in for the app's hidden window, so designs can be measured and drawn. */
     designHost?: DesignHost;
+    /** Anything else the orchestrator takes: a browser, a mail server, GitLab. */
+    orchestrator?: Partial<OrchestratorOptions>;
   } = {},
 ) {
   const orchestrator = startTestOrchestrator({
     ...(options.githubFetch ? { githubFetch: options.githubFetch } : {}),
     ...(options.designHost ? { designHost: options.designHost } : {}),
+    ...options.orchestrator,
   });
   const { context } = orchestrator;
   sqliteModelRepository(context.store.db).putModel(model);

@@ -1,4 +1,5 @@
 import { type BrowserHost, PageDriver } from '@clanks/browser';
+import { paintSvg } from '@clanks/design';
 import type { DesignHost } from '@clanks/orchestrator';
 import type { BrowserWindow } from 'electron';
 import { writeFileSync } from 'node:fs';
@@ -10,14 +11,15 @@ const TIMEOUT_MS = 60_000;
  * mount, its tRPC calls must make it through the preload bridge to the orchestrator and the
  * migrated database, the crew's bundled priming docs must load, the bundled llama.cpp build must
  * start and report this machine's devices, the browser pane must read and click a page, and a
- * design's frame must be drawn, measured and pictured out of sight.
+ * design's frame must be drawn, measured and pictured out of sight, then exported as an SVG and a
+ * PDF, with a document printed beside it.
  * CI runs this against the packaged app on every platform, with `--screenshot=<file>` to keep a
  * picture of the window.
  */
 export async function runSmokeTest(
   window: BrowserWindow,
   browser: BrowserHost,
-  design: DesignHost,
+  design: Required<DesignHost>,
   screenshot?: string,
 ): Promise<string> {
   // Anything the window reports goes to the log, so a failure in CI says why.
@@ -47,7 +49,8 @@ export async function runSmokeTest(
         if (screenshot) await saveScreenshot(window, screenshot);
         const browsed = await checkBrowser(browser);
         const drawn = await checkDesign(design);
-        return `${text.trim().replace(/\s*\n\s*/g, ' | ')} | ${browsed} | ${drawn}`;
+        const exported = await checkExports(design, screenshot);
+        return `${text.trim().replace(/\s*\n\s*/g, ' | ')} | ${browsed} | ${drawn} | ${exported}`;
       }
     }
     if (Date.now() > deadline) {
@@ -108,6 +111,54 @@ async function checkDesign(host: DesignHost): Promise<string> {
   }
   if (!drawing.png || drawing.png.length < 100) throw new Error("A frame's picture came out empty");
   return `drew a frame (${Math.round(frame.w)}x${Math.round(frame.h)}, ${drawing.png.length}-byte picture)`;
+}
+
+/** A frame with what an export has to get right: a wrapped line, a corner, a shadow, an icon. */
+const EXPORT_FRAME = `<div data-design-root style="display: inline-block; position: relative;">
+<div data-key="n1" data-id="n1" style="box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; width: 320px; padding: 24px; background: #0a6cff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);">
+<div data-key="n2" data-id="n2" style="font-family: 'Inter Variable'; font-size: 28px; font-weight: 700; line-height: 1.2; color: #ffffff; white-space: pre-wrap;">Find your next board today</div>
+<svg xmlns="http://www.w3.org/2000/svg" data-key="n3" data-id="n3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 32px; height: 32px; display: block; color: #ffffff;"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+</div></div>`;
+
+/**
+ * Exports a frame as Studio does: an SVG with its text as text, line by line, and PDFs of it and
+ * of a page. With a screenshot asked for, the exports are saved beside it.
+ */
+async function checkExports(host: Required<DesignHost>, screenshot?: string): Promise<string> {
+  const painted = await host.paint({ html: EXPORT_FRAME, width: 320 });
+  const svg = paintSvg(painted, { title: 'Smoke' });
+  const lines = [...svg.matchAll(/<tspan [^>]*>([^<]*)<\/tspan>/g)].map((m) => m[1]);
+  if (
+    !svg.includes('rx="16"') ||
+    !svg.includes('fill="#0a6cff"') ||
+    !svg.includes('<feDropShadow') ||
+    !svg.includes('<path d="M5 12h14"') ||
+    lines.length !== 2 ||
+    lines.join(' ') !== 'Find your next board today'
+  ) {
+    throw new Error(`A frame's SVG came out as: ${svg.slice(0, 1200)}`);
+  }
+  const isPdf = (data: Uint8Array) =>
+    Buffer.from(data.subarray(0, 5)).toString('latin1') === '%PDF-';
+  const frame = await host.print({
+    html: EXPORT_FRAME,
+    page: { width: Math.ceil(painted.w), height: Math.ceil(painted.h) },
+  });
+  const page = await host.print({
+    html: '<style>@page { size: A4; margin: 20mm; }</style><h1>Launch notes</h1><p>We ship.</p>',
+    page: 'a4',
+  });
+  if (!isPdf(frame) || !isPdf(page)) throw new Error('Printing to PDF gave something else');
+  if (screenshot) {
+    const stem = screenshot.replace(/\.png$/i, '');
+    writeFileSync(`${stem}-frame.svg`, svg);
+    writeFileSync(`${stem}-frame.pdf`, frame);
+    writeFileSync(`${stem}-document.pdf`, page);
+  }
+  // Measuring still works after a print, which leaves its page size behind.
+  const again = await host.draw({ html: SMOKE_FRAME, width: 320, capture: null });
+  if (Math.round(again.boxes.n1?.w ?? 0) !== 320) throw new Error('Drawing broke after a print');
+  return `exported a frame (${svg.length}-byte SVG, ${frame.length}-byte PDF) and a ${page.length}-byte document`;
 }
 
 /** Best effort: capturing can fail before the first frame is drawn, which isn't a failed test. */

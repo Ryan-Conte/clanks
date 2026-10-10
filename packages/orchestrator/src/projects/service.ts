@@ -9,6 +9,7 @@ import {
   type Project,
   type ProjectMember,
   type ProjectPatch,
+  type RepoHost,
   newProjectSchema,
 } from '@clanks/core';
 import { GitError, git, gitVersion, initRepo, repoInfo } from '@clanks/workspace';
@@ -18,7 +19,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Clank, CrewService } from '../crew/crew';
-import type { GitHubService } from '../github/service';
+import type { RepoHostClient } from '../repos/host';
 import { project as projectTable, projectClank } from '../store/schema';
 import type { Db } from '../store/store';
 
@@ -42,7 +43,8 @@ export interface FolderCheck {
 export interface ProjectServiceOptions {
   db: Db;
   crew: CrewService;
-  github: GitHubService;
+  /** Where repositories are cloned from: GitHub or GitLab. */
+  hosts: (host: RepoHost) => RepoHostClient;
   now?: () => Date;
 }
 
@@ -59,7 +61,8 @@ function toProject(row: ProjectRow): Project {
     brief: row.brief,
     key: row.key,
     folder: row.folder,
-    repo: row.repo ?? null,
+    // Projects made before GitLab arrived are on GitHub.
+    repo: row.repo ? { ...row.repo, host: row.repo.host ?? 'github' } : null,
     baseBranch: row.baseBranch ?? null,
     model: row.provider && row.model ? { provider: row.provider, model: row.model } : null,
     maxRuns: row.maxRuns,
@@ -131,6 +134,17 @@ export class ProjectService extends EventEmitter<{ change: [projectId: string] }
     return this.members(id).some((m) => m.clankId === clankId);
   }
 
+  /** The projects a clank is in the crew of. */
+  using(clankId: string): Project[] {
+    const ids = this.options.db
+      .select({ projectId: projectClank.projectId })
+      .from(projectClank)
+      .where(eq(projectClank.clankId, clankId))
+      .all()
+      .map((r) => r.projectId);
+    return this.list().filter((p) => ids.includes(p.id));
+  }
+
   /** The model a clank runs on in a project, if the project says: its own there, or the crew's. */
   modelFor(id: string, clankId: string): ModelChoice | null {
     const member = this.members(id).find((m) => m.clankId === clankId);
@@ -151,7 +165,8 @@ export class ProjectService extends EventEmitter<{ change: [projectId: string] }
 
   /**
    * Makes a project. A local folder that isn't a repository yet becomes one, with what's in it
-   * committed, since the crew works on copies made with git. A GitHub repository is cloned first.
+   * committed, since the crew works on copies made with git. A GitHub or GitLab repository is
+   * cloned first.
    */
   async create(input: NewProject): Promise<Project> {
     const values = newProjectSchema.parse(input);
@@ -162,9 +177,9 @@ export class ProjectService extends EventEmitter<{ change: [projectId: string] }
 
     let folder: string;
     let repo: Project['repo'] = null;
-    if (values.workspace.kind === 'github') {
+    if (values.workspace.kind === 'github' || values.workspace.kind === 'gitlab') {
       folder = resolve(values.workspace.into);
-      repo = await this.options.github.clone(values.workspace.repo, folder);
+      repo = await this.options.hosts(values.workspace.kind).clone(values.workspace.repo, folder);
     } else {
       folder = await this.prepareFolder(values.workspace.path);
     }

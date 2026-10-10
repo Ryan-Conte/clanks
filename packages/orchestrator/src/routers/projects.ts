@@ -87,7 +87,12 @@ export const projectsRouter = router({
   /** Adds a clank to the crew, or takes one out. */
   setMember: userProcedure
     .input(z.object({ id: projectIdSchema, clankId: clankIdSchema, included: z.boolean() }))
-    .mutation(({ ctx, input }) => ctx.projects.setMember(input.id, input.clankId, input.included)),
+    .mutation(({ ctx, input }) => {
+      const members = ctx.projects.setMember(input.id, input.clankId, input.included);
+      // Tickets take the route the crew gives them now.
+      ctx.board.crewChanged(input.id);
+      return members;
+    }),
 
   setMemberModel: userProcedure
     .input(
@@ -177,10 +182,28 @@ export const boardRouter = router({
 
   accept: userProcedure.input(ticketIdSchema).mutation(({ ctx, input }) => ctx.board.accept(input)),
 
-  /** Approves a ticket that's ready, which merges its work. */
+  /** Approves a ticket that's ready, which merges its work, and sends it when it's an email. */
   approve: userProcedure
     .input(ticketIdSchema)
     .mutation(({ ctx, input }) => ctx.board.approve(input)),
+
+  /** Approves an email without sending it, for one the user sends themselves. */
+  approveUnsent: userProcedure
+    .input(ticketIdSchema)
+    .mutation(({ ctx, input }) => ctx.board.approve(input, { send: false })),
+
+  /** The user's own changes to a written hand-in that's waiting for them. */
+  editOutput: userProcedure
+    .input(
+      z.object({
+        id: ticketIdSchema,
+        patch: z.partialRecord(
+          z.enum(['title', 'body', 'subject', 'to', 'cc', 'note', 'plan', 'posts', 'path']),
+          z.unknown(),
+        ),
+      }),
+    )
+    .mutation(({ ctx, input }) => ctx.board.editOutput(input.id, input.patch)),
 
   reject: userProcedure
     .input(z.object({ id: ticketIdSchema, reason: z.string().trim().max(2000).default('') }))

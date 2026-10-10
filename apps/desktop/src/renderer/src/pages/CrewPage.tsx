@@ -28,16 +28,33 @@ const STAGES: Record<string, string> = {
 /** The crew: every clank's profile. */
 export function CrewPage() {
   const crew = useCrew();
+  const trpc = useTRPC();
   const { go } = useNav();
   const providers = useProviders();
+  const broken = useQuery(trpc.crew.broken.queryOptions()).data ?? [];
   return (
     <div className="relative mx-auto flex max-w-4xl flex-col gap-8 px-10 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-[-0.03em]">The crew</h1>
-        <p className="text-dim">
-          Give a clank a name, a colour and a model of its own, or change what it's told.
-        </p>
+      <header className="flex items-end justify-between gap-6">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-3xl font-semibold tracking-[-0.03em]">The crew</h1>
+          <p className="text-dim">
+            Give a clank a name, a colour and a model of its own, change what it's told, or make one
+            of your own.
+          </p>
+        </div>
+        <Button variant="primary" onClick={() => go({ page: 'new-clank' })}>
+          Make a clank
+        </Button>
       </header>
+      {broken.map((b) => (
+        <p
+          key={b.id}
+          className="rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm whitespace-pre-wrap text-rose-200"
+        >
+          The custom clank <span className="font-mono">{b.id}</span> can't be used until its doc is
+          fixed: {b.error}
+        </p>
+      ))}
       <ul className="flex flex-col divide-y divide-line rounded-3xl border border-line bg-panel/60">
         {crew.map((clank) => (
           <li key={clank.id}>
@@ -71,7 +88,8 @@ function CrewRow(props: {
         <span className="flex items-center gap-2">
           <span className="font-medium">{clank.name}</span>
           <span className="text-[12px] text-dim">{clank.role}</span>
-          {clank.doc === 'edited' && <Badge tone="lavender">Edited</Badge>}
+          {clank.custom && <Badge tone="mint">Custom</Badge>}
+          {clank.doc === 'edited' && !clank.custom && <Badge tone="lavender">Edited</Badge>}
           {clank.docError && <Badge tone="rose">Doc has problems</Badge>}
         </span>
         <span className="truncate text-[13px] text-white/60">{clank.summary}</span>
@@ -106,6 +124,7 @@ export function ClankPage({ clankId }: { clankId: string }) {
             <p className="text-dim">{clank.summary}</p>
             <span className="flex flex-wrap gap-1.5">
               <Badge>{clank.role}</Badge>
+              {clank.custom && <Badge tone="mint">Custom</Badge>}
               <Badge>
                 {clank.kind === 'maker' ? 'Maker' : 'Checker'} ·{' '}
                 {STAGES[clank.stage] ?? clank.stage}
@@ -126,6 +145,7 @@ export function ClankPage({ clankId }: { clankId: string }) {
       <ToolsPanel clank={clank} />
       <BrowserPanel clank={clank} />
       <DocPanel clank={clank} />
+      {clank.custom && <DeletePanel clank={clank} />}
     </div>
   );
 }
@@ -223,6 +243,7 @@ function DocPanel({ clank }: { clank: ClankSummary }) {
   const reset = useMutation(trpc.crew.resetDoc.mutationOptions({ onSuccess: refresh }));
   const text = draft ?? doc.data?.text ?? '';
   const dirty = draft !== null && draft !== doc.data?.text;
+  const size = useQuery(trpc.crew.tokens.queryOptions(clank.id));
 
   return (
     <Panel
@@ -234,7 +255,15 @@ function DocPanel({ clank }: { clank: ClankSummary }) {
           app and never reaches the model.
         </>
       }
-      actions={doc.data?.edited ? <Badge tone="lavender">Edited</Badge> : <Badge>As shipped</Badge>}
+      actions={
+        clank.custom ? (
+          <Badge tone="mint">Yours</Badge>
+        ) : doc.data?.edited ? (
+          <Badge tone="lavender">Edited</Badge>
+        ) : (
+          <Badge>As shipped</Badge>
+        )
+      }
     >
       {clank.docError && (
         <p className="rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm whitespace-pre-wrap text-rose-200">
@@ -263,6 +292,15 @@ function DocPanel({ clank }: { clank: ClankSummary }) {
               Discard changes
             </Button>
           )}
+          {size.data && (
+            <span
+              className={`self-center text-[12px] ${size.data.tokens > size.data.budget ? 'text-amber-200' : 'text-dim'}`}
+              title="The prompt with the rules the whole crew shares. Under the budget, it fits small local models."
+            >
+              About {size.data.tokens.toLocaleString('en')} of{' '}
+              {size.data.budget.toLocaleString('en')} tokens
+            </span>
+          )}
         </div>
         {doc.data?.edited &&
           (confirmReset ? (
@@ -286,6 +324,48 @@ function DocPanel({ clank }: { clank: ClankSummary }) {
           {(save.error ?? reset.error)!.message}
         </p>
       )}
+    </Panel>
+  );
+}
+
+/** Taking a custom clank out of the library, for good. */
+function DeletePanel({ clank }: { clank: ClankSummary }) {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const { go } = useNav();
+  const [confirming, setConfirming] = useState(false);
+  const remove = useMutation(
+    trpc.crew.remove.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries({ queryKey: trpc.crew.list.queryKey() });
+        go({ page: 'crew', clankId: null });
+      },
+    }),
+  );
+  return (
+    <Panel
+      title={`Delete ${clank.name}`}
+      description="It goes from your library, with its chats. Take it out of each project's crew first; what it did on tickets stays."
+    >
+      {confirming ? (
+        <span className="flex gap-2">
+          <Button
+            variant="danger"
+            disabled={remove.isPending}
+            onClick={() => remove.mutate(clank.id)}
+          >
+            Delete {clank.name}
+          </Button>
+          <Button variant="ghost" onClick={() => setConfirming(false)}>
+            Keep it
+          </Button>
+        </span>
+      ) : (
+        <Button variant="danger" className="self-start" onClick={() => setConfirming(true)}>
+          Delete clank…
+        </Button>
+      )}
+      {remove.error && <ErrorText>{remove.error.message}</ErrorText>}
     </Panel>
   );
 }

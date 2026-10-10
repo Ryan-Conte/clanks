@@ -19,7 +19,7 @@ model:
 tools:
   allow: [review_pass, spec_read, fs_read, fs_list, fs_search,
           git_status, git_diff, git_log, shell_output, shell_stop,
-          browser_*, design_read, design_render]
+          browser_*, design_read, design_render, artifact_read]
   ask: [shell_exec, shell_start]
 ---
 

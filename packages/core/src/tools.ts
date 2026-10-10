@@ -46,7 +46,7 @@ export const TOOL_GROUPS = {
   review: ['review_pass'],
   crew: ['post_progress', 'ask_clank', 'ask_user', 'submit_output', 'fail', 'ticket_bounce'],
   context: ['context_search', 'context_write', 'memory_search', 'memory_write'],
-  artifacts: ['artifact_save'],
+  artifacts: ['artifact_save', 'artifact_read'],
   routines: ['routine_list', 'routine_get', 'routine_propose'],
 } as const;
 

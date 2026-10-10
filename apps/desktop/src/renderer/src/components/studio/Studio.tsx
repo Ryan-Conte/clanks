@@ -31,6 +31,7 @@ import { useTRPC } from '../../lib/trpc';
 import { Button, ErrorText } from '../ui';
 import { ReviewTray } from '../workbench/DiffPane';
 import { Canvas, MAX_ZOOM, MIN_ZOOM, type Pin, type PinPlace, type Viewport } from './Canvas';
+import { ExportPanel } from './Export';
 import { Layers } from './Layers';
 import { Library } from './Library';
 import { Properties } from './Properties';
@@ -114,6 +115,7 @@ export function Studio(props: {
     props.compact ? null : 'design',
   );
   const [playing, setPlaying] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [panning, setPanning] = useState(false);
   const [marked, setMarked] = useState<string[]>([]);
   const [follow, setFollow] = useState(true);
@@ -646,6 +648,13 @@ export function Studio(props: {
         <Mini title="Play the prototype" onClick={() => setPlaying(true)}>
           <PlayIcon />
         </Mini>
+        <Mini
+          title="Export a frame as PNG, SVG or PDF, or a component as code"
+          active={exporting}
+          onClick={() => setExporting((e) => !e)}
+        >
+          Export
+        </Mini>
         <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
         <Mini
           title={right ? 'Hide the panel' : 'Design, tokens and review'}
@@ -658,6 +667,17 @@ export function Studio(props: {
 
       {/* Beside a chat the panels lie over the canvas rather than squeezing it. */}
       <div className="relative flex min-h-0 flex-1">
+        {exporting && design && (
+          <ExportPanel
+            source={source}
+            file={snapshot.file}
+            design={design}
+            view={view}
+            selection={selection}
+            mode={mode}
+            onClose={() => setExporting(false)}
+          />
+        )}
         {left && (
           <aside
             className={`flex w-60 shrink-0 flex-col border-r border-line ${props.compact ? 'absolute top-0 bottom-0 left-0 z-20 bg-panel shadow-2xl' : 'bg-panel/60'}`}

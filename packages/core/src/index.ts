@@ -1,3 +1,4 @@
+export * from './artifacts';
 export * from './board';
 export * from './browser';
 export * from './chat';
@@ -7,6 +8,7 @@ export * from './crew';
 export * from './home';
 export * from './mcp';
 export * from './models';
+export * from './outputs';
 export * from './projects';
 export * from './providers';
 export * from './secrets';

@@ -20,7 +20,7 @@ tools:
           design_tokens_set, design_make_component, design_link,
           design_render, design_lint,
           fs_read, fs_list, fs_search, fs_write, fs_edit,
-          artifact_save, board_create_ticket]
+          artifact_save, artifact_read, board_create_ticket]
   ask: [web_search, web_fetch, browser_*]
 ---
 

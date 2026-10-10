@@ -12,6 +12,7 @@ import { DraftChat, LiveChat } from './pages/ChatPage';
 import { ClankPage, CrewPage } from './pages/CrewPage';
 import { HomePage } from './pages/HomePage';
 import { ModelsPage } from './pages/ModelsPage';
+import { NewClankPage } from './pages/NewClankPage';
 import { NewProjectPage } from './pages/NewProjectPage';
 import { Onboarding } from './pages/Onboarding';
 import { ProjectPage } from './pages/ProjectPage';
@@ -77,6 +78,8 @@ function Page({ route }: { route: Route }) {
           run={route.run ?? null}
         />
       );
+    case 'new-clank':
+      return <NewClankPage />;
     case 'new-project':
       return <NewProjectPage />;
     case 'models':
@@ -115,6 +118,7 @@ function TitleBar({ route, welcome }: { route: Route; welcome: boolean }) {
   } else {
     title = {
       home: 'Home',
+      'new-clank': 'New clank',
       'new-project': 'New project',
       models: 'Models',
       settings: 'Settings',

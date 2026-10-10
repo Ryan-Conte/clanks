@@ -32,11 +32,11 @@ export interface AssembledPrompt {
 }
 
 /**
- * What one run of a clank is for: a chat with the user, a ticket it works on its own, or planning
- * the board from a spec the user approved.
+ * What one run of a clank is for: a chat with the user, a ticket it works on its own, planning the
+ * board from a spec the user approved, or a quick answer to another clank's question.
  */
 export interface RunContext {
-  mode: 'chat' | 'ticket' | 'plan';
+  mode: 'chat' | 'ticket' | 'plan' | 'consult';
   /** The project the chat or run is in, by name. */
   project: string | null;
   /** A ticket or planning run's own part of the run context, written by the board. */

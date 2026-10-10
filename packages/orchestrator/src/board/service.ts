@@ -15,8 +15,10 @@ import {
   type OutputType,
   type Project,
   type ProjectSummary,
+  REPO_HOST_NAMES,
   type RunRole,
   type Settings,
+  type SourceShot,
   type SpecStory,
   type SpecVersion,
   type SpecVersionInfo,
@@ -34,27 +36,42 @@ import {
   bounceTargets,
   budgetReached,
   changedStories,
+  checkOutput,
   checkRequired,
   checkersFor,
   columnOf,
   criteriaOf,
   currentClank,
   currentRole,
+  emailOf,
   emptyUsage,
+  isTicketRole,
+  isWrittenOutput,
   makersOf,
   moveRefusal,
   normalizeStoryId,
   noteKindSchema,
+  outputDocument,
   outputTypeSchema,
   parseCriterion,
   parseSpec,
   pickMaker,
+  pullRequestName,
   routeFor,
+  samePage,
+  sourcesOf,
 } from '@clanks/core';
-import { type BoardAccess, type ContextAccess, type TicketDraft, ToolFailure } from '@clanks/tools';
+import {
+  type BoardAccess,
+  type ContextAccess,
+  type CrewAccess,
+  type TicketDraft,
+  ToolFailure,
+} from '@clanks/tools';
 import { mergeBase, resolveCommit } from '@clanks/workspace';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { ArtifactError, type ArtifactService } from '../artifacts/service';
 import {
   ContextError,
   type ContextService,
@@ -66,6 +83,7 @@ import {
 import type { Clank, CrewService } from '../crew/crew';
 import { layerBudgets } from '../crew/prompt';
 import { DeliveryError, type DeliveryService } from '../delivery/service';
+import { EmailError, type EmailService } from '../email/service';
 import type { ProjectService } from '../projects/service';
 import type { WorkBase } from '../workspace/service';
 import { BoardStore, type UsageRow } from './store';
@@ -93,11 +111,14 @@ export class BoardError extends Error {
 const FEED_LINES = 120;
 /** What a run's memory layer always includes, newest first, besides what matches the ticket. */
 const RECENT_MEMORIES = 4;
+/** The most pictures of its sources a research note keeps. */
+const MAX_SOURCE_SHOTS = 8;
 
 /** What a run is for, as its prompt and tools need it. */
 export interface RunScope {
   role: RunRole;
-  ticket: Ticket;
+  /** The ticket the run is on. Null for a quick question asked from a chat. */
+  ticket: Ticket | null;
   /** The run context's own part: the mode, the ticket, and how to finish. */
   brief: string;
   /**
@@ -120,6 +141,8 @@ export interface ChatScope {
   run: RunScope | null;
   access: BoardAccess;
   contextAccess: ContextAccess;
+  /** The rest of the crew, to ask a quick question. Null in a run that is itself an answer. */
+  crewAccess: CrewAccess | null;
 }
 
 /** How a reply in a run ended. */
@@ -172,6 +195,18 @@ export interface RunHost {
   modelFor(clankId: string, projectId: string): ModelChoice;
   /** A chat in brief, for its clank's memory: what was asked and the latest answer. */
   recap(conversationId: string): string | null;
+  /**
+   * Puts one clank's quick question to another, in a run of its own, and resolves with the answer.
+   * Rejects with a `ToolFailure` when there's none.
+   */
+  consult(input: {
+    from: Conversation;
+    clankId: string;
+    question: string;
+    title: string;
+  }): Promise<string>;
+  /** The pages a run's browser showed, each with the picture kept of it, oldest first. */
+  pictures(conversationId: string): { url: string; image: string }[];
 }
 
 /** What the scheduler needs to know about the built-in runtime's models. */
@@ -202,6 +237,15 @@ export interface BoardServiceOptions {
     conversationId: string,
     file: string | undefined,
   ) => Promise<{ file: string; frames: string[]; lint: string }>;
+  /** Where hand-ins that aren't code are kept, with every version. */
+  artifacts?: ArtifactService;
+  /** Sends the emails the user approves. Without it, they're approved unsent. */
+  email?: EmailService;
+  /**
+   * Writes a document into a run's worktree, for a hand-in that names where in the project it
+   * goes. Rejects with a `BoardError` when it can't.
+   */
+  writeDocument?: (conversationId: string, path: string, text: string) => Promise<void>;
   capacity?: ModelCapacity;
   now?: () => Date;
 }
@@ -538,6 +582,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     for (const conversation of this.host?.forTicket(id) ?? []) {
       await this.host!.delete(conversation.id);
     }
+    await this.options.artifacts?.removeTicket(id);
     const draft = this.store.specs(ticket.projectId).find((s) => s.ticketId === id);
     if (draft && draft.status !== 'approved') {
       this.store.updateSpec(draft.id, { ticketId: null, status: 'draft', updatedAt: this.now() });
@@ -558,11 +603,12 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
   }
 
   /**
-   * Approves a ticket that's ready for the user, which merges its work: its pull request on GitHub,
-   * or its branch into the base in the project's folder. For a spec, its draft becomes the project's
-   * spec, and Atlas plans the board from it.
+   * Approves a ticket that's ready for the user, which merges its work: its pull request on its
+   * host, or its branch into the base in the project's folder. For a spec, its draft becomes the
+   * project's spec, and Atlas plans the board from it. An email goes out through the user's own
+   * account, exactly as it's written, unless `send` is false.
    */
-  async approve(id: string): Promise<Ticket> {
+  async approve(id: string, options: { send?: boolean } = {}): Promise<Ticket> {
     const ticket = this.ticket(id);
     if (columnOf(ticket) !== 'ready') throw new BoardError(`${ticket.key} isn't ready for you yet`);
     const project = this.options.projects.get(ticket.projectId);
@@ -579,6 +625,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       this.pump(ticket.projectId);
       return this.ticket(id);
     }
+    if (ticket.type === 'email' && options.send !== false) await this.sendEmail(ticket);
     let merged: { commit: string; how: string } | null = null;
     if (this.options.delivery && ticket.delivery?.changed) {
       try {
@@ -614,6 +661,108 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     this.finish(current, 'approved', `approved ${ticket.key}`);
     this.pump(ticket.projectId);
     return this.ticket(id);
+  }
+
+  /** Sends an email ticket's draft through the user's account, once, exactly as it's written. */
+  private async sendEmail(ticket: Ticket): Promise<void> {
+    // Approving again after a merge that failed doesn't send it twice.
+    if (ticket.sent?.at) return;
+    const draft = emailOf(ticket.output);
+    if (!draft) throw new BoardError(`${ticket.key} has no email to send`);
+    const email = this.options.email;
+    if (!email) {
+      throw new BoardError("Emails can't be sent here. Approve it without sending instead.");
+    }
+    const base = { to: draft.to, cc: draft.cc, messageId: null };
+    try {
+      const sent = await email.send(draft);
+      this.store.updateTicket(ticket.id, {
+        sent: { ...base, ...sent, at: this.now().toISOString(), error: null },
+      });
+      this.event(
+        ticket.projectId,
+        ticket.id,
+        'user',
+        'sent',
+        `sent "${short(draft.subject, 60)}" to ${draft.to.join(', ')} (${ticket.key})`,
+      );
+    } catch (error) {
+      if (!(error instanceof EmailError)) throw error;
+      this.store.updateTicket(ticket.id, {
+        sent: { ...base, from: '', at: null, error: error.message },
+      });
+      this.event(
+        ticket.projectId,
+        ticket.id,
+        'app',
+        'failed',
+        `couldn't send ${ticket.key}: ${short(error.message)}`,
+      );
+      throw new BoardError(error.message);
+    }
+  }
+
+  /**
+   * The user's own changes to a written hand-in that's waiting for them, such as an email's
+   * recipients or a line of its text. It's checked like a clank's, and kept as a new version.
+   */
+  editOutput(id: string, patch: Record<string, unknown>): Ticket {
+    const ticket = this.ticket(id);
+    if (columnOf(ticket) !== 'ready') throw new BoardError(`${ticket.key} isn't ready for you yet`);
+    if (!isWrittenOutput(ticket.type) || !ticket.output) {
+      throw new BoardError(`${ticket.key} has nothing written to change`);
+    }
+    const { warnings: _warnings, ...before } = ticket.output;
+    const checked = checkOutput(ticket.type, { ...before, ...patch, type: ticket.type });
+    if (checked.problems.length > 0) throw new BoardError(checked.problems.join(' '));
+    const output = this.keep(ticket, 'user', null, withWarnings(checked.output, checked.warnings));
+    this.store.updateTicket(id, {
+      output,
+      // A send that failed is worth another try once the email has changed.
+      ...(ticket.sent && !ticket.sent.at ? { sent: null } : {}),
+      updatedAt: this.now(),
+    });
+    this.event(ticket.projectId, id, 'user', 'updated', `edited what ${ticket.key} handed in`);
+    return this.ticket(id);
+  }
+
+  /**
+   * Keeps a written hand-in with its ticket as a document, a version for each time it's handed in
+   * or edited. A research note also keeps a picture of each source its maker opened in the browser.
+   */
+  private keep(
+    ticket: Ticket,
+    author: string,
+    conversationId: string | null,
+    output: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const artifacts = this.options.artifacts;
+    const document = outputDocument(output);
+    if (!artifacts || !document) return output;
+    const scope = { ticketId: ticket.id, conversationId, projectId: ticket.projectId, author };
+    try {
+      artifacts.save({
+        ...scope,
+        kind: ticket.type === 'other' || !isWrittenOutput(ticket.type) ? 'doc' : ticket.type,
+        name: document.name,
+        data: document.text,
+        mediaType: document.mediaType,
+      });
+      if (ticket.type !== 'research' || !conversationId) return output;
+      const pages = this.host?.pictures(conversationId) ?? [];
+      const shots: SourceShot[] = [];
+      for (const source of sourcesOf(output)) {
+        const page = source.url ? pages.find((p) => samePage(p.url, source.url!)) : undefined;
+        if (!page || shots.length >= MAX_SOURCE_SHOTS) continue;
+        const picture = artifacts.keepPicture(scope, page.image, `source-${source.n}`);
+        if (picture) shots.push({ source: source.n, url: page.url, artifact: picture.id });
+      }
+      return shots.length > 0 ? { ...output, screenshots: shots } : output;
+    } catch (error) {
+      if (!(error instanceof ArtifactError)) throw error;
+      console.error('Keeping a hand-in failed', error);
+      return output;
+    }
   }
 
   /** Sends a ticket that's ready for the user back to its maker, with what to change. */
@@ -677,6 +826,36 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     this.store.updateTicket(ticket.id, { delivery: next, updatedAt: this.now() });
     this.event(project.id, ticket.id, 'user', 'updated', `edited ${ticket.key}'s work by hand`);
     this.emit('change', project.id);
+  }
+
+  /**
+   * The project's crew changed: tickets take the route the crew gives them now, so a checker added
+   * part way through a project checks what hasn't reached it yet. A ticket stays with whoever has
+   * it; one whose clank left the crew keeps its route, and says so when its turn comes.
+   */
+  crewChanged(projectId: string): void {
+    const crew = this.members(projectId);
+    let changed = false;
+    for (const ticket of this.store.tickets(projectId)) {
+      if (ticket.doneAt) continue;
+      const maker = ticket.route[0]?.clankId ?? ticket.assignee;
+      // A maker that left the crew can't be routed to: the ticket waits as it is.
+      if (maker && !crew.some((c) => c.id === maker)) continue;
+      const skipped = ticket.skipped.filter((s) => crew.some((c) => c.id === s.clankId));
+      const route = routeFor(ticket.type, maker, crew, skipped);
+      if (JSON.stringify(route) === JSON.stringify(ticket.route)) continue;
+      let step = ticket.step;
+      if (ticket.step >= ticket.route.length) step = route.length;
+      else if (ticket.step >= 0) {
+        const at = route.findIndex((s) => s.clankId === ticket.route[ticket.step]!.clankId);
+        if (at === -1) continue;
+        step = at;
+      }
+      this.store.updateTicket(ticket.id, { route, step, skipped, updatedAt: this.now() });
+      changed = true;
+    }
+    if (changed) this.emit('change', projectId);
+    this.pump(projectId);
   }
 
   /** Starts a paused or failed run again, with a note from the user if they give one. */
@@ -828,7 +1007,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
               ticket.id,
               'user',
               'merged',
-              `merged PR #${pr.number} on GitHub (${ticket.key})`,
+              `merged ${pullRequestName(project.repo.host, pr.number)} on ${REPO_HOST_NAMES[project.repo.host]} (${ticket.key})`,
             );
             this.finish(this.ticket(ticket.id), 'approved', `approved ${ticket.key}`);
             this.pump(project.id);
@@ -847,6 +1026,9 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     this.options.projects.get(id);
     for (const conversation of this.host?.inProject(id) ?? []) {
       await this.host!.delete(conversation.id);
+    }
+    for (const ticket of this.store.tickets(id)) {
+      await this.options.artifacts?.removeTicket(ticket.id);
     }
     this.options.projects.remove(id);
   }
@@ -884,7 +1066,10 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     const tickets = this.store.tickets(project.id);
     const names = this.names();
     let run: RunScope | null = null;
-    if (conversation.ticketId && conversation.role) {
+    if (conversation.role === 'consult') {
+      const ticket = tickets.find((t) => t.id === conversation.ticketId) ?? null;
+      run = { role: 'consult', ticket, brief: consultBrief(ticket, names), design: null };
+    } else if (conversation.ticketId && conversation.role) {
       const ticket = tickets.find((t) => t.id === conversation.ticketId);
       if (ticket && conversation.role === 'planner') {
         run = {
@@ -922,9 +1107,10 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         };
       }
     }
-    const hint = run
-      ? `${run.ticket.title} ${run.ticket.description.slice(0, 600)} ${run.ticket.type}`
-      : (options.hint ?? '');
+    const hint =
+      run?.ticket && run.role !== 'consult'
+        ? `${run.ticket.title} ${run.ticket.description.slice(0, 600)} ${run.ticket.type}`
+        : (options.hint ?? '');
     const budgets = layerBudgets(options.window);
     const specs = this.store.specs(project.id);
     const approved = specs.filter((s) => s.status === 'approved').at(-1) ?? null;
@@ -952,6 +1138,41 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       run,
       access: this.access(project, conversation),
       contextAccess: this.contextAccess(project, conversation),
+      // An answer to a question doesn't ask questions of its own.
+      crewAccess: conversation.role === 'consult' ? null : this.crewAccess(project, conversation),
+    };
+  }
+
+  /** The rest of a project's crew, for one clank to put a quick question to another. */
+  private crewAccess(project: Project, conversation: Conversation): CrewAccess {
+    return {
+      ask: async ({ clank, question }) => {
+        const crew = this.members(project.id);
+        const names = this.names();
+        const target = this.memberId(clank, crew);
+        const others = crew.filter((c) => c.id !== conversation.clankId);
+        if (!target || target === conversation.clankId) {
+          throw new ToolFailure(
+            others.length === 0
+              ? "There's nobody else in this project's crew to ask."
+              : `${target ? "That's you." : `There's no ${clank} in this crew.`} You can ask ${others.map((c) => `${c.name} (${c.id})`).join(', ')}.`,
+          );
+        }
+        if (!this.host) throw new ToolFailure("There's nobody to ask here.");
+        this.event(
+          project.id,
+          conversation.ticketId,
+          conversation.clankId,
+          'asked',
+          `asked ${names.clank(target)}: ${short(question, 80)}`,
+        );
+        return this.host.consult({
+          from: conversation,
+          clankId: target,
+          question,
+          title: `${names.clank(conversation.clankId)} asks: ${short(question, 60)}`,
+        });
+      },
     };
   }
 
@@ -999,8 +1220,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
 
   /** The worktree and branch name for a run: the ticket's key for its maker. */
   workName(conversation: Pick<Conversation, 'ticketId' | 'role' | 'clankId'>): string | null {
-    if (!conversation.ticketId || !conversation.role || conversation.role === 'planner')
-      return null;
+    if (!conversation.ticketId || !isTicketRole(conversation.role)) return null;
     const ticket = this.store.ticket(conversation.ticketId);
     if (!ticket) return null;
     return conversation.role === 'maker' ? ticket.key : `${ticket.key}-${conversation.clankId}`;
@@ -1013,7 +1233,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
   async workBase(conversation: Conversation): Promise<WorkBase | null> {
     const delivery = this.options.delivery;
     if (!delivery || !conversation.ticketId || !conversation.projectId) return null;
-    if (!conversation.role || conversation.role === 'planner') return null;
+    if (!isTicketRole(conversation.role)) return null;
     const ticket = this.store.ticket(conversation.ticketId);
     const project = this.options.projects.find(conversation.projectId);
     if (!ticket || !project) return null;
@@ -1055,6 +1275,11 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
 
   private settle(conversation: Conversation, outcome: ReplyOutcome): void {
     const projectId = conversation.projectId!;
+    if (conversation.role === 'consult') {
+      // An answer to another clank's question: whoever asked takes it from there.
+      this.emit('change', projectId);
+      return;
+    }
     if (!conversation.role) {
       const recap = this.host?.recap(conversation.id);
       if (recap) {
@@ -1139,8 +1364,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
 
   /** A run's ticket, while it's this run's turn on it. */
   private runTicket(conversation: Conversation): Ticket | null {
-    if (!conversation.ticketId || !conversation.role || conversation.role === 'planner')
-      return null;
+    if (!conversation.ticketId || !isTicketRole(conversation.role)) return null;
     const ticket = this.store.ticket(conversation.ticketId);
     if (!ticket || !this.isTurn(ticket, conversation)) return null;
     return ticket;
@@ -1305,6 +1529,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       detour: null,
       queued: null,
       delivery: null,
+      sent: null,
       outcome: null,
       createdAt: now,
       updatedAt: now,
@@ -1722,7 +1947,8 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     const byModel = new Map<string, number>();
     let running = 0;
     for (const reply of this.host?.active() ?? []) {
-      if (reply.projectId === projectId && reply.role) running++;
+      // A quick answer to another clank rides along with the run that asked for it.
+      if (reply.projectId === projectId && reply.role && reply.role !== 'consult') running++;
       if (reply.model && !reply.asking) {
         const key = modelKey(reply.model);
         byModel.set(key, (byModel.get(key) ?? 0) + 1);
@@ -1828,6 +2054,11 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     });
     this.emit('change', ticket.projectId);
     this.pump(ticket.projectId);
+  }
+
+  /** The words for a project's request to merge a branch: `PR #12` on GitHub, `MR !12` on GitLab. */
+  private prName(project: Project, number: number): string {
+    return pullRequestName(project.repo?.host ?? 'github', number);
   }
 
   /** The run a clank has on a ticket in a role, if it has one already. */
@@ -2095,7 +2326,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         ticketId,
         maker ?? 'app',
         'pushed',
-        `opened PR #${next.pr.number} for ${ticket.key}`,
+        `opened ${this.prName(project, next.pr.number)} for ${ticket.key}`,
       );
     } else if (next.pr) {
       this.event(
@@ -2103,7 +2334,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         ticketId,
         maker ?? 'app',
         'pushed',
-        `updated PR #${next.pr.number} for ${ticket.key}`,
+        `updated ${this.prName(project, next.pr.number)} for ${ticket.key}`,
       );
     }
   }
@@ -2201,7 +2432,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     const names = () => this.names();
     /** The ticket this run works, as it is now, while it's this run's turn. */
     const own = (...roles: RunRole[]): Ticket => {
-      const ticket = conversation.role !== 'planner' ? this.runTicket(conversation) : null;
+      const ticket = this.runTicket(conversation);
       if (!ticket) {
         const on = conversation.ticketId ? this.store.ticket(conversation.ticketId) : null;
         throw new BoardError(
@@ -2253,6 +2484,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
           all: this.store.tickets(project.id),
           bounces: this.store.bounces([ticket.id]),
           names: names(),
+          host: project.repo?.host,
         });
       }),
 
@@ -2416,6 +2648,21 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
           }
           this.store.updateSpec(draft.id, { status: 'review', updatedAt: this.now() });
         }
+        if (isWrittenOutput(ticket.type)) {
+          const checked = checkOutput(ticket.type, output);
+          if (checked.problems.length > 0) {
+            throw new BoardError(
+              `It isn't ready to hand in. Fix ${checked.problems.length === 1 ? 'this' : 'these'}, then call submit_output again:\n${checked.problems.map((p) => `- ${p}`).join('\n')}`,
+            );
+          }
+          output = { ...withWarnings(checked.output, checked.warnings), type: ticket.type };
+          // A document that names where it goes in the project is written there, on the branch.
+          const document = outputDocument(output);
+          if (typeof output.path === 'string' && document) {
+            if (!this.options.writeDocument) delete output.path;
+            else await this.options.writeDocument(conversation.id, output.path, document.text);
+          }
+        }
         if (ticket.type === 'design' && this.options.designCheck) {
           const checked = await this.options.designCheck(
             conversation.id,
@@ -2453,7 +2700,14 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         }
         // Handing in took a moment: make sure it's still this run's turn.
         const current = own('maker');
-        this.store.updateTicket(current.id, { output, delivery, updatedAt: this.now() });
+        const handed = this.keep(current, actor, conversation.id, output);
+        this.store.updateTicket(current.id, {
+          output: handed,
+          delivery,
+          // What's handed in again hasn't been sent, whatever the last try came to.
+          ...(current.sent ? { sent: null } : {}),
+          updatedAt: this.now(),
+        });
         summary(
           'Handed in',
           current,
@@ -2465,9 +2719,12 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         const who = currentClank(next);
         const pushing =
           delivery?.changed && project.repo
-            ? ' The app is pushing your branch and opening its pull request.'
+            ? ` The app is pushing your branch and opening its ${pullRequestName(project.repo.host)}.`
             : '';
-        return `Handed in.${pushing} ${current.key} goes to ${who ? names().clank(who) : this.options.userName()} next. Your run ends here.`;
+        const warned = Array.isArray(handed.warnings)
+          ? ` Noted on the ticket: ${handed.warnings.join(' ')}`
+          : '';
+        return `Handed in.${pushing}${warned} ${current.key} goes to ${who ? names().clank(who) : this.options.userName()} next. Your run ends here.`;
       }),
 
       pass: guard((review) => {
@@ -2735,7 +2992,13 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     const lines = [
       `Mode: ticket. You are working ${ticket.key} on your own, as ${as}.`,
       '',
-      ticketDetail(ticket, { all, bounces: this.store.bounces([ticket.id]), names, you: clankId }),
+      ticketDetail(ticket, {
+        all,
+        bounces: this.store.bounces([ticket.id]),
+        names,
+        you: clankId,
+        host: this.options.projects.find(ticket.projectId)?.repo?.host,
+      }),
       '',
     ];
     if (role === 'helper') {
@@ -2752,6 +3015,8 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         lines.push(
           `This ticket writes spec v${ticket.specVersion ?? 1}. Save each draft as you go; Atlas reviews the latest one.`,
         );
+      } else if (isWrittenOutput(ticket.type)) {
+        lines.push(writtenBrief(ticket.type, names));
       } else {
         lines.push(
           `Your work goes on your branch \`clanks/${ticket.key}\`. Commit it as you go; whatever you leave uncommitted is committed for you when you hand in.${ticket.type === 'pr' ? ' The app pushes the branch and opens the pull request; you never push or merge.' : ''}`,
@@ -2777,6 +3042,11 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       } else if (ticket.delivery?.changed) {
         lines.push(
           `Your worktree has the maker's branch \`${ticket.delivery.branch}\` as it was handed in. \`git_diff\` with \`against\` set to \`base\` shows the whole change.`,
+        );
+      }
+      if (isWrittenOutput(ticket.type)) {
+        lines.push(
+          `What was handed in is under "Handed in" above, in full. Check it against each criterion, and that every fact, name, date and price in it has a source: the spec, a dependency's output, or its own list of sources. Anything under \`warnings\` is what the app noticed; decide whether it matters. ${ticket.type === 'email' ? `Nothing has been sent: ${names.user} sends it after approving.` : ticket.type === 'campaign' ? `Nothing has been posted: ${names.user} approves each post.` : ''}`.trim(),
         );
       }
       if (ticket.type === 'design') {
@@ -2891,6 +3161,43 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+/** What a run answering another clank's quick question is told. */
+export function consultBrief(ticket: Ticket | null, names: Names): string {
+  return [
+    `Mode: consult. Another clank in the crew has put a quick question to you, in the message below${ticket ? `, while working ${ticket.key}: ${ticket.title}` : ''}. Answer it in your reply: briefly, with where you found each fact, and say so plainly when you don't know.`,
+    '',
+    `Use your tools if the answer needs them. You aren't working a ticket, so there is nothing to hand in and nobody to ask: your reply goes straight back to the clank that asked. A call that would need ${names.user}'s approval is turned down here, so do without it.`,
+  ].join('\n');
+}
+
+/** What the maker of a written hand-in is told about where it goes. */
+function writtenBrief(type: OutputType, names: Names): string {
+  const kept =
+    'What you hand in is the work: it is kept with the ticket, a version for each time you hand it in, and there is nothing to commit.';
+  switch (type) {
+    case 'email':
+      return `${kept} You draft; ${names.user} sends it from their own account after approving it, and can change who it goes to first. Never write as if it has been sent, and never guess an address.`;
+    case 'campaign':
+      return `${kept} Nothing is posted: ${names.user} approves the plan and each post. A post that needs a picture names Prism's frame for it in \`visual\`, or says what the picture should show.`;
+    case 'research':
+      return `${kept} Open each key source in the browser at least once: the app keeps a picture of the page with your note. Working notes you want to keep go in artifact_save.`;
+    case 'doc':
+    case 'copy':
+      return `${kept} If the ticket says where it goes in the project, give that as \`path\`, such as \`docs/launch.md\`, and the app writes it there on the ticket's branch to be merged; otherwise leave \`path\` out.`;
+    default:
+      return kept;
+  }
+}
+
+/** A hand-in with what the app noticed about it, or without the field when there's nothing. */
+function withWarnings(
+  output: Record<string, unknown>,
+  warnings: string[],
+): Record<string, unknown> {
+  const { warnings: _old, ...rest } = output;
+  return warnings.length > 0 ? { ...rest, warnings } : rest;
 }
 
 /** Small models read "nothing happened" better than a reason alone, so failures say it. */
@@ -3008,7 +3315,9 @@ function needsYouOf(
               ? `Approve spec v${spec.version}`
               : card.delivery?.error
                 ? `Couldn't merge: ${card.title}`
-                : `Ready for you: ${card.title}`,
+                : card.sent?.error
+                  ? `Couldn't send: ${card.title}`
+                  : `Ready for you: ${card.title}`,
         conversationId: null,
       });
     } else if (card.live?.asking) {

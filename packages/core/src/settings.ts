@@ -31,6 +31,45 @@ export const userProfileSchema = z.object({
 
 export type UserProfile = z.infer<typeof userProfileSchema>;
 
+/**
+ * The account approved emails go out through: any SMTP server, or Gmail's with an app password.
+ * Its password is in the keychain, never here. `none` means emails are approved without sending.
+ */
+export const emailSettingsSchema = z.object({
+  kind: z.enum(['none', 'smtp', 'gmail']),
+  /** The SMTP server, such as `smtp.fastmail.com`. Gmail's is filled in. */
+  host: z
+    .string()
+    .trim()
+    .max(253)
+    .regex(/^[\w.-]*$/, 'Use a server name such as smtp.example.com'),
+  port: z.number().int().min(1).max(65535),
+  /** TLS from the first byte, as on port 465. Otherwise the connection upgrades with STARTTLS. */
+  secure: z.boolean(),
+  /** What to sign in as: usually the address. */
+  user: z.string().trim().max(254),
+  /** The address emails come from. */
+  from: z
+    .string()
+    .trim()
+    .max(254)
+    .refine((a) => a === '' || /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(a), 'Use an email address'),
+  /** The name beside it, such as "Sam at Surf Shop". Empty uses the profile's name. */
+  name: z.string().trim().max(80),
+});
+
+export type EmailSettings = z.infer<typeof emailSettingsSchema>;
+
+/** The keychain entry for the email account's password. */
+export const EMAIL_PASSWORD = 'email:password';
+
+export const GMAIL_SMTP = { host: 'smtp.gmail.com', port: 465, secure: true } as const;
+
+/** Whether the email account has everything it needs but its password. */
+export function emailConfigured(email: EmailSettings): boolean {
+  return email.kind !== 'none' && email.host !== '' && email.user !== '' && email.from !== '';
+}
+
 /** App settings, stored one row per key. */
 export const settingsSchema = z.object({
   /** Closing the window keeps clanks running in the tray. When false, closing the window quits. */
@@ -85,6 +124,8 @@ export const settingsSchema = z.object({
     z.string().regex(/^[a-z][\w-]*$/),
     z.object({ input: z.number().min(0).max(10_000), output: z.number().min(0).max(10_000) }),
   ),
+  /** The account emails the user approves are sent through. */
+  email: emailSettingsSchema,
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -108,6 +149,7 @@ export const defaultSettings: Settings = {
   searxngUrl: '',
   approvals: 'risky',
   cloudPrices: {},
+  email: { kind: 'none', host: '', port: 587, secure: false, user: '', from: '', name: '' },
 };
 
 export const settingsPatchSchema = settingsSchema.partial().strict();

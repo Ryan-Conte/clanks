@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,6 +15,7 @@ import { commandShell, runCommand, withJobsStopped } from './commands';
 import { git } from './git';
 import { changedRanges, computeHunks, excerptOf, revertHunk } from './hunks';
 import { PathError, resolveInside } from './paths';
+import { removeTree } from './remove';
 import { addWorktree, initRepo, removeWorktree, repoInfo } from './repo';
 import { ShadowRepo } from './shadow';
 import { headTail, plainOutput } from './text';
@@ -147,6 +149,21 @@ describe('checkpoints', () => {
     await shadow.snapshot('Edited');
     expect(await git(['for-each-ref'], { cwd: root })).toBe(before);
     expect(await git(['status', '--porcelain'], { cwd: root })).toBe('');
+  });
+
+  it('can be removed, read-only objects and all', async () => {
+    const { path, shadow } = await setup();
+    writeFileSync(join(path, 'a.txt'), 'x\n');
+    await shadow.snapshot('Edited');
+    // Git keeps the objects it writes read-only, which is what a plain delete trips on.
+    const readOnly = join(shadow.gitDir, 'objects', 'read-only');
+    writeFileSync(readOnly, 'x');
+    chmodSync(readOnly, 0o444);
+
+    await removeTree(shadow.gitDir);
+    expect(existsSync(shadow.gitDir)).toBe(false);
+    // Gone already is fine too.
+    await removeTree(shadow.gitDir);
   });
 });
 

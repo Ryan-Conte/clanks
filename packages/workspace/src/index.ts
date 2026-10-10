@@ -5,6 +5,7 @@ export * from './git';
 export * from './hunks';
 export * from './paths';
 export * from './pty';
+export * from './remove';
 export * from './repo';
 export * from './shadow';
 export * from './text';

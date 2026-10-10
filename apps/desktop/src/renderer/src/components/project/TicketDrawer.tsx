@@ -1,20 +1,34 @@
 import {
   type BoardSnapshot,
   COLUMN_TITLES,
+  REPO_HOST_NAMES,
+  type RepoHost,
   type SpecStory,
   type TicketCard,
   criterionText,
+  emailOf,
+  isWrittenOutput,
   parseSpec,
+  pullRequestName,
 } from '@clanks/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
-import { TYPE_LABELS, actorName, cardStatus, ciText, namer, usageText } from '../../lib/board';
+import {
+  SHOWN_FIELDS,
+  TYPE_LABELS,
+  actorName,
+  cardStatus,
+  ciText,
+  namer,
+  usageText,
+} from '../../lib/board';
 import { useCrew } from '../../lib/crew';
 import { formatAgo } from '../../lib/format';
 import { useNav } from '../../lib/nav';
 import { useTRPC } from '../../lib/trpc';
 import { Avatar } from '../Avatar';
 import { Markdown } from '../chat/Markdown';
+import { WrittenOutput } from './Output';
 import { Badge, Button, Dot, ErrorText, IconButton, TrashIcon, XIcon, inputClass } from '../ui';
 
 /** One ticket in full, beside the board: what it is, where it is, and what to do about it. */
@@ -112,7 +126,9 @@ export function TicketDrawer(props: {
         {(card.column === 'backlog' || (card.column === 'build' && !card.detour)) &&
           card.type !== 'spec' && <Assignee card={card} snapshot={snapshot} />}
 
-        {card.delivery && <Delivery card={card} hasRepo={snapshot.project.repo !== null} />}
+        {card.delivery && (card.delivery.changed || card.delivery.pr || card.type === 'pr') && (
+          <Delivery card={card} host={snapshot.project.repo?.host ?? null} />
+        )}
 
         {card.description && (
           <Section title="Description">
@@ -154,7 +170,14 @@ export function TicketDrawer(props: {
           <Section
             title={`Handed in${card.route[0]?.clankId ? ` by ${name(card.route[0].clankId)}` : ''}`}
           >
-            <Fields fields={card.output} />
+            {isWrittenOutput(card.type) ? (
+              <>
+                <WrittenOutput card={card} snapshot={snapshot} />
+                <Fields fields={card.output} hide={SHOWN_FIELDS} />
+              </>
+            ) : (
+              <Fields fields={card.output} />
+            )}
           </Section>
         )}
         {card.reviews.map((review, i) => {
@@ -204,7 +227,11 @@ export function TicketDrawer(props: {
               <li key={run.conversationId}>
                 <ChatLink
                   onClick={() => go({ page: 'chat', id: run.conversationId })}
-                  label={`${name(run.clankId)}'s ${{ maker: 'work', checker: 'check', helper: 'answer', planner: 'planning' }[run.role]}`}
+                  label={
+                    run.role === 'consult'
+                      ? run.title
+                      : `${name(run.clankId)}'s ${{ maker: 'work', checker: 'check', helper: 'answer', planner: 'planning' }[run.role]}`
+                  }
                   colour={crew.find((c) => c.id === run.clankId)?.avatar}
                   live={run.replying}
                 />
@@ -242,10 +269,12 @@ export function TicketDrawer(props: {
 }
 
 /** What approving does with the ticket's work, in words. */
-function mergeWords(card: TicketCard): string | null {
+function mergeWords(card: TicketCard, host: RepoHost | null): string | null {
   const d = card.delivery;
   if (!d?.changed) return null;
-  if (d.pr) return `Approving merges PR #${d.pr.number} on GitHub, as you.`;
+  if (d.pr) {
+    return `Approving merges ${pullRequestName(host ?? 'github', d.pr.number)} on ${REPO_HOST_NAMES[host ?? 'github']}, as you.`;
+  }
   return `Approving merges \`${d.branch}\` into \`${d.base}\` in the project's folder.`;
 }
 
@@ -268,6 +297,11 @@ function Actions(props: {
     setText('');
   };
   const approve = useMutation(trpc.board.approve.mutationOptions());
+  const approveUnsent = useMutation(trpc.board.approveUnsent.mutationOptions());
+  const email = emailOf(card.output);
+  const mail = useQuery(
+    trpc.email.status.queryOptions(undefined, { enabled: email !== null && !card.doneAt }),
+  );
   const changes = useMutation(trpc.board.requestChanges.mutationOptions({ onSuccess: done }));
   const reject = useMutation(trpc.board.reject.mutationOptions({ onSuccess: done }));
   const retry = useMutation(trpc.board.retry.mutationOptions({ onSuccess: done }));
@@ -276,13 +310,25 @@ function Actions(props: {
   const move = useMutation(trpc.board.move.mutationOptions());
   const resolve = useMutation(trpc.board.resolveConflicts.mutationOptions());
   const remove = useMutation(trpc.board.remove.mutationOptions({ onSuccess: props.onClose }));
-  const error = [approve, changes, reject, retry, accept, pause, move, resolve, remove].find(
-    (m) => m.error,
-  )?.error;
+  const error = [
+    approve,
+    approveUnsent,
+    changes,
+    reject,
+    retry,
+    accept,
+    pause,
+    move,
+    resolve,
+    remove,
+  ].find((m) => m.error)?.error;
   const turn = card.detour?.clankId ?? card.route[card.step]?.clankId;
   const run = card.runs.find((r) => r.clankId === turn && r.role !== 'planner');
   const clank = crew.find((c) => c.id === run?.clankId);
-  const merge = mergeWords(card);
+  const merge = mergeWords(card, props.snapshot.project.repo?.host ?? null);
+  // An email goes out when it's approved, if there's an account to send it from and someone to send it to.
+  const sending = email !== null && !card.sent?.at;
+  const canSend = sending && email.to.length > 0 && mail.data?.ready === true;
   const conflict = card.delivery?.error && /conflict/i.test(card.delivery.error);
 
   let body: ReactNode = null;
@@ -296,6 +342,20 @@ function Actions(props: {
               ? `Atlas signed off spec v${props.draftVersion ?? card.specVersion ?? ''}. Read it on the Spec tab, then approve it, and Atlas plans the board from it.`
               : 'Signed off and ready for you.'}
         </p>
+        {sending && (
+          <p className="text-[12px] text-dim">
+            {email.to.length === 0
+              ? 'It has nobody to go to yet. Open it to add who, or approve it without sending.'
+              : mail.data?.ready
+                ? `Approving sends it from ${mail.data.from ?? 'your account'} to ${email.to.join(', ')}, exactly as written.`
+                : `${mail.data?.problem ?? 'No email account is set up.'} Set one up in Settings to send from here, or approve it without sending.`}
+          </p>
+        )}
+        {card.sent?.error && (
+          <p className="text-[13px] text-amber-100">
+            <InlineCode text={card.sent.error} />
+          </p>
+        )}
         {merge && !card.delivery?.error && (
           <p className="text-[12px] text-dim">
             <InlineCode text={merge} />
@@ -310,19 +370,35 @@ function Actions(props: {
           <Button
             size="sm"
             variant="primary"
-            disabled={approve.isPending}
+            disabled={approve.isPending || approveUnsent.isPending || (sending && !canSend)}
             onClick={() => approve.mutate(card.id)}
           >
             {card.type === 'spec'
               ? `Approve spec v${props.draftVersion ?? card.specVersion ?? ''}`
-              : approve.isPending
-                ? 'Merging…'
-                : merge
-                  ? card.delivery?.error
-                    ? 'Try the merge again'
-                    : 'Approve and merge'
-                  : 'Approve'}
+              : sending
+                ? approve.isPending
+                  ? 'Sending…'
+                  : card.sent?.error
+                    ? 'Try sending again'
+                    : 'Approve and send'
+                : approve.isPending
+                  ? 'Merging…'
+                  : merge
+                    ? card.delivery?.error
+                      ? 'Try the merge again'
+                      : 'Approve and merge'
+                    : 'Approve'}
           </Button>
+          {sending && (
+            <Button
+              size="sm"
+              disabled={approve.isPending || approveUnsent.isPending}
+              title="Accept it as it is, to send yourself"
+              onClick={() => approveUnsent.mutate(card.id)}
+            >
+              Approve without sending
+            </Button>
+          )}
           {conflict && card.route[0]?.clankId && (
             <Button size="sm" disabled={resolve.isPending} onClick={() => resolve.mutate(card.id)}>
               Send back to resolve the conflicts
@@ -662,7 +738,8 @@ function Checks(props: {
 }
 
 /** Where the ticket's work is: its branch, its pull request, and pushing it again. */
-function Delivery({ card, hasRepo }: { card: TicketCard; hasRepo: boolean }) {
+function Delivery({ card, host }: { card: TicketCard; host: RepoHost | null }) {
+  const hasRepo = host !== null;
   const trpc = useTRPC();
   const republish = useMutation(trpc.board.republish.mutationOptions());
   const d = card.delivery!;
@@ -682,7 +759,7 @@ function Delivery({ card, hasRepo }: { card: TicketCard; hasRepo: boolean }) {
             rel="noreferrer noopener"
             className="text-accent hover:underline"
           >
-            PR #{d.pr.number}
+            {pullRequestName(host ?? 'github', d.pr.number)}
           </a>
           <span className="text-dim">{d.pr.state}</span>
           {d.pr.ci && (
@@ -702,7 +779,7 @@ function Delivery({ card, hasRepo }: { card: TicketCard; hasRepo: boolean }) {
           disabled={republish.isPending}
           onClick={() => republish.mutate(card.id)}
         >
-          {d.pr ? 'Push again' : 'Push and open the pull request'}
+          {d.pr ? 'Push again' : `Push and open the ${pullRequestName(host ?? 'github')}`}
         </Button>
       )}
       {republish.error && <ErrorText>{republish.error.message}</ErrorText>}
@@ -803,11 +880,18 @@ function Dependencies({ card, snapshot }: { card: TicketCard; snapshot: BoardSna
   );
 }
 
-/** What a clank handed in, field by field. */
-function Fields({ fields }: { fields: Record<string, unknown> }) {
+/** What a clank handed in, field by field, but for those something above already shows. */
+function Fields({ fields, hide }: { fields: Record<string, unknown>; hide?: Set<string> }) {
   const entries = Object.entries(fields).filter(
-    ([key, value]) => key !== 'type' && value !== undefined && value !== null && value !== '',
+    ([key, value]) =>
+      key !== 'type' &&
+      !hide?.has(key) &&
+      value !== undefined &&
+      value !== null &&
+      value !== '' &&
+      !(Array.isArray(value) && value.length === 0),
   );
+  if (entries.length === 0) return null;
   return (
     <dl className="flex flex-col gap-2 text-[13px]">
       {entries.map(([key, value]) => (

@@ -1,7 +1,15 @@
-import { type ModelChoice, clankIdSchema, clankProfilePatchSchema } from '@clanks/core';
+import {
+  type ModelChoice,
+  clankIdSchema,
+  clankProfilePatchSchema,
+  customClankSchema,
+  outputTypeSchema,
+} from '@clanks/core';
 import { BUILTIN_PROVIDER } from '@clanks/providers';
 import { z } from 'zod';
 import { ChatError } from '../chat/service';
+import { CrewDocError } from '../crew/docs';
+import { draftClankPrompt } from '../crew/draft';
 import { userProcedure } from '../procedures';
 import { type OrchestratorContext, publicProcedure, router } from '../trpc';
 
@@ -17,6 +25,68 @@ function checkModel(ctx: OrchestratorContext, choice: ModelChoice): void {
 
 export const crewRouter = router({
   list: publicProcedure.query(({ ctx }) => ctx.crew.summaries()),
+
+  /** Custom clanks in the library whose docs can't be read, and why. */
+  broken: publicProcedure.query(({ ctx }) => ctx.crew.brokenCustom()),
+
+  /** What the form for a new custom clank starts from, and a worked example. */
+  templates: publicProcedure.query(({ ctx }) => ctx.crew.templates()),
+
+  /** About how many tokens a clank's prompt takes, with the rules the whole crew shares. */
+  tokens: userProcedure.input(clankIdSchema).query(({ ctx, input }) => ({
+    tokens: ctx.crew.promptTokens(input),
+    budget: 2500,
+  })),
+
+  /** Adds a custom clank to the library: from the form's fields, or from a whole priming doc. */
+  create: userProcedure
+    .input(z.union([customClankSchema, z.object({ text: z.string().min(1).max(200_000) })]))
+    .mutation(({ ctx, input }) => ctx.crew.createCustom(input)),
+
+  /**
+   * Takes a custom clank out of the library, with its chats. It must be out of every project's
+   * crew first, so no ticket is left waiting on a clank that's gone.
+   */
+  remove: userProcedure.input(clankIdSchema).mutation(async ({ ctx, input }) => {
+    const clank = ctx.crew.get(input);
+    if (!clank.custom) {
+      throw new CrewDocError(`${clank.name} ships with the app, so it can't be deleted.`);
+    }
+    const using = ctx.projects.using(input);
+    if (using.length > 0) {
+      throw new CrewDocError(
+        `${clank.name} is in the crew of ${using.map((p) => p.name).join(', ')}. Take it out there first, in the project's settings.`,
+      );
+    }
+    for (const conversation of ctx.chat.list().filter((c) => c.clankId === input)) {
+      await ctx.chat.delete(conversation.id);
+    }
+    ctx.crew.deleteCustom(input);
+  }),
+
+  /**
+   * Atlas drafts a custom clank's prompt from a line about what it's for. Nothing is saved: the
+   * draft goes back to the form for the user to read and change.
+   */
+  draft: userProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(1).max(40),
+        role: z.string().trim().min(1).max(40),
+        description: z.string().trim().min(1).max(2000),
+        kind: z.enum(['maker', 'checker']),
+        types: z.array(z.union([outputTypeSchema, z.literal('all')])).max(10),
+        tools: z.array(z.string().max(64)).max(80),
+      }),
+    )
+    .mutation(({ ctx, input, signal }) =>
+      draftClankPrompt(
+        ctx.providers,
+        ctx.chat.modelFor('atlas'),
+        input,
+        signal ?? new AbortController().signal,
+      ),
+    ),
 
   /** A clank's priming doc as it's stored, and the one that ships with the app. */
   doc: userProcedure.input(clankIdSchema).query(({ ctx, input }) => ctx.crew.docText(input)),

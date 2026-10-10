@@ -19,7 +19,7 @@ tools:
   allow: [spec_read, fs_read, fs_list, fs_search, fs_write, fs_edit,
           git_status, git_diff, git_log, git_commit,
           shell_output, shell_stop, design_read, design_render,
-          artifact_save, board_create_ticket]
+          artifact_save, artifact_read, board_create_ticket]
   ask: [shell_exec, shell_start, web_search, web_fetch, browser_*]
 ---
 

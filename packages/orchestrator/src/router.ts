@@ -12,12 +12,14 @@ import { BUILTIN_PROVIDER, ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { userProcedure as modelProcedure } from './procedures';
+import { artifactsRouter, emailRouter } from './routers/artifacts';
 import { browserRouter } from './routers/browser';
 import { chatRouter } from './routers/chat';
 import { contextRouter, homeRouter } from './routers/context';
 import { crewRouter } from './routers/crew';
 import { designRouter } from './routers/design';
 import { githubRouter } from './routers/github';
+import { gitlabRouter } from './routers/gitlab';
 import { boardRouter, projectsRouter } from './routers/projects';
 import { providersRouter } from './routers/providers';
 import { mcpRouter, toolsRouter } from './routers/tools';
@@ -72,7 +74,10 @@ export const appRouter = router({
   context: contextRouter,
   home: homeRouter,
   github: githubRouter,
+  gitlab: gitlabRouter,
   design: designRouter,
+  artifacts: artifactsRouter,
+  email: emailRouter,
 
   app: router({
     info: publicProcedure.query(({ ctx }) => ({

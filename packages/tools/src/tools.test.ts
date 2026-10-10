@@ -442,9 +442,57 @@ describe('labels', () => {
         from: 'n2',
         tokens: 'color.brand',
         remove: 'color.old',
+        question: 'Which provider is cheaper?',
       });
       expect(label.length, tool.name).toBeGreaterThan(3);
     }
+  });
+});
+
+describe('the artifact and crew tools', () => {
+  it('save and read through the app, and ask another clank', async () => {
+    const saved: { name: string; content: string }[] = [];
+    const ctx = context('.', 'base', {
+      workspace: null,
+      artifacts: {
+        save: (input) => {
+          saved.push(input);
+          return `Saved ${input.name}.`;
+        },
+        read: (input) => (input.name ? `${input.name} v${input.version ?? 1}` : 'notes.md (v1)'),
+      },
+      crew: { ask: ({ clank, question }) => Promise.resolve(`${clank} says: ${question}`) },
+    });
+    const save = builtinTool('artifact_save')!;
+    expect(await save.run(save.parse({ name: 'notes.md', content: 'Stripe: 1.7%' }), ctx)).toEqual({
+      content: 'Saved notes.md.',
+    });
+    expect(saved).toEqual([{ name: 'notes.md', content: 'Stripe: 1.7%' }]);
+    const read = builtinTool('artifact_read')!;
+    expect((await read.run(read.parse({}), ctx)).content).toBe('notes.md (v1)');
+    expect((await read.run(read.parse({ name: 'notes.md', version: 2 }), ctx)).content).toBe(
+      'notes.md v2',
+    );
+    const ask = builtinTool('ask_clank')!;
+    const args = ask.parse({ clank: 'scout', question: 'What does Stripe charge?' });
+    expect(ask.label(args)).toBe('Asking Scout: What does Stripe charge?');
+    expect((await ask.run(args, ctx)).content).toBe('scout says: What does Stripe charge?');
+    // All three are everyday calls: none reaches past the app.
+    for (const tool of [save, read, ask]) {
+      expect(tool.risk?.({}, { worktree: null, browserUrl: null }).level).toBe('low');
+    }
+  });
+
+  it('say so where there is nothing to save to and nobody to ask', async () => {
+    const ctx = context('.', 'base', { workspace: null });
+    const save = builtinTool('artifact_save')!;
+    await expect(save.run(save.parse({ name: 'a.md', content: 'x' }), ctx)).rejects.toThrow(
+      /can't be saved/,
+    );
+    const ask = builtinTool('ask_clank')!;
+    await expect(ask.run(ask.parse({ clank: 'scout', question: 'x' }), ctx)).rejects.toThrow(
+      /no crew to ask/,
+    );
   });
 });
 

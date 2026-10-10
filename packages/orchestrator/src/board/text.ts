@@ -2,12 +2,14 @@ import {
   type Bounce,
   COLUMN_TITLES,
   type Project,
+  type RepoHost,
   type SpecVersion,
   type Ticket,
   columnOf,
   criterionText,
   currentClank,
   parseSpec,
+  pullRequestName,
 } from '@clanks/core';
 
 /** How the text names clanks and the user. */
@@ -76,7 +78,14 @@ export function routeText(ticket: Ticket, names: Names, you?: string): string {
 /** A ticket in full, for `board_get_ticket` and a run's context. */
 export function ticketDetail(
   ticket: Ticket,
-  context: { all: Ticket[]; bounces: Bounce[]; names: Names; you?: string },
+  context: {
+    all: Ticket[];
+    bounces: Bounce[];
+    names: Names;
+    you?: string;
+    /** Where the project's repository is hosted, for what its merge requests are called. */
+    host?: RepoHost | undefined;
+  },
 ): string {
   const { all, bounces, names } = context;
   const lines = [`### ${ticket.key}: ${ticket.title}`, ''];
@@ -99,7 +108,7 @@ export function ticketDetail(
   if (ticket.delivery) {
     const d = ticket.delivery;
     const pr = d.pr
-      ? `, PR #${d.pr.number} (${d.pr.url})${d.pr.state === 'open' ? '' : `, ${d.pr.state}`}`
+      ? `, ${pullRequestName(context.host ?? 'github', d.pr.number)} (${d.pr.url})${d.pr.state === 'open' ? '' : `, ${d.pr.state}`}`
       : '';
     lines.push(
       `- Branch: \`${d.branch}\`, into \`${d.base}\`${d.changed ? '' : ', no changes yet'}${pr}${d.merged ? `, merged as ${d.merged.slice(0, 7)}` : ''}`,

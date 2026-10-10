@@ -24,6 +24,7 @@ import {
   isBinary,
   mergeBase,
   mergeIntoWorktree,
+  removeTree,
   removeWorktree,
   repoInfo,
   resetWorktree,
@@ -38,15 +39,7 @@ import {
 import { and, asc, desc, eq, gt, gte, isNull, ne, or } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { checkpoint as checkpointTable, reviewNote, run as runTable } from '../store/schema';
 import type { Db } from '../store/store';
@@ -373,7 +366,10 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
         path: row.worktree,
         message: `Work left in "${title}"`,
       }).catch((error: unknown) => console.error('Removing a worktree failed', error));
-      rmSync(row.checkpointsDir, { recursive: true, force: true, maxRetries: 3 });
+      // A folder left behind is better than a chat or project that can't be deleted.
+      await removeTree(row.checkpointsDir).catch((error: unknown) =>
+        console.error('Removing checkpoints failed', error),
+      );
       this.options.db.delete(runTable).where(eq(runTable.id, row.id)).run();
     });
     this.emit('change', conversationId);

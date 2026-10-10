@@ -1,3 +1,4 @@
+export * from './code';
 export * from './color';
 export * from './components';
 export * from './diff';
@@ -9,6 +10,7 @@ export * from './icons';
 export * from './lint';
 export * from './markup';
 export * from './ops';
+export * from './paint';
 export * from './render';
 export * from './schema';
 export * from './text';

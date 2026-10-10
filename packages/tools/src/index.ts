@@ -1,3 +1,4 @@
+import { ARTIFACT_TOOLS, ASK_TOOLS } from './artifacts';
 import { BOARD_TOOLS, CREW_TOOLS } from './board';
 import { BROWSER_TOOLS } from './browser';
 import { CONTEXT_TOOLS } from './context';
@@ -8,6 +9,7 @@ import { SHELL_TOOLS } from './shell';
 import type { ToolSpec } from './spec';
 import { WEB_TOOLS } from './web';
 
+export * from './artifacts';
 export * from './board';
 export * from './browser';
 export * from './context';
@@ -32,7 +34,9 @@ export const BUILTIN_TOOLS: ToolSpec[] = [
   ...DESIGN_TOOLS,
   ...BOARD_TOOLS,
   ...CREW_TOOLS,
+  ...ASK_TOOLS,
   ...CONTEXT_TOOLS,
+  ...ARTIFACT_TOOLS,
 ] as ToolSpec[];
 
 export function builtinTool(name: string): ToolSpec | undefined {

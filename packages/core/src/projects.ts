@@ -30,9 +30,23 @@ export const projectKeySchema = z
 
 export const projectIdSchema = z.uuid();
 
-/** The GitHub repository a project's workspace is a clone of. */
+/** Where a project's repository is hosted, when it's a clone of one. */
+export const repoHostSchema = z.enum(['github', 'gitlab']);
+
+export type RepoHost = z.infer<typeof repoHostSchema>;
+
+export const REPO_HOST_NAMES: Record<RepoHost, string> = { github: 'GitHub', gitlab: 'GitLab' };
+
+/** What a host calls a request to merge a branch, and how it numbers one: `PR #12`, `MR !12`. */
+export function pullRequestName(host: RepoHost, number?: number): string {
+  if (host === 'gitlab') return number === undefined ? 'merge request' : `MR !${number}`;
+  return number === undefined ? 'pull request' : `PR #${number}`;
+}
+
+/** The GitHub or GitLab repository a project's workspace is a clone of. */
 export interface ProjectRepo {
-  /** `owner/name`. */
+  host: RepoHost;
+  /** `owner/name`, or `group/subgroup/name` on GitLab. */
   fullName: string;
   /** `https://github.com/owner/name`. */
   url: string;
@@ -162,6 +176,12 @@ export const newProjectSchema = z.object({
       /** The folder to clone it into, which mustn't exist yet or must be empty. */
       into: folderSchema,
     }),
+    z.object({
+      kind: z.literal('gitlab'),
+      /** `group/name`, with any subgroups between. */
+      repo: z.string().regex(/^[\w.-]+(\/[\w.-]+)+$/, 'Use group/name'),
+      into: folderSchema,
+    }),
   ]),
   /** Atlas is added if it's missing. */
   crew: z.array(clankIdSchema).max(50),
@@ -284,6 +304,37 @@ export const githubTokenSchema = z
   .min(20, "That's too short to be a GitHub token")
   .max(500)
   .regex(/^[\w-]+$/, "That doesn't look like a GitHub token");
+
+/** Who's signed in to GitLab, if anyone, and which GitLab: gitlab.com or one a team hosts. */
+export interface GitLabStatus {
+  signedIn: boolean;
+  login: string | null;
+  name: string | null;
+  /** `https://gitlab.com`, or a self-hosted instance's address. */
+  baseUrl: string;
+  /** Why the last sign-in didn't work. */
+  error: string | null;
+}
+
+export const DEFAULT_GITLAB_URL = 'https://gitlab.com';
+
+export const gitlabSignInSchema = z.object({
+  token: z
+    .string()
+    .trim()
+    .min(20, "That's too short to be a GitLab token")
+    .max(500)
+    .regex(/^[\w.-]+$/, "That doesn't look like a GitLab token"),
+  /** Empty for gitlab.com. */
+  baseUrl: z
+    .string()
+    .trim()
+    .max(300)
+    .refine((url) => url === '' || /^https?:\/\/[\w.-]+(:\d+)?(\/[\w./-]*)?$/i.test(url), {
+      message: 'Use an address such as https://gitlab.example.com',
+    })
+    .default(''),
+});
 
 export const newRepoSchema = z.object({
   name: z

@@ -121,6 +121,8 @@ export interface DesignAccess {
     depth?: number | undefined;
     /** The tokens instead of the layers: listed, or exported as CSS, a Tailwind theme or JSON. */
     tokens?: boolean | 'css' | 'tailwind' | 'json' | undefined;
+    /** A component as a React component and its CSS, rather than as layers. */
+    code?: boolean | undefined;
   }): Promise<string>;
   create(input: {
     file?: string | undefined;
@@ -226,6 +228,26 @@ export interface ContextAccess {
   remember(input: { kind: 'decision' | 'note'; body: string }): string;
 }
 
+/**
+ * What's saved with a ticket, or with a chat outside one, in the app's own folder. Each method
+ * returns what the clank reads, or throws a `ToolFailure` saying what's wrong.
+ */
+export interface ArtifactAccess {
+  save(input: { name: string; content: string }): string;
+  /** The list of what's saved, or one file's text from a line on. */
+  read(input: {
+    name?: string | undefined;
+    version?: number | undefined;
+    fromLine: number;
+  }): string;
+}
+
+/** The rest of the crew, for a quick question to one of them. */
+export interface CrewAccess {
+  /** Resolves with the other clank's answer, or throws a `ToolFailure` saying why there's none. */
+  ask(input: { clank: string; question: string }): Promise<string>;
+}
+
 export interface ToolContext {
   workspace: WorkspaceAccess | null;
   shell: ShellAccess | null;
@@ -238,6 +260,10 @@ export interface ToolContext {
   context: ContextAccess | null;
   /** The design in the run's worktree. Null when the chat has no workspace. */
   design: DesignAccess | null;
+  /** Notes and files saved with the ticket or chat. Missing outside the app. */
+  artifacts?: ArtifactAccess | null;
+  /** The crew, to ask one of them a question. Missing where there's nobody to ask. */
+  crew?: CrewAccess | null;
   signal: AbortSignal;
   clank: { id: string; name: string };
   /** The most a result may hold, in characters, so it doesn't crowd out the conversation. */
@@ -264,7 +290,8 @@ export interface ToolResult {
 /**
  * What a tool needs from the chat to be offered: a workspace, commands, a search backend (or the
  * browser to search in), the browser, the app to draw designs with, a model that can see pictures,
- * a project's board, a ticket run, or a run as the ticket's maker or one of its checkers.
+ * a project's board, a ticket run, a run as the ticket's maker or one of its checkers, or a crew
+ * to put a question to.
  */
 export type ToolNeed =
   | 'workspace'
@@ -276,7 +303,8 @@ export type ToolNeed =
   | 'project'
   | 'ticket'
   | 'maker'
-  | 'checker';
+  | 'checker'
+  | 'crew';
 
 /** A tool a clank can call. */
 export interface ToolSpec<A = unknown> {

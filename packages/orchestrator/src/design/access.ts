@@ -12,6 +12,7 @@ import {
   type TokenSet,
   WIRE_TOKENS,
   allNodes,
+  componentCode,
   componentText,
   designText,
   exportTokens,
@@ -197,6 +198,25 @@ export function designAccess(service: DesignService, ctx: DesignAccessContext): 
           // A component's name means the component, whatever layers share it.
           const byId = /^\[?[a-z]\d+\]?$/i.test(input.node.trim());
           const component = findComponent(state.design, input.node);
+          if (input.code) {
+            if (!component) {
+              const names = state.design.components.map((c) => c.name);
+              return fail(
+                names.length > 0
+                  ? `"${input.node}" isn't a component, and only components come as code. Components: ${names.join(', ')}.`
+                  : 'There are no components yet, and only components come as code.',
+              );
+            }
+            const code = componentCode(component, state.design);
+            return [
+              `${component.name} as a starting point: a React component and the CSS it imports. Values in var(--…) are the design's tokens, which design_read gives as CSS with tokens: "css".`,
+              '',
+              `// ${code.name}.tsx`,
+              code.tsx,
+              `/* ${code.name}.css */`,
+              code.css,
+            ].join('\n');
+          }
           if (component && (!byId || nodesNamed(state.design, input.node).length === 0)) {
             return fitText(
               componentText(component, state.design, input.depth ?? 12),

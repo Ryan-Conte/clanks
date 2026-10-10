@@ -36,6 +36,21 @@ export default tseslint.config(
     },
   },
   {
+    // The Node inside Electron fails a recursive rmSync on Windows when it meets a read-only file,
+    // such as anything git wrote. Tests and scripts run on plain Node, where it works.
+    files: ['**/*.{ts,tsx}'],
+    ignores: ['**/*.test.ts', '**/test-helpers.ts', '**/test/**', '**/scripts/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.name="rmSync"]:has(Property[key.name="recursive"])',
+          message: 'Use removeTree from @clanks/workspace instead of a recursive rmSync.',
+        },
+      ],
+    },
+  },
+  {
     // Config files and scripts sit outside the TypeScript projects.
     files: ['**/*.js', '**/*.mjs', '**/*.config.ts'],
     extends: [tseslint.configs.disableTypeChecked],

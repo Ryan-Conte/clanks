@@ -29,7 +29,7 @@ function firstName(markup: string): string | null {
 export const designRead = defineTool({
   name: 'design_read',
   description:
-    'Reads the design as text: pages, frames and layers as [id] Type "name" with their properties, and the components. Pass node to read one frame, layer or component in full, or tokens to list every token. Read before you change anything, and again after the user has edited.',
+    'Reads the design as text: pages, frames and layers as [id] Type "name" with their properties, and the components. Pass node to read one frame, layer or component in full, or tokens to list every token. With code and the name of a component, it comes as a React component and its CSS to start building from. Read before you change anything, and again after the user has edited.',
   schema: z.object({
     node: idArg.optional().describe('A layer id such as n12, or the name of a frame or component'),
     depth: z
@@ -45,6 +45,10 @@ export const designRead = defineTool({
       .describe(
         'true lists the tokens. "css", "tailwind" or "json" exports them in that form instead',
       ),
+    code: z
+      .boolean()
+      .optional()
+      .describe('With node naming a component: its React component and CSS, to start from'),
     file: fileArg,
   }),
   needs: ['workspace'],
@@ -53,7 +57,7 @@ export const designRead = defineTool({
     args.tokens
       ? 'Reading the tokens'
       : args.node
-        ? `Reading \`${short(args.node, 40)}\``
+        ? `Reading \`${short(args.node, 40)}\`${args.code ? ' as code' : ''}`
         : 'Reading the design',
   approval: () => anyCall('Read the design'),
   risk: () => LOW_RISK,

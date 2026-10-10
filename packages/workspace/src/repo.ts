@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { GitError, git, runGit } from './git';
+import { removeTree } from './remove';
 
 export interface RepoInfo {
   /** The repository's top folder. */
@@ -115,7 +116,7 @@ export async function removeWorktree(options: {
     await git(['worktree', 'remove', '--force', path], { cwd: repoRoot });
   } catch {
     // Already gone, or git doesn't know it: the folder still goes.
-    rmSync(path, { recursive: true, force: true, maxRetries: 3 });
+    await removeTree(path);
   }
   await git(['worktree', 'prune'], { cwd: repoRoot }).catch(() => {});
 }

@@ -487,7 +487,7 @@ function ChatHeader(props: {
               className="mr-1 flex items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5 text-[12px] text-white/80 hover:bg-white/[0.05]"
               title={
                 conversation.role
-                  ? `${clank.name}'s ${conversation.role === 'planner' ? 'planning' : 'run on a ticket'} in ${project.name}. Open it on the board.`
+                  ? `${clank.name}'s ${conversation.role === 'planner' ? 'planning' : conversation.role === 'consult' ? "answer to another clank's question" : 'run on a ticket'} in ${project.name}. Open it on the board.`
                   : `${clank.name} works on its own copy of ${project.folder}, and on ${project.name}'s board`
               }
             >
@@ -495,7 +495,11 @@ function ChatHeader(props: {
               <span className="max-w-32 truncate">{project.name}</span>
               {conversation.role && (
                 <span className="font-mono text-[11px] text-dim">
-                  {conversation.role === 'planner' ? 'plan' : conversation.title.split(':')[0]}
+                  {conversation.role === 'planner'
+                    ? 'plan'
+                    : conversation.role === 'consult'
+                      ? 'answer'
+                      : conversation.title.split(':')[0]}
                 </span>
               )}
             </button>
@@ -624,6 +628,7 @@ function RunningNow({ conversation }: { conversation: ConversationSummary }) {
       c.projectId === conversation.projectId &&
       c.role &&
       c.role !== 'planner' &&
+      c.role !== 'consult' &&
       c.replying &&
       c.id !== conversation.id,
   );

@@ -17,7 +17,7 @@ model:
   temperature: 0.3
 tools:
   allow: [spec_read, spec_write, board_get_ticket, board_update_ticket,
-          fs_read, fs_list, fs_search, design_read, artifact_save]
+          fs_read, fs_list, fs_search, design_read, artifact_save, artifact_read]
   ask: [web_search, web_fetch]
 ---
 

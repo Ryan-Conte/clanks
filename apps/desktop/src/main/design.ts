@@ -1,17 +1,21 @@
+import type { Painted } from '@clanks/design';
 import type { DesignHost, Drawing } from '@clanks/orchestrator';
 import { BrowserWindow } from 'electron';
 import { join } from 'node:path';
 
 /** How long a frame gets to load its fonts and images and lay itself out. */
 const DRAW_TIMEOUT_MS = 20_000;
+/** CSS pixels to the inch, which is what a PDF's page is sized in. */
+const PX_PER_INCH = 96;
 
 /**
  * Draws designs' frames where nobody sees them: a hidden, sandboxed window on a page of the app's
  * own that has Studio's fonts, with no preload and no Node. A frame's HTML goes in, and its
  * layers' boxes and a picture come out, so what a clank's lint and render see is exactly what a
- * browser draws. One drawing at a time.
+ * browser draws. The same page paints frames for SVG exports and prints frames and documents to
+ * PDF, in the fonts Studio has. One job at a time.
  */
-export function createDesignHost(): DesignHost & { close(): void } {
+export function createDesignHost(): Required<DesignHost> & { close(): void } {
   let window: BrowserWindow | null = null;
   let loading: Promise<BrowserWindow> | null = null;
   let queue: Promise<unknown> = Promise.resolve();
@@ -77,10 +81,12 @@ export function createDesignHost(): DesignHost & { close(): void } {
     if (input.capture && measured.width > 0 && measured.height > 0) {
       const { maxWidth, maxPixels, minScale } = input.capture;
       const { width, height } = measured;
+      // Its own size unless a bigger one is asked for, as an export may.
+      const wanted = input.capture.scale ?? 1;
       // As big as the limits allow, and no smaller than can still be read; then cut at the foot.
       const scale = Math.max(
-        Math.min(1, minScale),
-        Math.min(1, maxWidth / width, Math.sqrt(maxPixels / (width * height))),
+        Math.min(wanted, minScale),
+        Math.min(wanted, maxWidth / width, Math.sqrt(maxPixels / (width * height))),
       );
       const shown = Math.min(height, maxPixels / (scale * scale * width));
       picture = {
@@ -104,15 +110,64 @@ export function createDesignHost(): DesignHost & { close(): void } {
     return { ...measured, png, picture };
   };
 
+  /** Runs one of the page's own functions with some HTML, and resolves with what it returns. */
+  const evaluate = async <T>(target: BrowserWindow, expression: string): Promise<T> => {
+    const evaluated = (await target.webContents.debugger.sendCommand('Runtime.evaluate', {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+      timeout: DRAW_TIMEOUT_MS,
+    })) as { result: { value?: T }; exceptionDetails?: { text: string } };
+    if (evaluated.exceptionDetails) {
+      throw new Error(`The frame couldn't be drawn: ${evaluated.exceptionDetails.text}`);
+    }
+    return evaluated.result.value as T;
+  };
+
+  const paint = async (input: { html: string; width: number }): Promise<Painted> => {
+    const target = await open();
+    target.setContentSize(Math.min(4000, Math.max(200, input.width)), 900);
+    const painted = await evaluate<Painted | undefined>(
+      target,
+      `window.clanksPaint(${JSON.stringify(input.html)})`,
+    );
+    if (!painted) throw new Error("The frame couldn't be drawn: no result");
+    return painted;
+  };
+
+  const print = async (
+    input: Parameters<Required<DesignHost>['print']>[0],
+  ): Promise<Uint8Array> => {
+    const target = await open();
+    const page = input.page === 'a4' ? null : input.page;
+    if (page) target.setContentSize(Math.min(4000, Math.max(200, page.width)), 900);
+    await evaluate<void>(
+      target,
+      `window.clanksPage(${JSON.stringify(input.html)}, ${JSON.stringify(page)})`,
+    );
+    // The page's own CSS says how big a sheet is and what margins it has.
+    const pdf = await target.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+      margins: { top: 0, bottom: 0, left: 0, right: 0 },
+      pageSize: page
+        ? { width: page.width / PX_PER_INCH, height: page.height / PX_PER_INCH }
+        : 'A4',
+    });
+    return new Uint8Array(pdf);
+  };
+
+  /** One job at a time: they share the one page. */
+  const queued = <T>(job: () => Promise<T>): Promise<T> => {
+    const next = queue.then(job, job);
+    queue = next.catch(() => {});
+    return next;
+  };
+
   return {
-    draw(input) {
-      const next = queue.then(
-        () => draw(input),
-        () => draw(input),
-      );
-      queue = next.catch(() => {});
-      return next;
-    },
+    draw: (input) => queued(() => draw(input)),
+    paint: (input) => queued(() => paint(input)),
+    print: (input) => queued(() => print(input)),
     close() {
       if (window && !window.isDestroyed()) window.destroy();
       window = null;

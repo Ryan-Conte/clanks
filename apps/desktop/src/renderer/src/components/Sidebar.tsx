@@ -27,7 +27,10 @@ export function Sidebar() {
         : route.page === 'chat'
           ? conversations?.find((c) => c.id === route.id)?.projectId
           : null;
-  const chats = conversations?.filter((c) => c.projectId === null) ?? null;
+  /** The user's own chats, and a clank's answers to another's questions asked outside a ticket. */
+  const listed = (c: ConversationSummary) =>
+    c.role === null || (c.role === 'consult' && c.ticketId === null);
+  const chats = conversations?.filter((c) => c.projectId === null && listed(c)) ?? null;
 
   return (
     <nav className="flex w-64 shrink-0 flex-col border-r border-line bg-panel/50">
@@ -76,8 +79,7 @@ export function Sidebar() {
                 <ProjectChats
                   project={project}
                   chats={
-                    conversations?.filter((c) => c.projectId === project.id && c.role === null) ??
-                    []
+                    conversations?.filter((c) => c.projectId === project.id && listed(c)) ?? []
                   }
                 />
               )}

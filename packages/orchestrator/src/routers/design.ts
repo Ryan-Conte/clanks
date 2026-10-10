@@ -15,8 +15,10 @@ import {
 import { git, runGit } from '@clanks/workspace';
 import { relative } from 'node:path';
 import { z } from 'zod';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { listDesigns, readLanguage } from '../design/files';
-import { DesignError, type DesignSnapshot } from '../design/service';
+import { DesignError, type DesignSnapshot, FRAME_EXPORTS } from '../design/service';
 import { userProcedure } from '../procedures';
 import { type OrchestratorContext, publicProcedure, router } from '../trpc';
 import { snapshots } from './live';
@@ -148,6 +150,84 @@ export const designRouter = router({
     .mutation(({ ctx, input }) => {
       const { dir } = requireDir(ctx, input.source);
       return ctx.design.exportTokens(dir, input.format, input.save);
+    }),
+
+  /** A frame as a PNG, an SVG or a PDF, saved where the user picks. Null if they cancel. */
+  exportFrame: userProcedure
+    .input(
+      z.object({
+        source: sourceSchema,
+        file: fileSchema,
+        frame: z.string().trim().min(1).max(200),
+        format: z.enum(FRAME_EXPORTS),
+        mode: z.string().trim().max(40).optional(),
+        scale: z.number().min(1).max(4).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { dir } = requireDir(ctx, input.source);
+      if (!ctx.host) throw new DesignError("Exporting needs the app's file dialog");
+      const file = await ctx.design.exportFrame(dir, input);
+      return ctx.host.saveFile(
+        { title: `Export ${input.frame}`, defaultName: file.name, extensions: [input.format] },
+        file.data,
+      );
+    }),
+
+  /** A component as a React component and its CSS, to read or copy. */
+  componentCode: userProcedure
+    .input(
+      z.object({ source: sourceSchema, file: fileSchema, component: z.string().min(1).max(200) }),
+    )
+    .query(({ ctx, input }) => {
+      const { dir } = requireDir(ctx, input.source);
+      return ctx.design.componentCode(dir, input.component, input.file);
+    }),
+
+  /** Saves a component's code as two files in a folder the user picks. Null if they cancel. */
+  saveComponent: userProcedure
+    .input(
+      z.object({ source: sourceSchema, file: fileSchema, component: z.string().min(1).max(200) }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { dir } = requireDir(ctx, input.source);
+      if (!ctx.host) throw new DesignError("Saving needs the app's file dialog");
+      const code = ctx.design.componentCode(dir, input.component, input.file);
+      const folder = await ctx.host.pickFolder({ title: `Save ${code.name}.tsx and its CSS in` });
+      if (!folder) return null;
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, `${code.name}.tsx`), code.tsx);
+      writeFileSync(join(folder, `${code.name}.css`), code.css);
+      return folder;
+    }),
+
+  /**
+   * A frame's picture by its name, wherever the project has it: its own design, or one a clank is
+   * still building on a ticket. A campaign's posts name the frames that go with them.
+   */
+  framePicture: userProcedure
+    .input(z.object({ projectId: projectIdSchema, name: z.string().trim().min(1).max(200) }))
+    .query(async ({ ctx, input }) => {
+      const tickets = ctx.board.tickets(input.projectId);
+      const runs = ctx.chat
+        .list()
+        .filter((c) => c.projectId === input.projectId && c.role === 'maker')
+        .filter((c) => tickets.find((t) => t.id === c.ticketId)?.type === 'design')
+        .sort((a, b) => +b.updatedAt - +a.updatedAt);
+      const dirs = [
+        ctx.projects.get(input.projectId).folder,
+        ...runs.flatMap((c) => ctx.workspace.run(c.id)?.cwd ?? []),
+      ];
+      for (const dir of dirs) {
+        const picture = await ctx.design.framePicture(dir, input.name).catch(() => null);
+        if (!picture) continue;
+        return {
+          url: `data:image/png;base64,${Buffer.from(picture.png).toString('base64')}`,
+          width: picture.width,
+          height: picture.height,
+        };
+      }
+      return null;
     }),
 
   /** What lint finds, with frames measured in a browser. */

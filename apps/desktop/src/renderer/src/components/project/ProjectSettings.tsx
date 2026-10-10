@@ -5,6 +5,8 @@ import {
   LEAD_CLANK,
   type OutputType,
   type ProjectPatch,
+  REPO_HOST_NAMES,
+  pullRequestName,
 } from '@clanks/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -81,7 +83,7 @@ export function ProjectSettings({ snapshot }: { snapshot: BoardSnapshot }) {
               <span className="font-mono text-[13px] break-all">{project.folder}</span>
             </Row>
             {project.repo && (
-              <Row label="GitHub">
+              <Row label={REPO_HOST_NAMES[project.repo.host]}>
                 <a
                   href={project.repo.url}
                   target="_blank"
@@ -116,7 +118,7 @@ export function ProjectSettings({ snapshot }: { snapshot: BoardSnapshot }) {
               <p className="pt-1 text-[12px] text-dim">
                 Tickets start from it and merge into it.
                 {project.repo &&
-                  ' Their branches are pushed to GitHub with a pull request each, and approving one merges its pull request.'}
+                  ` Their branches are pushed to ${REPO_HOST_NAMES[project.repo.host]} with a ${pullRequestName(project.repo.host)} each, and approving one merges it.`}
               </p>
             </Row>
             <Row label="Ticket keys">

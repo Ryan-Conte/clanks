@@ -2,7 +2,9 @@ import type { BrowserHost } from '@clanks/browser';
 import { ModelManager, type ModelManagerOptions, parseModelRef } from '@clanks/models';
 import { BUILTIN_PROVIDER, ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
 import { McpManager } from '@clanks/tools';
+import { PathError, resolveInside } from '@clanks/workspace';
 import { ActivityService } from './activity/service';
+import { ArtifactService } from './artifacts/service';
 import { BoardError, BoardService } from './board/service';
 import { BrowserService } from './browser/service';
 import { ChatService } from './chat/service';
@@ -11,7 +13,9 @@ import { ContextService } from './context/service';
 import { CrewService } from './crew/crew';
 import { DeliveryService } from './delivery/service';
 import { DesignError, type DesignHost, DesignService } from './design/service';
+import { EmailService, type MailTransport, type SmtpConfig } from './email/service';
 import { GitHubService } from './github/service';
+import { GitLabService } from './gitlab/service';
 import { LocalApi } from './local-api/server';
 import { McpService } from './mcp/service';
 import { ProjectService } from './projects/service';
@@ -27,7 +31,8 @@ import { SettingsService } from './settings';
 import { sqliteModelRepository } from './store/models';
 import { openStore } from './store/store';
 import type { AppInfo, Host, OrchestratorContext } from './trpc';
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /** The keychain entry for a Hugging Face token, used for gated and private repos. */
 export const HF_TOKEN = 'hf:token';
@@ -58,6 +63,10 @@ export interface OrchestratorOptions {
   /** Tests point GitHub at a stand-in, and don't wait between polls. */
   githubFetch?: typeof fetch;
   githubSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Tests point GitLab at a stand-in. */
+  gitlabFetch?: typeof fetch;
+  /** Tests stand in for the mail server approved emails go out through. */
+  mailTransport?: (config: SmtpConfig) => MailTransport;
 }
 
 export interface Orchestrator {
@@ -131,7 +140,22 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     ...(options.githubFetch ? { fetch: options.githubFetch } : {}),
     ...(options.githubSleep ? { sleep: options.githubSleep } : {}),
   });
-  const projects = new ProjectService({ db: store.db, crew, github });
+  const gitlab = new GitLabService({
+    secrets,
+    store: {
+      read: (key) => settings.readInternal(key as `${string}.${string}`),
+      write: (key, value) => settings.writeInternal(key as `${string}.${string}`, value),
+    },
+    ...(options.gitlabFetch ? { fetch: options.gitlabFetch } : {}),
+  });
+  const hosts = (host: 'github' | 'gitlab') => (host === 'gitlab' ? gitlab : github);
+  const projects = new ProjectService({ db: store.db, crew, hosts });
+  const artifacts = new ArtifactService({ db: store.db, dir: paths.artifacts });
+  const email = new EmailService({
+    settings,
+    secrets,
+    ...(options.mailTransport ? { transport: options.mailTransport } : {}),
+  });
   const contextNotes = new ContextService({ db: store.db });
 
   const chatStore = new ChatStore(store.db);
@@ -154,7 +178,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     },
   });
   const delivery: DeliveryService = new DeliveryService({
-    github,
+    hosts,
     workspace,
     scratchDir: join(paths.worktrees, '_merges'),
   });
@@ -184,8 +208,27 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     crew,
     context: contextNotes,
     delivery,
+    artifacts,
+    email,
     userName: () => settings.get().profile.name || 'the user',
     prices: () => settings.get().cloudPrices,
+    // eslint-disable-next-line @typescript-eslint/require-await -- a bad path rejects
+    writeDocument: async (conversationId, path, text) => {
+      const run = workspace.run(conversationId);
+      if (!run) {
+        throw new BoardError(
+          "This run has no workspace, so the document can't go into the project. Leave `path` out.",
+        );
+      }
+      try {
+        const file = resolveInside(run.worktree, run.cwd, path);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, text.endsWith('\n') ? text : `${text}\n`);
+      } catch (error) {
+        if (error instanceof PathError) throw new BoardError(error.message);
+        throw error;
+      }
+    },
     designCheck: async (conversationId, file) => {
       const run = workspace.run(conversationId);
       if (!run) throw new BoardError("This run has no workspace, so there's no design to hand in.");
@@ -248,6 +291,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     sandbox,
     board,
     artifactsDir: paths.artifacts,
+    artifacts,
   });
   board.attach({
     createRun: (input) => chat.createRun(input),
@@ -267,6 +311,8 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     forTicket: (id) => chatStore.forTicket(id),
     modelFor: (clankId, projectId) => chat.modelFor(clankId, projectId),
     recap: (id) => chat.recap(id),
+    consult: (input) => chat.consult(input),
+    pictures: (id) => chat.pictures(id),
   });
   // A run's tool calls show on its ticket's card as they happen.
   chat.on('live', (id, event) => {
@@ -329,6 +375,9 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     design,
     sandbox,
     github,
+    gitlab,
+    artifacts,
+    email,
     localApi,
     host: options.host ?? null,
   };

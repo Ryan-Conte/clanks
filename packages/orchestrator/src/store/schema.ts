@@ -1,5 +1,6 @@
 import type {
   ActivityEvent,
+  ArtifactKind,
   Avatar,
   BoardEventKind,
   Budget,
@@ -19,6 +20,7 @@ import type {
   NoteStatus,
   OutputType,
   ProjectRepo,
+  RepoHost,
   NoteAnchor,
   ReviewNoteKind,
   RouteStep,
@@ -32,6 +34,7 @@ import type {
   TicketOutcome,
   TicketProgress,
   TicketReview,
+  TicketSend,
   TicketState,
   ToolOverrides,
 } from '@clanks/core';
@@ -111,7 +114,8 @@ export const project = sqliteTable('project', {
   brief: text('brief').notNull(),
   key: text('key').notNull(),
   folder: text('folder').notNull(),
-  repo: text('repo', { mode: 'json' }).$type<ProjectRepo>(),
+  /** Projects made before GitLab arrived have no host: they're on GitHub. */
+  repo: text('repo', { mode: 'json' }).$type<Omit<ProjectRepo, 'host'> & { host?: RepoHost }>(),
   /** The branch tickets start from and merge into. Null uses the folder's checked-out branch. */
   baseBranch: text('base_branch'),
   /** The model for the whole crew. Both null leaves each clank on its own. */
@@ -203,6 +207,8 @@ export const ticket = sqliteTable(
     /** What the next run is told when the scheduler starts it. */
     queued: text('queued'),
     delivery: text('delivery', { mode: 'json' }).$type<TicketDelivery>(),
+    /** For an email: how sending it went, once the user approved it. */
+    sent: text('sent', { mode: 'json' }).$type<TicketSend>(),
     outcome: text('outcome').$type<TicketOutcome>(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
@@ -256,6 +262,36 @@ export const memory = sqliteTable(
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => [index('memory_project_clank').on(t.projectId, t.clankId)],
+);
+
+/**
+ * Something the crew made that isn't in the repository: a hand-in as a document, a clank's working
+ * notes, a picture of a page. The file is in the artifacts folder; saving under a name that's taken
+ * adds a version.
+ */
+export const artifact = sqliteTable(
+  'artifact',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
+    ticketId: text('ticket_id').references(() => ticket.id, { onDelete: 'cascade' }),
+    /** Not a foreign key: a ticket's artifacts outlive the run that saved them. */
+    conversationId: text('conversation_id'),
+    /** `user`, or the clank that saved it. */
+    author: text('author').notNull(),
+    kind: text('kind').$type<ArtifactKind>().notNull(),
+    name: text('name').notNull(),
+    version: integer('version').notNull(),
+    mediaType: text('media_type').notNull(),
+    size: integer('size').notNull(),
+    /** Relative to the artifacts folder. */
+    path: text('path').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    index('artifact_ticket').on(t.ticketId, t.name, t.version),
+    index('artifact_conversation').on(t.conversationId),
+  ],
 );
 
 /** A ticket waiting on another. */

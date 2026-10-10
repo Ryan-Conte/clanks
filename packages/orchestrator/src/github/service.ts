@@ -2,7 +2,10 @@ import type { GitHubDeviceCode, GitHubRepo, GitHubStatus, ProjectRepo } from '@c
 import { GitError, git } from '@clanks/workspace';
 import { EventEmitter } from 'node:events';
 import { existsSync, readdirSync } from 'node:fs';
+import type { CheckState, PullRequest, RepoHostClient } from '../repos/host';
 import type { SecretStore } from '../secrets';
+
+export type { PullRequest } from '../repos/host';
 
 /** A GitHub problem worded for the user. */
 export class GitHubError extends Error {
@@ -58,7 +61,8 @@ interface RepoJson {
  * environment, never its config, so it's never written to disk. Emits `change` when the sign-in
  * changes.
  */
-export class GitHubService extends EventEmitter<{ change: [] }> {
+export class GitHubService extends EventEmitter<{ change: [] }> implements RepoHostClient {
+  readonly host = 'github' as const;
   private device: { code: GitHubDeviceCode; controller: AbortController } | null = null;
   private error: string | null = null;
 
@@ -76,6 +80,10 @@ export class GitHubService extends EventEmitter<{ change: [] }> {
       device: this.device?.code ?? null,
       error: this.error,
     };
+  }
+
+  signedIn(): boolean {
+    return this.status().signedIn;
   }
 
   /** Signs in with a token the user made, once GitHub says whose it is. */
@@ -185,7 +193,7 @@ export class GitHubService extends EventEmitter<{ change: [] }> {
         `Couldn't clone ${repo.fullName}: ${error instanceof GitError ? error.stderr.split('\n').at(-1) || error.message : String(error)}`,
       );
     }
-    return { fullName: repo.fullName, url: repo.url, private: repo.private };
+    return { host: 'github', fullName: repo.fullName, url: repo.url, private: repo.private };
   }
 
   /**
@@ -276,7 +284,7 @@ export class GitHubService extends EventEmitter<{ change: [] }> {
   }
 
   /** How the checks on a commit are doing, from check runs and commit statuses together. */
-  async checks(repo: string, sha: string): Promise<'pending' | 'passing' | 'failing' | null> {
+  async checks(repo: string, sha: string): Promise<CheckState> {
     const [runs, status] = await Promise.all([
       this.api(`/repos/${repo}/commits/${sha}/check-runs?per_page=100`).then(
         (r) => r.json() as Promise<{ check_runs: { status: string; conclusion: string | null }[] }>,
@@ -445,17 +453,6 @@ export function authEnv(token: string): Record<string, string> {
     GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
     GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
   };
-}
-
-/** A pull request, as the app keeps track of it. */
-export interface PullRequest {
-  number: number;
-  url: string;
-  state: 'open' | 'merged' | 'closed';
-  /** The commit at the tip of its branch. */
-  head: string;
-  /** Whether GitHub can merge it as it is. Null while GitHub is still working it out. */
-  mergeable: boolean | null;
 }
 
 interface PullJson {

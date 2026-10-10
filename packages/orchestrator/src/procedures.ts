@@ -2,13 +2,16 @@ import { BrowserError } from '@clanks/browser';
 import { ModelsError } from '@clanks/models';
 import { ProviderError } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
+import { ArtifactError } from './artifacts/service';
 import { BoardError } from './board/service';
 import { ChatError } from './chat/service';
 import { ContextError } from './context/service';
 import { CrewDocError } from './crew/docs';
 import { DeliveryError } from './delivery/service';
 import { DesignError } from './design/service';
+import { EmailError } from './email/service';
 import { GitHubError } from './github/service';
+import { GitLabError } from './gitlab/service';
 import { McpError } from './mcp/service';
 import { ProjectError } from './projects/service';
 import { SecretsUnavailableError } from './secrets';
@@ -31,7 +34,10 @@ export function isUserError(error: unknown): error is Error {
     error instanceof ContextError ||
     error instanceof DeliveryError ||
     error instanceof DesignError ||
-    error instanceof GitHubError
+    error instanceof GitHubError ||
+    error instanceof GitLabError ||
+    error instanceof ArtifactError ||
+    error instanceof EmailError
   );
 }
 

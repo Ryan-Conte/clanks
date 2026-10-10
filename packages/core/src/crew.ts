@@ -179,6 +179,8 @@ export interface ClankSummary {
   model: ModelChoice | null;
   /** Whether the priming doc is the one that ships with the app or the user's edited copy. */
   doc: 'bundled' | 'edited';
+  /** The user made it, so it has no doc shipped with the app to go back to. */
+  custom: boolean;
   /** The edited copy doesn't parse, so the bundled doc is used until it's fixed. */
   docError: string | null;
   /** Context the doc asks for, in tokens. */
@@ -192,9 +194,95 @@ export interface ClankDocText {
   id: ClankId;
   /** The doc as it's stored, frontmatter and all. */
   text: string;
-  /** The doc that ships with the app, for comparing and resetting. */
+  /** The doc that ships with the app, for comparing and resetting. Empty for a custom clank. */
   bundled: string;
   edited: boolean;
+  custom: boolean;
+}
+
+/** Names a clank can't take, because the workflow uses them for something else. */
+export const RESERVED_CLANK_IDS = ['user', 'app', 'maker', 'all', 'open', 'none', 'custom'];
+
+/** A clank's id from its name: "Sentinel" is `sentinel`, "Legal Eagle" is `legal-eagle`. */
+export function suggestClankId(name: string): string {
+  const id = name
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^[^a-z]+|-+$/g, '')
+    .slice(0, 32)
+    .replace(/-+$/, '');
+  return id || 'clank';
+}
+
+/**
+ * A custom clank as the app's form takes it: what the frontmatter of its priming doc says, and the
+ * prompt under it. The form writes the same file format as the docs that ship with the app.
+ */
+export const customClankSchema = z.object({
+  id: clankIdSchema,
+  name: z.string().trim().min(1).max(40),
+  role: z.string().trim().min(1).max(40),
+  summary: z.string().trim().min(1).max(240),
+  avatar: avatarSchema,
+  kind: z.enum(['maker', 'checker']),
+  /** A maker's output types. */
+  outputs: z.array(outputTypeSchema).max(9),
+  /** A maker's stage (spec, design or build), or a checker's own, such as `security`. */
+  stage: stageSchema,
+  /** For a checker with a stage of its own: the stage it follows. */
+  after: stageSchema.nullable(),
+  /** For a checker: the ticket types it reviews. */
+  appliesTo: z.array(z.union([outputTypeSchema, z.literal('all')])).max(10),
+  /** Who it can send work back to: clank ids, or `maker`. */
+  bounceTo: z.array(z.string().trim().min(1).max(40)).max(20),
+  /** Tools it uses without asking, and tools it asks before using. */
+  allow: z.array(z.string().trim().min(1).max(64)).max(80),
+  ask: z.array(z.string().trim().min(1).max(64)).max(80),
+  tags: z.array(modelTagSchema).min(1).max(6),
+  vision: z.boolean(),
+  minContext: z.number().int().min(2048).max(1_048_576),
+  temperature: z.number().min(0).max(2),
+  /** The prompt: what the clank is told, written to it. */
+  prompt: z.string().trim().min(1).max(40_000),
+});
+
+export type CustomClank = z.infer<typeof customClankSchema>;
+
+const yamlList = (items: readonly string[]) => `[${items.join(', ')}]`;
+
+/** A custom clank's priming doc, as the form's fields say it: frontmatter, then the prompt. */
+export function customClankDoc(clank: CustomClank): string {
+  const checker = clank.kind === 'checker';
+  const lines = [
+    '---',
+    `id: ${clank.id}`,
+    `name: ${JSON.stringify(clank.name)}`,
+    `role: ${JSON.stringify(clank.role)}`,
+    `summary: ${JSON.stringify(clank.summary)}`,
+    `avatar: ${clank.avatar}`,
+    `outputs: ${yamlList(checker ? [] : clank.outputs)}`,
+    'workflow:',
+    `  kind: ${clank.kind}`,
+    `  stage: ${clank.stage}`,
+    ...(checker && clank.after ? [`  after: ${clank.after}`] : []),
+    ...(checker ? [`  applies_to: ${yamlList(clank.appliesTo)}`] : []),
+    `  bounce_to: ${yamlList(clank.bounceTo)}`,
+    'model:',
+    `  tags: ${yamlList(clank.tags)}`,
+    '  needs: [tools]',
+    `  prefers: ${yamlList(clank.vision ? ['vision'] : [])}`,
+    `  min_context: ${clank.minContext}`,
+    `  temperature: ${clank.temperature}`,
+    'tools:',
+    `  allow: ${yamlList(clank.allow)}`,
+    `  ask: ${yamlList(clank.ask)}`,
+    '---',
+    '',
+    clank.prompt.trim(),
+    '',
+  ];
+  return lines.join('\n');
 }
 
 /**

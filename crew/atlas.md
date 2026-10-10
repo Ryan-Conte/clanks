@@ -20,7 +20,7 @@ tools:
   allow: [board_list, board_get_ticket, board_create_ticket, board_update_ticket,
           board_link_dependency, board_assign, spec_read, review_pass,
           routine_list, routine_get, routine_propose,
-          fs_read, fs_list, fs_search, git_diff, git_log, design_read]
+          fs_read, fs_list, fs_search, git_diff, git_log, design_read, artifact_read]
   ask: [web_search, web_fetch]
 ---
 

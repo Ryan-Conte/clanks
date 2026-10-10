@@ -1,5 +1,6 @@
 import { type Orchestrator, startOrchestrator } from '@clanks/orchestrator';
 import { type BrowserWindow, type Tray, app, dialog, nativeTheme, shell } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createBrowserHost } from './browser';
 import { createDesignHost } from './design';
@@ -98,6 +99,21 @@ if (!app.requestSingleInstanceLock()) {
           openFolder: async (path) => {
             const error = await shell.openPath(path);
             if (error) throw new Error(error);
+          },
+          saveFile: async ({ title, defaultName, extensions }, data) => {
+            const options: Electron.SaveDialogOptions = {
+              title,
+              defaultPath: join(app.getPath('downloads'), defaultName),
+              ...(extensions.length > 0
+                ? { filters: [{ name: extensions.join(', ').toUpperCase(), extensions }] }
+                : {}),
+            };
+            const result = mainWindow
+              ? await dialog.showSaveDialog(mainWindow, options)
+              : await dialog.showSaveDialog(options);
+            if (result.canceled || !result.filePath) return null;
+            await writeFile(result.filePath, data);
+            return result.filePath;
           },
         },
         appInfo: {

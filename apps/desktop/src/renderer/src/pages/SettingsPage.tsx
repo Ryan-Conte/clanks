@@ -2,6 +2,8 @@ import type { Settings, SettingsPatch } from '@clanks/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { GitHubAccount, GitHubSignIn } from '../components/project/GitHub';
+import { GitLabAccount, GitLabSignIn } from '../components/project/GitLab';
+import { EmailPanel } from '../components/settings/EmailPanel';
 import { LocalApiPanel } from '../components/settings/LocalApiPanel';
 import { ProfilePanel } from '../components/settings/ProfilePanel';
 import { CloudPanel, ServersPanel } from '../components/settings/ProvidersPanels';
@@ -13,7 +15,7 @@ import {
 } from '../components/settings/ToolsPanels';
 import { Button, Dot, ErrorText, Panel, Row, Toggle, inputClass } from '../components/ui';
 import { formatTokens } from '../lib/format';
-import { useGitHub } from '../lib/github';
+import { useGitHub, useGitLab } from '../lib/github';
 import { BACKEND_NAMES, useModels } from '../lib/models';
 import { useTRPC } from '../lib/trpc';
 
@@ -35,7 +37,9 @@ export function SettingsPage() {
       <ApprovalsPanel />
       <RulesPanel />
       <LocalApiPanel />
+      <EmailPanel />
       <GitHubPanel />
+      <GitLabPanel />
       <HuggingFacePanel />
       <BackgroundPanel />
       <AppPanel />
@@ -64,6 +68,19 @@ function GitHubPanel() {
       description="For projects on a GitHub repository: listing and making repositories, and cloning them. The token stays in your keychain and only goes to GitHub."
     >
       {status?.signedIn ? <GitHubAccount status={status} /> : <GitHubSignIn />}
+    </Panel>
+  );
+}
+
+/** The GitLab account projects clone their repositories from, on gitlab.com or a GitLab of your own. */
+function GitLabPanel() {
+  const status = useGitLab();
+  return (
+    <Panel
+      title="GitLab"
+      description="For projects on a GitLab repository: cloning, pushing the crew's branches and opening a merge request for each. The token stays in your keychain and only goes to that GitLab."
+    >
+      {status?.signedIn ? <GitLabAccount status={status} /> : <GitLabSignIn />}
     </Panel>
   );
 }

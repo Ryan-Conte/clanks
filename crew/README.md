@@ -89,6 +89,8 @@ tools:                    # default permission policy, editable in Settings
 
 - A tool that is not listed is not offered to the clank at all. A `*` suffix matches a group (`browser_*`).
 - `post_progress`, `ask_user`, `ask_clank`, `submit_output`, `fail`, `ticket_bounce`, `context_search`, `context_write`, `memory_search` and `memory_write` are available to every clank and are never listed. `ticket_bounce` only reaches the clanks in `bounce_to`.
+- `ask_clank` puts one question to another clank in the crew and waits for the answer. The clank asked answers in a run of its own, which you can open from the ticket, with only tools that find things out: it changes nothing, can't ask in turn, and anything that would need your approval is turned down rather than left waiting.
+- `artifact_save` keeps a note or a file with the ticket, in the app's data folder rather than the project, and `artifact_read` reads it back. Every save under a name keeps the earlier versions.
 - Integration tools are named `int_<integration>_<operation>`. A clank gets them when the integration is connected and turned on for it in the project; `integrations` in the frontmatter only tells the app which ones to offer. Their policy comes from each operation's risk level.
 - Your policy in Settings always wins over the doc. In Settings an entry can also carry an argument pattern for tools whose main argument is a command or URL, such as `shell_exec(pnpm test*)` or `web_fetch(https://docs.example.com/*)`.
 
@@ -107,9 +109,11 @@ The body may use these, filled in at run time. Nothing else is templated; ticket
 
 ## Custom clanks
 
-Need a role that isn't on the list? **Create a custom clank** in the app: a name, a role prompt, a model, the tools it can use and a place in the workflow. The form starts from [custom.md](custom.md) and writes the same file format; Atlas can draft the role prompt from a one-line description. Custom clanks are saved to your library in the app's data folder and can be added to any project.
+Need a role that isn't on the list? **Make a clank** on the crew page: a name, a role prompt, a model, the tools it can use and a place in the workflow. The form writes the same file format as these docs, and its prompt starts from the shape [custom.md](custom.md) has; Atlas can draft the role prompt from a one-line description, and you can paste a whole doc instead. Custom clanks are saved to your library in the app's data folder, as `crew/<id>.md`, and can be added to any project.
 
-**Share it on the marketplace.** **Publish** on a custom clank's profile checks it (schema, token budget, tool names, and a scan for secrets and personal data), asks for an open licence, and opens a pull request to the free marketplace from your GitHub account. Anyone can then install it. Before they do, they see the whole doc and every permission it asks for, and anything above read starts at ask on their machine.
+A custom doc is checked before it joins the library, as these are in CI: every tool it names is real, a checker can call `review_pass`, the prompt says how it finishes, and nothing in it looks like a secret. Its profile shows how big its prompt is against the budget below. Adding a checker to a project re-routes the tickets that haven't reached it yet, so it starts checking straight away.
+
+**Share it on the marketplace** (when the marketplace arrives). **Publish** on a custom clank's profile checks it (schema, token budget, tool names, and a scan for secrets and personal data), asks for an open licence, and opens a pull request to the free marketplace from your GitHub account. Anyone can then install it. Before they do, they see the whole doc and every permission it asks for, and anything above read starts at ask on their machine.
 
 To place a checker in the workflow, set `kind: checker`, a `stage` name of your own, `after` (the stage it follows) and `applies_to` (the ticket types it reviews). [Sentinel](examples/sentinel.md) is the worked example: `stage: security`, `after: qa`, `applies_to: [pr]`, so every pull request goes Forge → Gauge → Sentinel → Atlas → you.
 

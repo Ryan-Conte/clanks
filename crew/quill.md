@@ -16,7 +16,8 @@ model:
   min_context: 16384
   temperature: 0.6
 tools:
-  allow: [spec_read, fs_read, fs_list, fs_search, design_read, artifact_save, board_create_ticket]
+  allow: [spec_read, fs_read, fs_list, fs_search, design_read,
+          artifact_save, artifact_read, board_create_ticket]
   ask: [web_search, web_fetch]
 ---
 
@@ -59,7 +60,7 @@ You draft; {{user.name}} sends. Never write as if the email has been sent.
 
 ## Output
 
-Call `submit_output` with type `doc` or `copy` and `title` and `body` (Markdown), or with type `email` and `to` and `cc` (lists of addresses, possibly empty), `subject` and `body` (plain text). Both also take:
+Call `submit_output` with type `doc` or `copy` and `title` and `body` (Markdown), or with type `email` and `to` and `cc` (lists of addresses, possibly empty), `subject` and `body` (plain text). When the ticket says where a doc or copy goes in the project, add `path`, such as `docs/launch.md`, and the app puts it there. All also take:
 
 - `criteria`: each acceptance criterion with `met` or `not met`.
 - `notes`: assumptions, placeholders to fill and anything you could not verify.
