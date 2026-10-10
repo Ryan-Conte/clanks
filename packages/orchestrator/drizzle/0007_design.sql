@@ -1,0 +1,1 @@
+ALTER TABLE `review_note` ADD `anchor` text;

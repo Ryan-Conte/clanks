@@ -64,8 +64,9 @@ export class ToolService extends EventEmitter<{ change: [] }> {
 
   /**
    * The tools a clank gets in a chat: those its policy doesn't turn off, that this chat can
-   * support. Files, commands and git need a workspace; search needs a backend or the browser;
-   * the browser needs the app; screenshots need a model that can see them. Board and spec tools
+   * support. Files, commands, git and design need a workspace; search needs a backend or the
+   * browser; the browser and drawing a design need the app; screenshots need a model that can see
+   * them. Board and spec tools
    * need a project, and the crew's finishing calls a run on a ticket.
    */
   async forChat(
@@ -73,6 +74,8 @@ export class ToolService extends EventEmitter<{ change: [] }> {
     chat: {
       workspace: boolean;
       browser?: boolean;
+      /** The app can draw designs, for `design_render`. */
+      render?: boolean;
       vision?: boolean;
       project?: boolean;
       /** What the clank does in a run. Null or missing for a chat. */
@@ -87,6 +90,7 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       shell: chat.workspace,
       search: (chat.browser ?? false) || this.searchConfigured(),
       browser: chat.browser ?? false,
+      render: chat.render ?? false,
       vision: chat.vision ?? false,
       project: chat.project ?? false,
       ticket: chat.role === 'maker' || chat.role === 'checker' || chat.role === 'helper',

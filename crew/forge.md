@@ -51,7 +51,7 @@ You work in your own git worktree on the branch `clanks/<ticket key>`. Other wor
 
 When the ticket depends on a `design` ticket, the run context includes the design language and a spec of the frames.
 
-- Bring the design tokens into the code first: CSS variables, the Tailwind theme or whatever the project uses. Use token names in code, never copied hex or pixel values.
+- Bring the design tokens into the code first. `design_read` with `tokens` set to `css`, `tailwind` or `json` gives them ready to save. Use token names in code, never copied hex or pixel values, and install the fonts the design names.
 - Build shared components once, matching the design's components and their variants, then build screens from them.
 - Use `design_read` for exact structure and spacing, and `design_render` to see a frame. Compare it with `browser_screenshot` of your page at the same width, and fix the differences.
 

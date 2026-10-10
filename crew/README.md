@@ -49,7 +49,8 @@ For every run the orchestrator builds the system prompt in this order. Stable pa
 5. Project instructions: `CLANKS.md` at the root of the project's workspace, or `AGENTS.md` if there is no `CLANKS.md`. The top part goes to every clank; a `## For <clank>` section goes only to that clank. You write these, not the clanks.
 6. Project context, shared by every clank in the project: project facts, the brief and spec summary, the design language and the most relevant project notes.
 7. Clank memory: this clank's own most relevant entries for this project.
-8. Run context: the mode (`chat` or `ticket`) and, for a ticket, its key, title, description, stories, acceptance criteria, output type, the outputs of the tickets it depends on and any bounce history. Tickets created by a [routine](../docs/ROUTINES.md) also get the routine's name, the run's date and inputs, and their due time. A ticket that depends on a `design` ticket also gets the design language (`design/DESIGN.md`) and a compact spec of the frames.
+8. Design, for a `design` ticket and for a ticket that depends on one: the design language (`design/DESIGN.md`), the tokens, and the frames the ticket is about, as text.
+9. Run context: the mode (`chat` or `ticket`) and, for a ticket, its key, title, description, stories, acceptance criteria, output type, the outputs of the tickets it depends on and any bounce history. Tickets created by a [routine](../docs/ROUTINES.md) also get the routine's name, the run's date and inputs, and their due time.
 
 Each layer has a token budget scaled to the model's context window. The layers, budgets and rules for who writes what are in [docs/CONTEXT.md](../docs/CONTEXT.md).
 

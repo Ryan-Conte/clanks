@@ -130,6 +130,16 @@ export class ShadowRepo {
     return result.exitCode === 0 ? result.stdout : null;
   }
 
+  /** The files under a folder at a commit or tree, as paths from the worktree's top. */
+  async list(treeish: string, folder: string): Promise<string[]> {
+    const result = await runGit(
+      ['ls-tree', '-r', '-z', '--name-only', treeish, '--', folder],
+      this.options({ okCodes: [128] }),
+    );
+    if (result.exitCode !== 0) return [];
+    return result.stdout.toString('utf8').split('\0').filter(Boolean);
+  }
+
   /** A file's size at a commit or tree, without reading it. */
   async size(treeish: string, path: string): Promise<number | null> {
     const result = await runGit(

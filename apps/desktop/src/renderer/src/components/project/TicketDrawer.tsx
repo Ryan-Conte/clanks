@@ -44,6 +44,8 @@ export function TicketDrawer(props: {
   const events = snapshot.events.filter((e) => e.ticketId === card.id);
   const draft = snapshot.specs.find((s) => s.ticketId === card.id && s.status !== 'approved');
   const watchable = card.runs.length > 0;
+  /** A design is reviewed in its maker's copy, which Studio opens. */
+  const makerRun = card.runs.find((run) => run.role === 'maker');
 
   return (
     <aside className="flex w-[30rem] shrink-0 flex-col border-l border-line bg-panel/60">
@@ -66,6 +68,18 @@ export function TicketDrawer(props: {
           )}
         </div>
         <span className="flex shrink-0 items-center gap-1">
+          {card.type === 'design' && makerRun && !card.doneAt && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="See the design, compare it with how it was, and comment on the canvas"
+              onClick={() =>
+                go({ page: 'project', id: projectId, tab: 'design', run: makerRun.conversationId })
+              }
+            >
+              Studio
+            </Button>
+          )}
           {watchable && (
             <Button
               size="sm"

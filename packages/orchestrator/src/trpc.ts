@@ -7,6 +7,7 @@ import type { BrowserService } from './browser/service';
 import type { ChatService } from './chat/service';
 import type { ContextService } from './context/service';
 import type { CrewService } from './crew/crew';
+import type { DesignService } from './design/service';
 import type { GitHubService } from './github/service';
 import type { LocalApi } from './local-api/server';
 import type { McpService } from './mcp/service';
@@ -69,6 +70,8 @@ export interface OrchestratorContext {
   board: BoardService;
   /** Each project's notes, and each clank's memory of it. */
   context: ContextService;
+  /** Projects' designs and tokens, for Studio and the design tools. */
+  design: DesignService;
   /** Docker containers for projects that run commands in them. */
   sandbox: SandboxService;
   /** The user's GitHub account, for cloning and making repositories. */

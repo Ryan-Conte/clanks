@@ -100,6 +100,11 @@ export interface RunScope {
   ticket: Ticket;
   /** The run context's own part: the mode, the ticket, and how to finish. */
   brief: string;
+  /**
+   * Set when the ticket is a design, or builds on one: the frames it's about, by name, so the run
+   * is told the design language and those frames. Empty means every frame.
+   */
+  design: { frames: string[] } | null;
 }
 
 /** What a chat or run in a project knows, for its prompt and its tools. */
@@ -189,6 +194,14 @@ export interface BoardServiceOptions {
   userName: () => string;
   /** What cloud models cost, for budgets in money. */
   prices: () => Settings['cloudPrices'];
+  /**
+   * Checks the design in a run's worktree before it's handed in. Resolves with what the hand-in
+   * records, or rejects with a `BoardError` saying what to fix first.
+   */
+  designCheck?: (
+    conversationId: string,
+    file: string | undefined,
+  ) => Promise<{ file: string; frames: string[]; lint: string }>;
   capacity?: ModelCapacity;
   now?: () => Date;
 }
@@ -639,6 +652,33 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     return this.ticket(id);
   }
 
+  /**
+   * The user changed a ticket's work by hand after its maker handed it in, as when they restyle
+   * something in Studio: the change goes on the ticket's branch, so it's part of what's merged.
+   * While the maker is still working nothing is needed: handing in commits what's there.
+   */
+  async absorb(conversationId: string): Promise<void> {
+    const conversation = this.host?.conversation(conversationId);
+    const delivery = this.options.delivery;
+    if (!delivery || !conversation?.ticketId || conversation.role !== 'maker') return;
+    if (this.host!.replying(conversationId)) return;
+    const ticket = this.store.ticket(conversation.ticketId);
+    const project = ticket ? this.options.projects.find(ticket.projectId) : undefined;
+    if (!ticket?.delivery || ticket.doneAt || !project) return;
+    const user = this.options.userName();
+    const next = await delivery.handIn({
+      project,
+      ticket,
+      conversationId,
+      maker: { id: 'user', name: cap(user) },
+      message: `Edits by ${user} on ${ticket.key}`,
+    });
+    if (!next || next.head === ticket.delivery.head) return;
+    this.store.updateTicket(ticket.id, { delivery: next, updatedAt: this.now() });
+    this.event(project.id, ticket.id, 'user', 'updated', `edited ${ticket.key}'s work by hand`);
+    this.emit('change', project.id);
+  }
+
   /** Starts a paused or failed run again, with a note from the user if they give one. */
   retry(id: string, note = ''): Ticket {
     const ticket = this.ticket(id);
@@ -847,12 +887,18 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     if (conversation.ticketId && conversation.role) {
       const ticket = tickets.find((t) => t.id === conversation.ticketId);
       if (ticket && conversation.role === 'planner') {
-        run = { role: 'planner', ticket, brief: this.planBrief(project, ticket, tickets, names) };
+        run = {
+          role: 'planner',
+          ticket,
+          brief: this.planBrief(project, ticket, tickets, names),
+          design: null,
+        };
       } else if (ticket && this.isTurn(ticket, conversation)) {
         run = {
           role: conversation.role,
           ticket,
           brief: this.ticketBrief(ticket, tickets, conversation.clankId, names),
+          design: designScope(ticket, tickets),
         };
       } else if (ticket && options.preview) {
         // What the clank would be told when its turn comes, for the Context tab's Preview.
@@ -872,6 +918,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
           role: route[view.step]!.role,
           ticket: view,
           brief: this.ticketBrief(view, tickets, conversation.clankId, names),
+          design: designScope(view, tickets),
         };
       }
     }
@@ -2369,6 +2416,22 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
           }
           this.store.updateSpec(draft.id, { status: 'review', updatedAt: this.now() });
         }
+        if (ticket.type === 'design' && this.options.designCheck) {
+          const checked = await this.options.designCheck(
+            conversation.id,
+            typeof output.file === 'string' ? output.file : undefined,
+          );
+          output = {
+            ...output,
+            file: checked.file,
+            // The frames as they are in the file, with what the clank said of each.
+            frames:
+              Array.isArray(output.frames) && output.frames.length > 0
+                ? output.frames
+                : checked.frames,
+            lint: checked.lint,
+          };
+        }
         let delivery: TicketDelivery | null = ticket.delivery;
         if (ticket.type !== 'spec' && this.options.delivery) {
           try {
@@ -2693,6 +2756,15 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         lines.push(
           `Your work goes on your branch \`clanks/${ticket.key}\`. Commit it as you go; whatever you leave uncommitted is committed for you when you hand in.${ticket.type === 'pr' ? ' The app pushes the branch and opens the pull request; you never push or merge.' : ''}`,
         );
+        if (ticket.type === 'design') {
+          lines.push(
+            `The design lives in \`design/\` on that branch, and ${names.user} watches it in Studio as you build it. Handing in checks it: a frame that uses a token, icon, image or component that isn't there is refused, and what design_lint still finds goes on the ticket.`,
+          );
+        } else if (designScope(ticket, all)) {
+          lines.push(
+            'This ticket builds on a design, which is under "Design" above with its tokens and frames. Build it to match: the same structure, tokens and copy. Say in your notes where you had to differ, and why.',
+          );
+        }
       }
       lines.push(
         `When it meets its acceptance criteria, hand it in with \`submit_output\`, type \`${ticket.type}\`. If you can't go on, call \`ask_user\` for a decision only ${names.user} can make, \`ticket_bounce\` to send it to the clank that can fix what you were handed, or \`fail\`. End with exactly one of these calls, never a plain reply.`,
@@ -2705,6 +2777,11 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       } else if (ticket.delivery?.changed) {
         lines.push(
           `Your worktree has the maker's branch \`${ticket.delivery.branch}\` as it was handed in. \`git_diff\` with \`against\` set to \`base\` shows the whole change.`,
+        );
+      }
+      if (ticket.type === 'design') {
+        lines.push(
+          'The design is in `design/` in your worktree: read it with `design_read`, frame by frame, and the tokens with `tokens: true`. What design_lint still found when it was handed in is under "Handed in". Check it covers every criterion, uses the real copy, and that its frames are named for their screens.',
         );
       }
       if (last) {
@@ -2842,6 +2919,32 @@ function toolError(error: unknown, failed: string): unknown {
     return new ToolFailure(failed ? `${failed} ${error.message}` : error.message);
   }
   return error;
+}
+
+/**
+ * The design a ticket's run is told about: its own, for a design ticket, or the frames the design
+ * tickets it depends on handed in. Null when design has nothing to do with it.
+ */
+function designScope(ticket: Ticket, all: Ticket[]): { frames: string[] } | null {
+  if (ticket.type === 'design') return { frames: [] };
+  const designs = ticket.dependsOn
+    .map((id) => all.find((t) => t.id === id))
+    .filter((t): t is Ticket => t?.type === 'design');
+  if (designs.length === 0) return null;
+  const frames = designs.flatMap((t) => {
+    const handed = t.output?.frames;
+    if (!Array.isArray(handed)) return [];
+    return handed
+      .map((frame: unknown) =>
+        typeof frame === 'string'
+          ? frame.split(':')[0]!
+          : typeof frame === 'object' && frame !== null && 'name' in frame
+            ? String(frame.name)
+            : '',
+      )
+      .filter(Boolean);
+  });
+  return { frames };
 }
 
 function modelKey(choice: ModelChoice): string {

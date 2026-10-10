@@ -6,6 +6,7 @@ import { Avatar } from '../components/Avatar';
 import { Board } from '../components/project/Board';
 import { ContextView } from '../components/project/ContextView';
 import { ProjectSettings } from '../components/project/ProjectSettings';
+import { ProjectStudio } from '../components/project/ProjectStudio';
 import { SpecView } from '../components/project/SpecView';
 import { Button, Dot, ErrorText, FolderIcon, IconButton } from '../components/ui';
 import { usageText } from '../lib/board';
@@ -17,6 +18,7 @@ import { useTRPC } from '../lib/trpc';
 const TABS: [ProjectTab, string][] = [
   ['board', 'Board'],
   ['spec', 'Spec'],
+  ['design', 'Studio'],
   ['context', 'Context'],
   ['settings', 'Settings'],
 ];
@@ -26,10 +28,13 @@ export function ProjectPage({
   id,
   tab,
   ticket,
+  run,
 }: {
   id: string;
   tab: ProjectTab;
   ticket: string | null;
+  /** A run whose design to open in Studio. */
+  run: string | null;
 }) {
   const trpc = useTRPC();
   const [live, setLive] = useState<BoardSnapshot | null>(null);
@@ -49,6 +54,7 @@ export function ProjectPage({
       <ProjectHeader snapshot={snapshot} tab={tab} />
       {tab === 'board' && <Board snapshot={snapshot} ticket={ticket} />}
       {tab === 'spec' && <SpecView snapshot={snapshot} />}
+      {tab === 'design' && <ProjectStudio snapshot={snapshot} run={run} />}
       {tab === 'context' && <ContextView snapshot={snapshot} />}
       {tab === 'settings' && <ProjectSettings snapshot={snapshot} />}
     </div>

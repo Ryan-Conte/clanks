@@ -91,6 +91,71 @@ export interface BrowserAccess {
   search(query: string, count: number): Promise<{ results: SearchResult[]; page: string | null }>;
 }
 
+/** What a design step did, worded for the clank. */
+export interface DesignResult {
+  content: string;
+  error?: boolean;
+  /** A frame as it's drawn, for the user and for a model that can see. */
+  image?: ToolImage;
+}
+
+/** A token as `design_tokens_set` takes it. */
+export interface TokenDraft {
+  name: string;
+  value: unknown;
+  type?: string | undefined;
+  /** Its value in other modes, by mode, such as `{ dark: "#111" }`. */
+  modes?: Record<string, unknown> | undefined;
+  description?: string | undefined;
+}
+
+/**
+ * The project's design in Studio, as the run's worktree has it. Every change shows on the user's
+ * canvas as it's made. Each method returns what the clank reads, or throws a `ToolFailure` saying
+ * what's wrong. `file` picks a design file when the project has more than one.
+ */
+export interface DesignAccess {
+  read(input: {
+    file?: string | undefined;
+    node?: string | undefined;
+    depth?: number | undefined;
+    /** The tokens instead of the layers: listed, or exported as CSS, a Tailwind theme or JSON. */
+    tokens?: boolean | 'css' | 'tailwind' | 'json' | undefined;
+  }): Promise<string>;
+  create(input: {
+    file?: string | undefined;
+    markup: string;
+    /** A frame's id or name, or a page's name. Without one, the first page. */
+    parent?: string | undefined;
+    index?: number | undefined;
+  }): Promise<string>;
+  update(input: {
+    file?: string | undefined;
+    updates: {
+      id: string;
+      set: Record<string, unknown>;
+      /** A frame or page to move it into. */
+      parent?: string | undefined;
+      index?: number | undefined;
+    }[];
+  }): Promise<string>;
+  remove(input: { file?: string | undefined; ids: string[] }): Promise<string>;
+  setTokens(input: { tokens: TokenDraft[]; remove: string[] }): Promise<string>;
+  makeComponent(input: {
+    file?: string | undefined;
+    node: string;
+    name: string;
+    variant?: string | undefined;
+  }): Promise<string>;
+  link(input: { file?: string | undefined; from: string; to: string | null }): Promise<string>;
+  render(input: {
+    file?: string | undefined;
+    frame: string;
+    mode?: string | undefined;
+  }): Promise<DesignResult>;
+  lint(input: { file?: string | undefined; frame?: string | undefined }): Promise<string>;
+}
+
 /** A ticket as the board tools take it from a clank. */
 export interface TicketDraft {
   title: string;
@@ -171,6 +236,8 @@ export interface ToolContext {
   board: BoardAccess | null;
   /** The project's context and the clank's memory, in a chat or run in a project. */
   context: ContextAccess | null;
+  /** The design in the run's worktree. Null when the chat has no workspace. */
+  design: DesignAccess | null;
   signal: AbortSignal;
   clank: { id: string; name: string };
   /** The most a result may hold, in characters, so it doesn't crowd out the conversation. */
@@ -196,14 +263,15 @@ export interface ToolResult {
 
 /**
  * What a tool needs from the chat to be offered: a workspace, commands, a search backend (or the
- * browser to search in), the browser, a model that can see pictures, a project's board, a ticket
- * run, or a run as the ticket's maker or one of its checkers.
+ * browser to search in), the browser, the app to draw designs with, a model that can see pictures,
+ * a project's board, a ticket run, or a run as the ticket's maker or one of its checkers.
  */
 export type ToolNeed =
   | 'workspace'
   | 'shell'
   | 'search'
   | 'browser'
+  | 'render'
   | 'vision'
   | 'project'
   | 'ticket'

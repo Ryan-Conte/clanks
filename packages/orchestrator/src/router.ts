@@ -16,6 +16,7 @@ import { browserRouter } from './routers/browser';
 import { chatRouter } from './routers/chat';
 import { contextRouter, homeRouter } from './routers/context';
 import { crewRouter } from './routers/crew';
+import { designRouter } from './routers/design';
 import { githubRouter } from './routers/github';
 import { boardRouter, projectsRouter } from './routers/projects';
 import { providersRouter } from './routers/providers';
@@ -71,6 +72,7 @@ export const appRouter = router({
   context: contextRouter,
   home: homeRouter,
   github: githubRouter,
+  design: designRouter,
 
   app: router({
     info: publicProcedure.query(({ ctx }) => ({

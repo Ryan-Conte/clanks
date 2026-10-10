@@ -69,7 +69,13 @@ function Page({ route }: { route: Route }) {
       );
     case 'project':
       return (
-        <ProjectPage key={route.id} id={route.id} tab={route.tab} ticket={route.ticket ?? null} />
+        <ProjectPage
+          key={route.id}
+          id={route.id}
+          tab={route.tab}
+          ticket={route.ticket ?? null}
+          run={route.run ?? null}
+        />
       );
     case 'new-project':
       return <NewProjectPage />;
@@ -99,7 +105,13 @@ function TitleBar({ route, welcome }: { route: Route; welcome: boolean }) {
   else if (route.page === 'draft') title = clank ? `New chat with ${clank.name}` : 'New chat';
   else if (route.page === 'crew') title = clank?.name ?? 'Crew';
   else if (route.page === 'project') {
-    title = { board: 'Board', spec: 'Spec', context: 'Context', settings: 'Settings' }[route.tab];
+    title = {
+      board: 'Board',
+      spec: 'Spec',
+      design: 'Studio',
+      context: 'Context',
+      settings: 'Settings',
+    }[route.tab];
   } else {
     title = {
       home: 'Home',

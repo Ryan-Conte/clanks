@@ -1,6 +1,7 @@
 import { BOARD_TOOLS, CREW_TOOLS } from './board';
 import { BROWSER_TOOLS } from './browser';
 import { CONTEXT_TOOLS } from './context';
+import { DESIGN_TOOLS } from './design';
 import { FILE_TOOLS } from './files';
 import { GIT_TOOLS } from './git';
 import { SHELL_TOOLS } from './shell';
@@ -10,6 +11,7 @@ import { WEB_TOOLS } from './web';
 export * from './board';
 export * from './browser';
 export * from './context';
+export * from './design';
 export * from './files';
 export * from './git';
 export * from './mcp';
@@ -27,6 +29,7 @@ export const BUILTIN_TOOLS: ToolSpec[] = [
   ...GIT_TOOLS,
   ...WEB_TOOLS,
   ...BROWSER_TOOLS,
+  ...DESIGN_TOOLS,
   ...BOARD_TOOLS,
   ...CREW_TOOLS,
   ...CONTEXT_TOOLS,

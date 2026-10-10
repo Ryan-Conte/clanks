@@ -7,6 +7,7 @@ import { ChatError } from './chat/service';
 import { ContextError } from './context/service';
 import { CrewDocError } from './crew/docs';
 import { DeliveryError } from './delivery/service';
+import { DesignError } from './design/service';
 import { GitHubError } from './github/service';
 import { McpError } from './mcp/service';
 import { ProjectError } from './projects/service';
@@ -29,6 +30,7 @@ export function isUserError(error: unknown): error is Error {
     error instanceof BoardError ||
     error instanceof ContextError ||
     error instanceof DeliveryError ||
+    error instanceof DesignError ||
     error instanceof GitHubError
   );
 }

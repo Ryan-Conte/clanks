@@ -3,13 +3,14 @@ import { ModelManager, type ModelManagerOptions, parseModelRef } from '@clanks/m
 import { BUILTIN_PROVIDER, ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
 import { McpManager } from '@clanks/tools';
 import { ActivityService } from './activity/service';
-import { BoardService } from './board/service';
+import { BoardError, BoardService } from './board/service';
 import { BrowserService } from './browser/service';
 import { ChatService } from './chat/service';
 import { ChatStore } from './chat/store';
 import { ContextService } from './context/service';
 import { CrewService } from './crew/crew';
 import { DeliveryService } from './delivery/service';
+import { DesignError, type DesignHost, DesignService } from './design/service';
 import { GitHubService } from './github/service';
 import { LocalApi } from './local-api/server';
 import { McpService } from './mcp/service';
@@ -46,6 +47,8 @@ export interface OrchestratorOptions {
   host?: Host;
   /** The browser pane's views and sessions. Without one, clanks get no browser tools. */
   browserHost?: BrowserHost;
+  /** Draws designs' frames out of sight. Without one, designs aren't measured or pictured. */
+  designHost?: DesignHost;
   /** Tests swap in their own Hugging Face, builds and hardware probe. */
   models?: Partial<ModelManagerOptions>;
   /** Tests point the cloud providers at stand-ins. */
@@ -155,6 +158,26 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     workspace,
     scratchDir: join(paths.worktrees, '_merges'),
   });
+  // The user's edits in Studio come in bursts: one checkpoint a burst is plenty.
+  const designTimers = new Map<string, NodeJS.Timeout>();
+  const design = new DesignService({
+    host: options.designHost ?? null,
+    userName: () => settings.get().profile.name || 'The user',
+    userEdited: (conversationId, file, lines) => {
+      workspace.noteDesign(conversationId, file, lines);
+      clearTimeout(designTimers.get(conversationId));
+      const timer = setTimeout(() => {
+        designTimers.delete(conversationId);
+        void workspace
+          .checkpoint(conversationId, { author: 'user', label: 'You edited the design' })
+          // Work the user changed after it was handed in goes on its branch, to be merged with it.
+          .then(() => board.absorb(conversationId))
+          .catch((error: unknown) => console.error('Recording a design edit failed', error));
+      }, 1200);
+      timer.unref();
+      designTimers.set(conversationId, timer);
+    },
+  });
   const board: BoardService = new BoardService({
     db: store.db,
     projects,
@@ -163,6 +186,16 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     delivery,
     userName: () => settings.get().profile.name || 'the user',
     prices: () => settings.get().cloudPrices,
+    designCheck: async (conversationId, file) => {
+      const run = workspace.run(conversationId);
+      if (!run) throw new BoardError("This run has no workspace, so there's no design to hand in.");
+      try {
+        return await design.check(run.cwd, file);
+      } catch (error) {
+        if (error instanceof DesignError) throw new BoardError(error.message);
+        throw error;
+      }
+    },
     capacity: {
       slots: (choice) =>
         choice.provider === BUILTIN_PROVIDER ? models.slotsFor(choice.model) : null,
@@ -211,6 +244,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     activity,
     tools,
     browser,
+    design,
     sandbox,
     board,
     artifactsDir: paths.artifacts,
@@ -292,6 +326,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     projects,
     board,
     context: contextNotes,
+    design,
     sandbox,
     github,
     localApi,
@@ -309,6 +344,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     close: () => {
       clearInterval(prTimer);
       if (pumpTimer) clearTimeout(pumpTimer);
+      for (const timer of designTimers.values()) clearTimeout(timer);
       void localApi.stop();
       github.cancelDeviceFlow();
       chat.close();

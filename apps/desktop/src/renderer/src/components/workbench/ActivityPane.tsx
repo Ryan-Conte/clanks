@@ -1,4 +1,5 @@
 import type { ActivityEvent } from '@clanks/core';
+import { useQuery } from '@tanstack/react-query';
 import { useSubscription } from '@trpc/tanstack-react-query';
 import { useState } from 'react';
 import { formatSeconds } from '../../lib/format';
@@ -93,6 +94,7 @@ export function ActivityPane() {
               <div className="flex flex-col gap-2 px-3 pt-1 pb-3 pl-[8.75rem]">
                 {event.input && <Block title="In">{event.input}</Block>}
                 {event.output && <Block title="Out">{event.output}</Block>}
+                {event.image && isDrawing(event.image) && <Drawing path={event.image} />}
                 <div className="flex gap-2">
                   {checkpointAt(event) && (
                     <Button
@@ -116,9 +118,14 @@ export function ActivityPane() {
                       Its output
                     </Button>
                   )}
-                  {event.image && (
+                  {event.image && !isDrawing(event.image) && (
                     <Button size="sm" onClick={() => show({ tab: 'browser', image: event.image! })}>
                       The page at this step
+                    </Button>
+                  )}
+                  {event.image && isDrawing(event.image) && (
+                    <Button size="sm" onClick={() => show({ tab: 'studio' })}>
+                      Show in Studio
                     </Button>
                   )}
                 </div>
@@ -128,6 +135,25 @@ export function ActivityPane() {
         );
       })}
     </ol>
+  );
+}
+
+/** Pictures of pages are JPEGs; a frame drawn from a design is a PNG. */
+function isDrawing(path: string): boolean {
+  return path.endsWith('.png');
+}
+
+/** A design's frame as it was drawn at a step. */
+function Drawing({ path }: { path: string }) {
+  const trpc = useTRPC();
+  const picture = useQuery(trpc.chat.picture.queryOptions(path, { staleTime: Infinity }));
+  if (!picture.data) return null;
+  return (
+    <img
+      src={picture.data}
+      alt="The frame as it was drawn"
+      className="max-h-96 w-full rounded-lg border border-line bg-white object-contain object-top"
+    />
   );
 }
 

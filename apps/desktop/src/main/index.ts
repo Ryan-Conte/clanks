@@ -2,6 +2,7 @@ import { type Orchestrator, startOrchestrator } from '@clanks/orchestrator';
 import { type BrowserWindow, type Tray, app, dialog, nativeTheme, shell } from 'electron';
 import { join } from 'node:path';
 import { createBrowserHost } from './browser';
+import { createDesignHost } from './design';
 import { attachIpcHandler } from './ipc/electron';
 import { createIpcHandler } from './ipc/server';
 import { keychainCipher } from './keychain';
@@ -25,6 +26,7 @@ if (!app.requestSingleInstanceLock()) {
   let orchestrator: Orchestrator | undefined;
   let mainWindow: BrowserWindow | undefined;
   let tray: Tray | undefined;
+  let designHost: ReturnType<typeof createDesignHost> | undefined;
   let quitting = false;
 
   const openWindow = () => {
@@ -38,6 +40,9 @@ if (!app.requestSingleInstanceLock()) {
           window.hide();
         }
       });
+      // The window frames are drawn in is never shown, so it mustn't keep the app open once this
+      // one is gone. It's made again the next time a frame is drawn.
+      window.on('closed', () => designHost?.close());
       mainWindow = window;
       return window;
     }
@@ -52,9 +57,11 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     quitting = true;
   });
+  // The window frames are drawn in is never shown, so it doesn't count as an open one.
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => {
     tray?.destroy();
+    designHost?.close();
     orchestrator?.close();
   });
 
@@ -65,6 +72,7 @@ if (!app.requestSingleInstanceLock()) {
         window: () => mainWindow,
         dataDir: app.getPath('userData'),
       });
+      designHost = createDesignHost();
       const started = startOrchestrator({
         dataDir: app.getPath('userData'),
         migrationsFolder: join(__dirname, 'migrations'),
@@ -72,6 +80,7 @@ if (!app.requestSingleInstanceLock()) {
         cipher: keychainCipher,
         bundledRuntimeDir: resourcePath('llama'),
         browserHost,
+        designHost,
         // Signing in to GitHub with a code needs an OAuth app; without one, users paste a token.
         githubClientId: process.env.CLANKS_GITHUB_CLIENT_ID || null,
         host: {
@@ -125,6 +134,7 @@ if (!app.requestSingleInstanceLock()) {
         const info = await runSmokeTest(
           window,
           browserHost,
+          designHost,
           app.commandLine.getSwitchValue('screenshot'),
         );
         console.log(`Smoke test passed: ${info}`);

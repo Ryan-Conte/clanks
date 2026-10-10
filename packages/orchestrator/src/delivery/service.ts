@@ -113,11 +113,13 @@ export class DeliveryService {
     ticket: Ticket;
     conversationId: string;
     maker: { id: string; name: string };
+    /** What the commit says, when it isn't the maker's own leftovers. */
+    message?: string;
   }): Promise<TicketDelivery | null> {
     const { project, ticket, maker } = input;
     const left = await this.options.workspace.commitLeftovers(
       input.conversationId,
-      `Work left by ${maker.name} on ${ticket.key}`,
+      input.message ?? `Work left by ${maker.name} on ${ticket.key}`,
       { name: `${maker.name} (clanks)`, email: `${maker.id}@clanks.local` },
     );
     if (!left) return null;

@@ -4,7 +4,15 @@ import { type ProjectInstructions, instructionsFor } from './instructions';
 
 /** The layers of a system prompt, in the order they're assembled. See docs/CONTEXT.md. */
 export type PromptLayerId =
-  'crew' | 'clank' | 'integrations' | 'profile' | 'instructions' | 'context' | 'memory' | 'run';
+  | 'crew'
+  | 'clank'
+  | 'integrations'
+  | 'profile'
+  | 'instructions'
+  | 'context'
+  | 'memory'
+  | 'design'
+  | 'run';
 
 export interface PromptLayer {
   id: PromptLayerId;
@@ -63,6 +71,8 @@ export interface PromptInput {
   context: string | null;
   /** The clank's memory layer: its own entries for this project that matter here. */
   memory?: string | null;
+  /** The design layer, for a run that makes a design or builds on one: language, tokens, frames. */
+  design?: string | null;
   /** The model's context window, which the layers' budgets scale to. */
   window?: number;
   run: RunContext;
@@ -71,7 +81,13 @@ export interface PromptInput {
 }
 
 /** Layer budgets for a 32k-token model, from docs/CONTEXT.md. */
-export const BUDGETS = { profile: 300, instructions: 1500, context: 2000, memory: 1000 } as const;
+export const BUDGETS = {
+  profile: 300,
+  instructions: 1500,
+  context: 2000,
+  memory: 1000,
+  design: 3000,
+} as const;
 
 /**
  * Layer budgets for a model's context window. Project context and clank memory scale with it,
@@ -84,6 +100,7 @@ export function layerBudgets(window = 32_768): Record<keyof typeof BUDGETS, numb
     instructions: BUDGETS.instructions,
     context: Math.round(BUDGETS.context * scale),
     memory: Math.round(BUDGETS.memory * scale),
+    design: Math.round(BUDGETS.design * scale),
   };
 }
 
@@ -125,6 +142,8 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
   if (input.memory) {
     layers.push(layer('memory', `${input.clank.name}'s memory`, input.memory, budgets.memory));
   }
+  // The design service writes this from the design's own files, within the layer's budget.
+  if (input.design) layers.push(layer('design', 'Design', input.design, budgets.design));
   layers.push(layer('run', 'Run context', runText(input.run, fill)));
 
   const system = layers.map((l) => l.text).join('\n\n');
@@ -293,6 +312,11 @@ function runText(run: RunContext, fill: (text: string) => string): string {
     if (run.tools.some((t) => t.startsWith('browser_'))) {
       lines.push(
         "Pages you open show in {{user.name}}'s browser pane as you work. browser_read gives a page as text with refs such as [12], which browser_click and browser_type take. If a page needs a login or shows a CAPTCHA, don't try to get past it: say so, and {{user.name}} can take over the browser. While they have it, your browser tools wait until they hand it back.",
+      );
+    }
+    if (run.tools.includes('design_create') || run.tools.includes('design_update')) {
+      lines.push(
+        "The design is in `design/` in your copy, and {{user.name}} watches it in Studio as you change it. They may edit it by hand while you work: what they changed is kept and you're told, so read a layer again with design_read before you change it.",
       );
     }
     if (run.mode === 'chat') {

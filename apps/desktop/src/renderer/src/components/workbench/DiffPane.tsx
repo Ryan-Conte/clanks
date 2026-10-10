@@ -517,13 +517,19 @@ function FileList(props: {
 }
 
 /** Notes for the clank that haven't gone to it yet, and the button that sends them. */
-function ReviewTray({ notes, name }: { notes: ReviewNote[]; name: string }) {
+export function ReviewTray({ notes, name }: { notes: ReviewNote[]; name: string }) {
   const trpc = useTRPC();
   const { conversationId, replying } = useWorkbench();
   const remove = useMutation(trpc.workspace.deleteNote.mutationOptions());
   const send = useMutation(trpc.chat.sendReview.mutationOptions());
   if (notes.length === 0 || !conversationId) return null;
-  const kinds = { reject: 'Rejected', comment: 'Comment', edit: 'You edited' };
+  const kinds = {
+    reject: 'Rejected',
+    comment: 'Comment',
+    edit: 'You edited',
+    design: 'You edited',
+    pin: 'Comment',
+  };
   return (
     <div className="flex max-h-56 shrink-0 flex-col border-t border-line bg-panel/80">
       <ul className="min-h-0 overflow-y-auto px-3 pt-2">
@@ -532,12 +538,18 @@ function ReviewTray({ notes, name }: { notes: ReviewNote[]; name: string }) {
             <span className="shrink-0 font-medium text-white/85">{kinds[note.kind]}</span>
             <span className="min-w-0 flex-1 text-dim">
               <span className="font-mono">
-                {note.path}
+                {note.anchor?.kind === 'pin' ? note.anchor.name : note.path}
                 {note.startLine !== null
                   ? `:${note.startLine}${note.endLine && note.endLine !== note.startLine ? `–${note.endLine}` : ''}`
                   : ''}
               </span>
-              {note.body && note.kind !== 'edit' ? (
+              {note.anchor?.kind === 'edits' ? (
+                <span className="text-white/75">
+                  {' '}
+                  · {Object.keys(note.anchor.lines).length}{' '}
+                  {Object.keys(note.anchor.lines).length === 1 ? 'change' : 'changes'} in Studio
+                </span>
+              ) : note.body && note.kind !== 'edit' ? (
                 <span className="text-white/75"> · {note.body}</span>
               ) : null}
             </span>

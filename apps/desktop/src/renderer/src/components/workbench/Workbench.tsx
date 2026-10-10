@@ -7,6 +7,7 @@ import { Button, Dot, ErrorText, FolderIcon, IconButton, XIcon } from '../ui';
 import { ActivityPane } from './ActivityPane';
 import { BrowserPane } from './BrowserPane';
 import { DiffPane } from './DiffPane';
+import { Studio } from '../studio/Studio';
 import { TerminalPane } from './TerminalPane';
 
 const MIN_WIDTH = 420;
@@ -14,23 +15,35 @@ const TABS: [WorkbenchTab, string][] = [
   ['diff', 'Diff'],
   ['terminal', 'Terminal'],
   ['browser', 'Browser'],
+  ['studio', 'Studio'],
   ['activity', 'Activity'],
 ];
 /** Tabs that show the chat's files, which need a folder. */
-const FILE_TABS = new Set<WorkbenchTab>(['diff', 'terminal']);
+const FILE_TABS = new Set<WorkbenchTab>(['diff', 'terminal', 'studio']);
 
 /**
  * Beside the chat: what the clank is changing, running, browsing and doing, as it happens. The
  * diff and terminal need a folder; the browser and the activity work in any chat.
  */
-export function Workbench({ clankId, folder }: { clankId: string; folder: boolean }) {
+export function Workbench({
+  clankId,
+  folder,
+  role,
+}: {
+  clankId: string;
+  folder: boolean;
+  /** What the clank does in a run. A checker's copy of a design is only to look at. */
+  role: string | null;
+}) {
   const trpc = useTRPC();
-  const { state, browser, conversationId, setOpen, focus } = useWorkbench();
+  const { state, browser, conversationId, replying, setOpen, focus } = useWorkbench();
   const clank = useClank(clankId);
+  const designer = clank?.outputs.includes('design') ?? false;
   const tabs = TABS.filter(
     ([id]) => (folder || !FILE_TABS.has(id)) && (id !== 'browser' || browser?.available),
   );
-  const first: WorkbenchTab = folder ? 'diff' : 'browser';
+  // A designer's work is on the canvas; everyone else's is in the diff.
+  const first: WorkbenchTab = folder ? (designer ? 'studio' : 'diff') : 'browser';
   const [chosen, setTab] = useState<WorkbenchTab>(first);
   const [visited, setVisited] = useState<Set<WorkbenchTab>>(new Set([first]));
   // A tab that went away, such as Diff when the folder is cleared, falls back to the first.
@@ -163,6 +176,22 @@ export function Workbench({ clankId, folder }: { clankId: string; folder: boolea
         {seen.has('browser') && tabs.some(([id]) => id === 'browser') && (
           <div className={tab === 'browser' ? 'absolute inset-0' : 'hidden'}>
             <BrowserPane clankId={clankId} />
+          </div>
+        )}
+        {run && conversationId && seen.has('studio') && (
+          <div className={tab === 'studio' ? 'absolute inset-0' : 'hidden'}>
+            <Studio
+              source={{ conversationId }}
+              editable={role === null || role === 'maker'}
+              compact
+              run={{
+                conversationId,
+                clankName: name,
+                replying,
+                notes: state?.notes ?? [],
+                checkpoints: state?.checkpoints ?? [],
+              }}
+            />
           </div>
         )}
         {seen.has('activity') && (

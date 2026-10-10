@@ -50,6 +50,7 @@ function context(root: string, base: string, extra: Partial<ToolContext> = {}): 
     browser: null,
     board: null,
     context: null,
+    design: null,
     signal: new AbortController().signal,
     clank: { id: 'forge', name: 'Forge' },
     maxChars: 20_000,
@@ -433,6 +434,14 @@ describe('labels', () => {
         to: 'forge',
         clank: 'forge',
         body: 'Picked Zustand for the cart',
+        markup: '<Frame name="Home / Desktop" />',
+        id: 'n1',
+        node: 'n1',
+        frame: 'Home / Desktop',
+        name: 'Button',
+        from: 'n2',
+        tokens: 'color.brand',
+        remove: 'color.old',
       });
       expect(label.length, tool.name).toBeGreaterThan(3);
     }

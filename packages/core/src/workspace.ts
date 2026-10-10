@@ -74,8 +74,34 @@ export interface Checkpoint {
   createdAt: Date;
 }
 
-/** Feedback for the clank from the diff editor, sent with the user's next message. */
-export type ReviewNoteKind = 'reject' | 'comment' | 'edit';
+/**
+ * Feedback for the clank, sent with the user's next message. From the diff editor: a rejected
+ * change, a comment on some lines, or an edit of their own. From Studio: `design` for what they
+ * changed in the design by hand, `pin` for a comment pinned to the canvas.
+ */
+export type ReviewNoteKind = 'reject' | 'comment' | 'edit' | 'design' | 'pin';
+
+/** What a note from Studio is about. */
+export type NoteAnchor =
+  | {
+      kind: 'pin';
+      /** The layer the comment is on, if it's on one. */
+      node: string | null;
+      /** That layer's name, or the frame's. */
+      name: string;
+      /** The top-level frame it's in, by id and name. */
+      frame: string | null;
+      frameName: string | null;
+      page: string | null;
+      /** Where on the page's canvas it's pinned. */
+      x: number;
+      y: number;
+    }
+  | {
+      kind: 'edits';
+      /** What the user changed, by what was changed, so a later change replaces its line. */
+      lines: Record<string, string>;
+    };
 
 export interface ReviewNote {
   id: string;
@@ -89,6 +115,8 @@ export interface ReviewNote {
   body: string;
   /** The lines the note is about, so the clank can find them. */
   excerpt: string;
+  /** For a note from Studio: the layer and place on the canvas, or the edits it sums up. */
+  anchor: NoteAnchor | null;
   checkpointId: string | null;
   /** Sent notes went to the clank, inside a reply or with a message. */
   status: 'pending' | 'sent';
@@ -160,6 +188,21 @@ export const saveFileSchema = z.object({
   path: relativePathSchema,
   content: z.string().max(5_000_000),
   hash: z.string().nullable(),
+});
+
+/** A comment pinned to a design's canvas. */
+export const pinSchema = z.object({
+  conversationId: conversationIdSchema,
+  /** The design file, such as `design/site.design`. */
+  path: relativePathSchema,
+  node: z.string().max(40).nullable(),
+  name: z.string().max(200),
+  frame: z.string().max(40).nullable(),
+  frameName: z.string().max(200).nullable(),
+  page: z.string().max(40).nullable(),
+  x: z.number(),
+  y: z.number(),
+  body: z.string().trim().min(1).max(4000),
 });
 
 export const commentSchema = z.object({

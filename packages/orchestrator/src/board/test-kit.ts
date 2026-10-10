@@ -3,6 +3,7 @@ import { createFakeProvider } from '@clanks/providers';
 import { git } from '@clanks/workspace';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { DesignHost } from '../design/service';
 import { sqliteModelRepository } from '../store/models';
 import { startTestOrchestrator, tempDir } from '../test-helpers';
 
@@ -116,11 +117,18 @@ export async function repository(): Promise<string> {
 /** An orchestrator with a pulled model that replays scripts, and a project on a fresh repo. */
 export async function setup(
   scripts: Record<string, Script>,
-  options: { crew?: string[]; held?: boolean; githubFetch?: typeof fetch } = {},
+  options: {
+    crew?: string[];
+    held?: boolean;
+    githubFetch?: typeof fetch;
+    /** Stands in for the app's hidden window, so designs can be measured and drawn. */
+    designHost?: DesignHost;
+  } = {},
 ) {
-  const orchestrator = startTestOrchestrator(
-    options.githubFetch ? { githubFetch: options.githubFetch } : {},
-  );
+  const orchestrator = startTestOrchestrator({
+    ...(options.githubFetch ? { githubFetch: options.githubFetch } : {}),
+    ...(options.designHost ? { designHost: options.designHost } : {}),
+  });
   const { context } = orchestrator;
   sqliteModelRepository(context.store.db).putModel(model);
   const blobs = join(orchestrator.paths.models, 'blobs');

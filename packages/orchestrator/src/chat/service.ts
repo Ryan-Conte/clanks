@@ -32,7 +32,14 @@ import type { ActiveReply, ChatScope, ReplyOutcome } from '../board/service';
 import type { BrowserService } from '../browser/service';
 import type { CrewService } from '../crew/crew';
 import { readProjectInstructions } from '../crew/instructions';
-import { type AssembledPrompt, type RunContext, assemblePrompt } from '../crew/prompt';
+import {
+  type AssembledPrompt,
+  type RunContext,
+  assemblePrompt,
+  layerBudgets,
+} from '../crew/prompt';
+import { designAccess } from '../design/access';
+import type { DesignService } from '../design/service';
 import type { SandboxService } from '../sandbox/service';
 import type { TerminalService } from '../terminal/service';
 import type { Toolset, ToolService } from '../tools/service';
@@ -95,6 +102,8 @@ export interface ChatServiceOptions {
   activity: ActivityService;
   tools: ToolService;
   browser: BrowserService;
+  /** Designs, for the design tools and what a run is told of the design. */
+  design?: DesignService;
   /** Docker containers for projects that run commands in them. */
   sandbox?: SandboxService;
   /** Projects' boards. Without one, chats can't be in projects. */
@@ -331,14 +340,20 @@ export class ChatService extends EventEmitter<{
     const notes = this.options.workspace.pendingNotes(conversationId);
     const content = notes.length > 0 ? `${text.trim()}\n\n${formatNotes(notes)}` : text;
     this.appendUser(conversationId, content);
-    this.options.workspace.markSent(
-      conversationId,
-      notes.map((n) => n.id),
-    );
+    this.markSent(conversationId, notes);
     const updated = this.store.updateConversation(conversationId, { updatedAt: this.now() })!;
     const reply = this.reply(updated, choice);
     this.emit('list');
     return reply;
+  }
+
+  /** Notes that went to the clank. What the user changed in the design is among them. */
+  private markSent(conversationId: string, notes: ReviewNote[]): void {
+    this.options.workspace.markSent(
+      conversationId,
+      notes.map((n) => n.id),
+    );
+    if (notes.some((n) => n.kind === 'design')) this.options.design?.told(conversationId);
   }
 
   /** Sends just the notes from the diff editor, as the user's next message. */
@@ -349,10 +364,7 @@ export class ChatService extends EventEmitter<{
     this.assertIdle(conversationId);
     const choice = this.modelFor(conversation.clankId, conversation.projectId);
     this.appendUser(conversationId, formatNotes(notes));
-    this.options.workspace.markSent(
-      conversationId,
-      notes.map((n) => n.id),
-    );
+    this.markSent(conversationId, notes);
     const updated = this.store.updateConversation(conversationId, { updatedAt: this.now() })!;
     const reply = this.reply(updated, choice);
     this.emit('list');
@@ -426,6 +438,7 @@ export class ChatService extends EventEmitter<{
     }
     this.options.terminal.closeConversation(conversationId);
     this.options.browser.closeConversation(conversationId);
+    this.options.design?.forget(conversationId);
     await this.options.sandbox?.remove(conversationId);
     await this.options.workspace.remove(conversationId);
     this.queued.delete(conversationId);
@@ -559,6 +572,7 @@ export class ChatService extends EventEmitter<{
     const toolset = await this.options.tools.forChat(clank, {
       workspace: run !== null || status === 'ready' || (conversation !== null && !saved),
       browser: this.options.browser.available,
+      render: this.options.design?.canDraw ?? false,
       vision: choice !== null && this.seesImages(choice),
       project: scope !== null,
       role: scope?.run?.role ?? null,
@@ -576,7 +590,34 @@ export class ChatService extends EventEmitter<{
       },
       scope,
       window,
+      this.designLayer(clank, run?.cwd ?? conversation?.folder ?? null, scope, window),
     );
+  }
+
+  /**
+   * What a clank is told of the design: for a ticket that makes one or builds on one, and for a
+   * designer in any chat about a folder that has one.
+   */
+  private designLayer(
+    clank: { frontmatter: { outputs: string[] } },
+    dir: string | null,
+    scope: ChatScope | null,
+    window: number | undefined,
+  ): string | null {
+    if (!dir || !this.options.design) return null;
+    const about =
+      scope?.run?.design ??
+      (!scope?.run && clank.frontmatter.outputs.includes('design') ? { frames: [] } : null);
+    if (!about) return null;
+    try {
+      return this.options.design.handoff(dir, {
+        frames: about.frames,
+        budget: layerBudgets(window).design,
+      });
+    } catch (error) {
+      console.error('Reading the design for a prompt failed', error);
+      return null;
+    }
   }
 
   /**
@@ -758,6 +799,7 @@ export class ChatService extends EventEmitter<{
       const toolset = await this.options.tools.forChat(clank, {
         workspace: workspace !== null,
         browser: this.options.browser.available,
+        render: this.options.design?.canDraw ?? false,
         vision,
         project: scope !== null,
         role,
@@ -790,6 +832,7 @@ export class ChatService extends EventEmitter<{
         },
         scope,
         window,
+        this.designLayer(clank, workspace?.cwd ?? null, scope, window),
       );
       const toolTokens = estimateTokens(JSON.stringify(offered.definitions));
       const maxChars = Math.max(4000, Math.min(40_000, Math.floor(window * 4 * 0.12)));
@@ -1009,10 +1052,7 @@ export class ChatService extends EventEmitter<{
           const feedback = formatNotes(notes);
           messages.push({ role: 'user', content: feedback });
           this.addPart(conversation.id, message, { type: 'feedback', round, text: feedback });
-          this.options.workspace.markSent(
-            conversation.id,
-            notes.map((n) => n.id),
-          );
+          this.markSent(conversation.id, notes);
         }
         if (signal.aborted) {
           message.status = 'cancelled';
@@ -1280,6 +1320,14 @@ export class ChatService extends EventEmitter<{
           : null,
       board: input.scope?.access ?? null,
       context: input.scope?.contextAccess ?? null,
+      design:
+        workspace && this.options.design && call.name.startsWith('design_')
+          ? designAccess(this.options.design, {
+              dir: workspace.cwd,
+              conversationId: conversation.id,
+              maxChars: input.maxChars,
+            })
+          : null,
       signal,
       clank: input.clank,
       maxChars: input.maxChars,
@@ -1444,6 +1492,7 @@ export class ChatService extends EventEmitter<{
     },
     scope: ChatScope | null,
     window?: number,
+    design: string | null = null,
   ): AssembledPrompt {
     const { crew } = this.options;
     const settings = this.options.settings.get();
@@ -1457,6 +1506,7 @@ export class ChatService extends EventEmitter<{
       instructions: folder ? readProjectInstructions(folder) : null,
       context: scope?.context ?? null,
       memory: scope?.memory ?? null,
+      design,
       ...(window ? { window } : {}),
       run: {
         mode,
@@ -1719,7 +1769,22 @@ export function formatNotes(notes: ReviewNote[]): string {
   const items = notes.map((note, i) => {
     const where = `\`${note.path}\``;
     let item: string;
-    if (note.kind === 'reject') {
+    if (note.kind === 'design') {
+      const changes = note.body
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => `   - ${line}`)
+        .join('\n');
+      item = `I edited the design ${where} myself in Studio:\n${changes}\n   Keep my changes. Read those layers again with design_read before you change them.`;
+    } else if (note.kind === 'pin') {
+      const anchor = note.anchor?.kind === 'pin' ? note.anchor : null;
+      const on = anchor?.node
+        ? `the layer [${anchor.node}] "${anchor.name}"${anchor.frameName && anchor.frameName !== anchor.name ? ` in the frame "${anchor.frameName}"` : ''}`
+        : anchor?.frameName
+          ? `the frame "${anchor.frameName}"`
+          : 'the canvas';
+      item = `About ${on} in the design ${where}: ${note.body}`;
+    } else if (note.kind === 'reject') {
       item = `I rejected your change to ${where} at ${lines(note)}, so it's back as it was.${note.body ? ` ${note.body}` : ''}`;
       if (note.excerpt) item += `\n   You had written:\n${quote(note.excerpt)}`;
     } else if (note.kind === 'comment') {
@@ -1733,7 +1798,12 @@ export function formatNotes(notes: ReviewNote[]): string {
     }
     return `${i + 1}. ${item}`;
   });
-  return `My review notes from the diff editor:\n\n${items.join('\n')}`;
+  const from = notes.every((n) => n.kind === 'design' || n.kind === 'pin')
+    ? 'Studio'
+    : notes.some((n) => n.kind === 'design' || n.kind === 'pin')
+      ? 'the diff editor and Studio'
+      : 'the diff editor';
+  return `My review notes from ${from}:\n\n${items.join('\n')}`;
 }
 
 /** A chat's title from its first message: its opening words, on one line. */

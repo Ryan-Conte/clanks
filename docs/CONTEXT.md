@@ -16,6 +16,7 @@ A clank's prompt is built from these layers, in this order. Stable layers come f
 | Project instructions | One project: everyone, plus a section per clank | You | `CLANKS.md` |
 | **Project context** | One project, **all clanks** | You and the crew | Project facts, brief, spec summary, design language, project notes |
 | **Clank memory** | One project, **one clank** | That clank (you can edit it) | Its chats, run summaries, and its decisions with their reasons |
+| Design | One run, when it makes a design or builds on one | Prism and you, in Studio | `design/DESIGN.md`, the tokens, and the frames the ticket is about, as text |
 | Run context | One run | The app | The ticket or conversation |
 
 **Instructions and information are kept apart.** The priming docs, your profile, `CLANKS.md` and the ticket are instructions. Project notes, memory, the spec, research and everything read through tools are information. Clanks are told so in the prompt, and nothing a clank writes can become an instruction.
@@ -120,9 +121,10 @@ Each layer has a token budget, scaled to the model's context window. Defaults fo
 | `CLANKS.md` (top part and this clank's section) | 1,500 |
 | Project context | 2,000 |
 | Clank memory | 1,000 |
+| Design | 3,000 |
 | Run context | The rest, keeping room for tool results and the reply |
 
-On a 16k-token model, project context and clank memory get half. If `CLANKS.md` or the pinned notes don't fit, the Context tab tells you rather than silently cutting them.
+On a 16k-token model, project context, clank memory and the design get half. What doesn't fit of a design is read with `design_read`. If `CLANKS.md` or the pinned notes don't fit, the Context tab tells you rather than silently cutting them.
 
 ## Seeing what a clank sees
 

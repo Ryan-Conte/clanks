@@ -19,6 +19,7 @@ import type {
   NoteStatus,
   OutputType,
   ProjectRepo,
+  NoteAnchor,
   ReviewNoteKind,
   RouteStep,
   RunRole,
@@ -424,6 +425,8 @@ export const reviewNote = sqliteTable(
     endLine: integer('end_line'),
     body: text('body').notNull(),
     excerpt: text('excerpt').notNull(),
+    /** A note from Studio: the layer and place it's pinned to, or the edits it sums up. */
+    anchor: text('anchor', { mode: 'json' }).$type<NoteAnchor | null>(),
     checkpointId: text('checkpoint_id'),
     status: text('status', { enum: ['pending', 'sent'] }).notNull(),
     /** When it went to the clank, so a rewind to before then can take it back. */

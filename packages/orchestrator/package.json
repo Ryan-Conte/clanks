@@ -15,6 +15,7 @@
   "dependencies": {
     "@clanks/browser": "workspace:*",
     "@clanks/core": "workspace:*",
+    "@clanks/design": "workspace:*",
     "@clanks/models": "workspace:*",
     "@clanks/providers": "workspace:*",
     "@clanks/tools": "workspace:*",

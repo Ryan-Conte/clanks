@@ -30,5 +30,17 @@ export default defineConfig({
   preload: {},
   renderer: {
     plugins: [react(), tailwindcss()],
+    build: {
+      // Fonts and images stay files: the window's content security policy loads nothing from
+      // data: URLs but pictures, and a small font subset inlined as one would be refused.
+      assetsInlineLimit: 0,
+      rollupOptions: {
+        // The app's window, and the page designs' frames are drawn on out of sight.
+        input: {
+          index: join(import.meta.dirname, 'src/renderer/index.html'),
+          frame: join(import.meta.dirname, 'src/renderer/frame.html'),
+        },
+      },
+    },
   },
 });

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- The page designs' frames are drawn on, out of sight, to measure and picture them. It runs
+         only the app's own script; what a design holds arrives as escaped HTML and data: images. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <title>clanks frame</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/frame.ts"></script>
+  </body>
+</html>

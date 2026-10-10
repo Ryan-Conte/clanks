@@ -544,6 +544,7 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
         endLine: end,
         body: input.comment,
         excerpt: excerptOf(rejected, 1, splitLines(rejected).length, 12),
+        anchor: null,
         checkpointId: made?.id ?? null,
       });
     });
@@ -578,6 +579,7 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
           .map((r) => (r.start === r.end ? `${r.start}` : `${r.start}–${r.end}`))
           .join(', '),
         excerpt: excerptOf(input.content, start, end, 12),
+        anchor: null,
         checkpointId: made?.id ?? null,
       });
     });
@@ -605,10 +607,99 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
       endLine: end,
       body: input.body,
       excerpt: excerptOf(text, start, end, 12),
+      anchor: null,
       checkpointId: null,
     });
     this.emit('change', input.conversationId);
     return note;
+  }
+
+  /** A comment pinned to a design's canvas in Studio, for the clank. Changes nothing. */
+  pin(input: {
+    conversationId: string;
+    path: string;
+    node: string | null;
+    name: string;
+    frame: string | null;
+    frameName: string | null;
+    page: string | null;
+    x: number;
+    y: number;
+    body: string;
+  }): ReviewNote {
+    const row = this.require(input.conversationId);
+    const { conversationId: _conversationId, path, body, ...where } = input;
+    const note = this.addNote(row, {
+      kind: 'pin',
+      path,
+      startLine: null,
+      endLine: null,
+      body,
+      excerpt: '',
+      anchor: { kind: 'pin', ...where },
+      checkpointId: null,
+    });
+    this.emit('change', input.conversationId);
+    return note;
+  }
+
+  /**
+   * What the user changed in a run's design by hand, as one note that grows until it's sent: a
+   * later change to the same thing replaces its line.
+   */
+  noteDesign(conversationId: string, path: string, lines: Record<string, string>): void {
+    const row = this.row(conversationId);
+    if (!row || Object.keys(lines).length === 0) return;
+    const pending = this.notes(row.id).find(
+      (n) => n.kind === 'design' && n.path === path && n.status === 'pending',
+    );
+    const merged = {
+      ...(pending?.anchor?.kind === 'edits' ? pending.anchor.lines : {}),
+      ...lines,
+    };
+    const body = Object.values(merged).join('\n');
+    if (pending) {
+      this.options.db
+        .update(reviewNote)
+        .set({ body, anchor: { kind: 'edits', lines: merged } })
+        .where(eq(reviewNote.id, pending.id))
+        .run();
+    } else {
+      this.addNote(row, {
+        kind: 'design',
+        path,
+        startLine: null,
+        endLine: null,
+        body,
+        excerpt: '',
+        anchor: { kind: 'edits', lines: merged },
+        checkpointId: null,
+      });
+    }
+    this.emit('change', conversationId);
+  }
+
+  /**
+   * The text files under a folder as they were at a checkpoint, by their paths from the worktree's
+   * top. For comparing a design with how it was.
+   */
+  async filesAt(
+    conversationId: string,
+    checkpointId: string,
+    folder: string,
+  ): Promise<Record<string, string>> {
+    const row = this.require(conversationId);
+    return this.lock(row.id, async () => {
+      const shadow = this.shadow(row);
+      const tree = await this.treeish(row, checkpointId);
+      const files: Record<string, string> = {};
+      for (const path of await shadow.list(tree, folder)) {
+        if (!/\.(json|md)$/i.test(path)) continue;
+        const buffer = await shadow.read(tree, path);
+        if (buffer && buffer.length <= MAX_SHOWN_BYTES) files[path] = buffer.toString('utf8');
+      }
+      return files;
+    });
   }
 
   deleteNote(conversationId: string, id: string): void {

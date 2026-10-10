@@ -411,7 +411,9 @@ function ChatFrame({
             onClose={() => setShowPrompt(false)}
           />
         )}
-        {workbench.open && <Workbench clankId={clank.id} folder={hasFolder} />}
+        {workbench.open && (
+          <Workbench clankId={clank.id} folder={hasFolder} role={conversation?.role ?? null} />
+        )}
       </div>
     </WorkbenchContext>
   );

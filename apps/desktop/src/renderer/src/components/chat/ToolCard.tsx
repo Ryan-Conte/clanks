@@ -76,6 +76,8 @@ function ToolRow({ part }: { part: ToolPart }) {
   const [open, setOpen] = useState(false);
   const { show } = useWorkbench();
   const settled = SETTLED.has(part.status);
+  /** A design step, which Studio shows rather than the diff or the browser. */
+  const design = part.name.startsWith('design_') ? part.name : null;
   const took =
     part.startedAt && part.endedAt ? formatSeconds(+part.endedAt - +part.startedAt) : null;
 
@@ -110,8 +112,10 @@ function ToolRow({ part }: { part: ToolPart }) {
           )}
           {part.reason && <p className="text-dim">Why not: {part.reason}</p>}
           {part.result !== null && <Section title="Result">{part.result}</Section>}
-          {part.image && part.name === 'browser_screenshot' && <Picture path={part.image} />}
-          {(part.checkpointId ?? part.sessionId ?? part.image) && (
+          {part.image && (part.name === 'browser_screenshot' || part.name === 'design_render') && (
+            <Picture path={part.image} />
+          )}
+          {(part.checkpointId ?? part.sessionId ?? part.image ?? design) && (
             <div className="flex gap-2">
               {part.checkpointId && (
                 <Button
@@ -123,6 +127,11 @@ function ToolRow({ part }: { part: ToolPart }) {
                   Show the change
                 </Button>
               )}
+              {design && (
+                <Button size="sm" onClick={() => show({ tab: 'studio' })}>
+                  Show in Studio
+                </Button>
+              )}
               {part.sessionId && (
                 <Button
                   size="sm"
@@ -131,7 +140,7 @@ function ToolRow({ part }: { part: ToolPart }) {
                   Show in the terminal
                 </Button>
               )}
-              {part.image && (
+              {part.image && !design && (
                 <Button size="sm" onClick={() => show({ tab: 'browser', image: part.image! })}>
                   Show the page
                 </Button>

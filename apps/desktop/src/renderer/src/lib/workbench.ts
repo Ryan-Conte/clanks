@@ -1,7 +1,7 @@
 import type { BrowserState, WorkspaceState } from '@clanks/core';
 import { createContext, useContext } from 'react';
 
-export type WorkbenchTab = 'diff' | 'terminal' | 'browser' | 'activity';
+export type WorkbenchTab = 'diff' | 'terminal' | 'browser' | 'studio' | 'activity';
 
 /** Where something asked the workbench to look: a step in the diff, a command's output. */
 export interface WorkbenchFocus {
