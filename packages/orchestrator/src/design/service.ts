@@ -576,7 +576,7 @@ export class DesignService extends EventEmitter<{ change: [dir: string] }> {
   async check(
     dir: string,
     file?: string,
-  ): Promise<{ file: string; frames: string[]; lint: string }> {
+  ): Promise<{ file: string; frames: string[]; layers: string[]; lint: string }> {
     const files = listDesigns(dir);
     if (files.length === 0) {
       throw new DesignError(
@@ -609,6 +609,14 @@ export class DesignService extends EventEmitter<{ change: [dir: string] }> {
     return {
       file: shown,
       frames: frames.map((f) => f.name),
+      // Everything a hand-in might name as made: what's on the pages, and the components.
+      layers: [
+        ...state.design.pages.flatMap((page) => page.children.map((node) => node.name)),
+        ...state.design.components.flatMap((c) => [
+          c.name,
+          ...c.variants.flatMap((v) => [`${c.name} / ${v.name}`, v.root.name]),
+        ]),
+      ],
       lint:
         issues.length === 0
           ? 'no problems'

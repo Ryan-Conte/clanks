@@ -28,6 +28,8 @@ export function MonacoDiff(props: {
   onDirty: (dirty: boolean) => void;
   onSave: (content: string) => void;
   handle: RefObject<DiffHandle | null>;
+  /** Wrap long lines, for prose such as a priming doc, rather than scroll sideways. */
+  wrap?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
@@ -60,6 +62,8 @@ export function MonacoDiff(props: {
       lineHeight: 19,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
+      wordWrap: latest.current.wrap ? 'on' : 'off',
+      diffWordWrap: latest.current.wrap ? 'on' : 'off',
       renderOverviewRuler: false,
       hideUnchangedRegions: { enabled: true, contextLineCount: 3, minimumLineCount: 5 },
       padding: { top: 8 },

@@ -1,0 +1,94 @@
+# A trimmed description of two Google Analytics APIs: the Data API for reports, and one call of the
+# Admin API to find which properties an account has.
+openapi: 3.0.3
+info:
+  title: Google Analytics Data and Admin APIs (trimmed for clanks)
+  version: v1beta
+servers:
+  - url: https://analyticsdata.googleapis.com
+components:
+  parameters:
+    property:
+      name: property
+      in: path
+      required: true
+      description: The property's number, such as 123456789.
+      schema: { type: string }
+  schemas:
+    names:
+      type: array
+      items:
+        type: object
+        required: [name]
+        properties:
+          name: { type: string }
+paths:
+  /v1beta/accountSummaries:
+    servers:
+      - url: https://analyticsadmin.googleapis.com
+    get:
+      summary: The accounts this sign-in can see, each with its properties.
+      parameters:
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - name: pageToken
+          in: query
+          schema: { type: string }
+  /v1beta/properties/{property}/metadata:
+    get:
+      summary: Every dimension and metric a property can be reported by.
+      parameters:
+        - $ref: '#/components/parameters/property'
+  /v1beta/properties/{property}:runReport:
+    post:
+      summary: A report of metrics over a date range, split by dimensions.
+      parameters:
+        - $ref: '#/components/parameters/property'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dateRanges, metrics]
+              properties:
+                dateRanges:
+                  type: array
+                  description: 'Such as [{"startDate": "28daysAgo", "endDate": "yesterday"}].'
+                  items:
+                    type: object
+                    required: [startDate, endDate]
+                    properties:
+                      startDate: { type: string }
+                      endDate: { type: string }
+                metrics:
+                  $ref: '#/components/schemas/names'
+                dimensions:
+                  $ref: '#/components/schemas/names'
+                limit: { type: integer, description: How many rows. 10000 unless you say. }
+                orderBys:
+                  type: array
+                  description: 'Such as [{"metric": {"metricName": "activeUsers"}, "desc": true}].'
+                  items: { type: object }
+                dimensionFilter:
+                  type: object
+                  description: 'Such as {"filter": {"fieldName": "country", "stringFilter": {"value": "Australia"}}}.'
+  /v1beta/properties/{property}:runRealtimeReport:
+    post:
+      summary: What is happening on the property in the last half hour.
+      parameters:
+        - $ref: '#/components/parameters/property'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metrics]
+              properties:
+                metrics:
+                  $ref: '#/components/schemas/names'
+                dimensions:
+                  $ref: '#/components/schemas/names'
+                limit: { type: integer }

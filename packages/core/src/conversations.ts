@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { RunRole } from './board';
 import type { ChatUsage, FinishReason } from './chat';
 import { type ClankId, clankIdSchema } from './crew';
+import type { IntegrationApproval } from './integrations';
 import type { ModelChoice } from './providers';
 
 /**
@@ -49,6 +50,8 @@ export interface ToolApproval {
   scope: string | null;
   /** Why it asks: what makes this call risky. Missing for a tool that always asks. */
   reason?: string | null;
+  /** For a call to a connected service: which account, and whether it's a test or the real one. */
+  integration?: IntegrationApproval;
 }
 
 /** Text the model wrote. `round` counts the model's turns within one reply. */

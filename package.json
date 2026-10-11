@@ -18,6 +18,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @clanks/orchestrator db:generate",
+    "marketplace": "pnpm --filter @clanks/orchestrator marketplace",
     "fetch-llama": "pnpm --filter @clanks/models fetch-llama"
   },
   "devDependencies": {

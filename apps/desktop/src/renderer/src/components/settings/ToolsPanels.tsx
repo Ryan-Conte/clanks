@@ -277,6 +277,11 @@ function McpRow({ server, onEdit }: { server: McpServerStatus; onEdit: () => voi
       <div className="flex items-center gap-3">
         <Dot tone={tone[server.state]} live={server.state === 'connecting'} />
         <span className="text-sm font-medium">{server.name}</span>
+        {server.integration && (
+          <Badge tone="lavender">
+            Pinned by its integration{server.docker ? ', in Docker' : ''}
+          </Badge>
+        )}
         <span className="text-[12px] text-dim">{stateText}</span>
         <span className="flex-1" />
         <Button
@@ -386,7 +391,13 @@ function McpForm({ server, onDone }: { server: McpServerStatus | null; onDone: (
           <option value="http">An address</option>
         </select>
       </div>
-      {transport === 'stdio' ? (
+      {server?.integration ? (
+        <p className="text-[13px] text-dim">
+          Its command is pinned by the integration it was installed as, so it changes when that's
+          updated, under Integrations above:{' '}
+          <code className="font-mono text-[12px] text-white/80">{command}</code>
+        </p>
+      ) : transport === 'stdio' ? (
         <input
           aria-label="Command"
           placeholder="npx -y @modelcontextprotocol/server-github"

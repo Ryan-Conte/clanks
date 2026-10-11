@@ -19,6 +19,8 @@ export const TOOL_GROUPS = {
     'browser_press',
     'browser_scroll',
     'browser_screenshot',
+    'browser_styles',
+    'browser_save_image',
     'browser_console',
     'browser_back',
     'browser_close',
@@ -70,6 +72,43 @@ export const ALWAYS_AVAILABLE_TOOLS: readonly ToolName[] = [
   'memory_write',
 ];
 
+/**
+ * Tools that only look, and change nothing. A clank installed from a marketplace starts with these
+ * as its doc says; anything else its doc allows starts at ask.
+ */
+export const READ_ONLY_TOOLS: readonly ToolName[] = [
+  'fs_read',
+  'fs_list',
+  'fs_search',
+  'git_status',
+  'git_diff',
+  'git_log',
+  'shell_output',
+  'shell_stop',
+  'browser_read',
+  'browser_screenshot',
+  'browser_styles',
+  'browser_console',
+  'design_read',
+  'design_render',
+  'design_lint',
+  'board_list',
+  'board_get_ticket',
+  'spec_read',
+  'artifact_read',
+  'routine_list',
+  'routine_get',
+  // A checker's own verdict: it changes the ticket, which is what the clank is for.
+  'review_pass',
+];
+
+export function isReadOnlyTool(name: string): boolean {
+  return (
+    (READ_ONLY_TOOLS as readonly string[]).includes(name) ||
+    (ALWAYS_AVAILABLE_TOOLS as readonly string[]).includes(name)
+  );
+}
+
 export function isToolName(name: string): name is ToolName {
   return (TOOL_NAMES as readonly string[]).includes(name);
 }
@@ -103,7 +142,7 @@ export const toolPolicyLevelSchema = z.enum(['allow', 'ask', 'deny', 'off']);
 
 export type ToolPolicyLevel = z.infer<typeof toolPolicyLevelSchema>;
 
-/** A tool's name: a built-in one, or a generated `mcp_<server>_<tool>`. */
+/** A tool's name: a built-in one, or a generated `mcp_<server>_<tool>` or `int_<integration>_<operation>`. */
 export const toolNameSchema = z
   .string()
   .regex(/^[a-z][a-z0-9_]{0,63}$/, 'Use a tool name such as fs_read');
@@ -116,8 +155,8 @@ export type ToolOverrides = z.infer<typeof toolOverridesSchema>;
 /** A tool as a clank's profile shows it. */
 export interface ClankToolPolicy {
   name: string;
-  /** A built-in group, or `mcp` for a tool from an MCP server. */
-  group: ToolGroup | 'mcp';
+  /** A built-in group, `mcp` for a tool from an MCP server, or `integration` for a service's. */
+  group: ToolGroup | 'mcp' | 'integration';
   description: string;
   /** What actually applies: the user's choice if they made one, else the doc's. */
   level: ToolPolicyLevel;
@@ -126,6 +165,8 @@ export interface ClankToolPolicy {
   overridden: boolean;
   /** Tools clanks can use already; the rest arrive in later milestones. */
   available: boolean;
+  /** It asks every time, whatever is set here: it can only be denied or turned off. */
+  locked?: boolean;
 }
 
 /**

@@ -4,6 +4,7 @@ import { memo, useState } from 'react';
 import { formatSeconds } from '../../lib/format';
 import { useTRPC } from '../../lib/trpc';
 import { useWorkbench } from '../../lib/workbench';
+import { ModeBadge } from '../integrations/shared';
 import { Button, Dot, ErrorText, inputClass } from '../ui';
 
 const SETTLED = new Set<ToolPart['status']>(['done', 'failed', 'denied', 'cancelled']);
@@ -170,6 +171,7 @@ function ApprovalCard({ part, conversationId, clank }: Parameters<typeof ToolCar
     tool: part.name.startsWith('browser_') ? 'use the browser' : `use ${part.name}`,
   }[approval.kind];
   const project = approval.scope?.split(/[\\/]/).filter(Boolean).pop();
+  const service = approval.integration;
 
   return (
     <div
@@ -178,8 +180,27 @@ function ApprovalCard({ part, conversationId, clank }: Parameters<typeof ToolCar
     >
       <p className="flex items-center gap-2 text-[13px] font-medium text-amber-100">
         <Dot tone="amber" live />
-        {clank.name} wants to {what}
+        {service ? (
+          <span className="flex flex-wrap items-center gap-2">
+            {clank.name} wants to{' '}
+            {service.risk === 'outbound' ? 'make a call that goes out through' : 'change'}{' '}
+            {service.name}
+            <ModeBadge mode={service.mode} />
+          </span>
+        ) : (
+          <>
+            {clank.name} wants to {what}
+          </>
+        )}
       </p>
+      {service && (
+        <p className="text-[12px] text-dim">
+          As the account <span className="text-white/85">{service.account}</span>, to{' '}
+          <code className="font-mono text-white/85">{service.host}</code>, with{' '}
+          <code className="font-mono text-white/85">{part.name}</code>. Your key is added by clanks,
+          and {clank.name} never sees it.
+        </p>
+      )}
       <pre className="max-h-48 overflow-auto rounded-xl border border-line bg-black/40 px-3.5 py-2.5 font-mono text-[12.5px] whitespace-pre-wrap text-white">
         {approval.subject}
       </pre>
@@ -244,6 +265,11 @@ function ApprovalCard({ part, conversationId, clank }: Parameters<typeof ToolCar
           <Button size="sm" variant="ghost" onClick={() => setDenying(true)}>
             Deny…
           </Button>
+          {service?.risk === 'outbound' && (
+            <span className="text-[12px] text-dim">
+              This kind of call asks every time, so there's no always allow.
+            </span>
+          )}
         </div>
       )}
       {decide.error && <ErrorText>{decide.error.message}</ErrorText>}

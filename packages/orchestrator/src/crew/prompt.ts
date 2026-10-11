@@ -1,4 +1,5 @@
 import { type UserProfile, type WorkspaceStatus, estimateTokens, orderStages } from '@clanks/core';
+import { type GuideEntry, INTEGRATIONS_PREAMBLE, integrationsLayer } from '@clanks/integrations';
 import type { Clank } from './crew';
 import { type ProjectInstructions, instructionsFor } from './instructions';
 
@@ -71,6 +72,8 @@ export interface PromptInput {
   context: string | null;
   /** The clank's memory layer: its own entries for this project that matter here. */
   memory?: string | null;
+  /** The services this clank can use in this project, each with its guide. */
+  integrations?: GuideEntry[];
   /** The design layer, for a run that makes a design or builds on one: language, tokens, frames. */
   design?: string | null;
   /** The model's context window, which the layers' budgets scale to. */
@@ -117,9 +120,19 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
   const layers: PromptLayer[] = [
     layer('crew', 'Crew rules', fill(input.rules)),
     layer('clank', `${input.clank.name}'s priming doc`, fill(input.clank.body)),
-    // Integration guides arrive with integrations.
-    layer('profile', 'Your profile', profileText(input.profile, fill), budgets.profile),
   ];
+  const services = integrationsLayer(input.integrations ?? []);
+  if (services) {
+    // The preamble is the app's, so it's filled in. The guides are their authors', and aren't.
+    layers.push(
+      layer(
+        'integrations',
+        'Connected services',
+        `${fill(INTEGRATIONS_PREAMBLE)}${services.slice(INTEGRATIONS_PREAMBLE.length)}`,
+      ),
+    );
+  }
+  layers.push(layer('profile', 'Your profile', profileText(input.profile, fill), budgets.profile));
 
   if (input.instructions) {
     const own = instructionsFor(input.instructions.text, {
@@ -312,6 +325,11 @@ function runText(run: RunContext, fill: (text: string) => string): string {
     if (run.tools.some((t) => t.startsWith('browser_'))) {
       lines.push(
         "Pages you open show in {{user.name}}'s browser pane as you work. browser_read gives a page as text with refs such as [12], which browser_click and browser_type take. If a page needs a login or shows a CAPTCHA, don't try to get past it: say so, and {{user.name}} can take over the browser. While they have it, your browser tools wait until they hand it back.",
+      );
+    }
+    if (run.tools.includes('browser_styles')) {
+      lines.push(
+        `To match how a site looks, open it and call browser_styles: it gives the fonts, the colours as hex, the buttons and the logo as the browser drew them. Work from those values, not from memory.${run.tools.includes('browser_save_image') ? " browser_save_image puts one of the pictures it lists, such as the logo, in the project's design/assets, where a design can show it." : ''}`,
       );
     }
     if (run.tools.includes('design_create') || run.tools.includes('design_update')) {

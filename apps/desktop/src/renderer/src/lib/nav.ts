@@ -1,7 +1,15 @@
+import type { PackageKind } from '@clanks/core';
 import { createContext, useContext } from 'react';
 
 /** A project's views. */
 export type ProjectTab = 'board' | 'spec' | 'design' | 'context' | 'settings';
+
+/** A package in a marketplace, by where it's listed. */
+export interface PackageRef {
+  index: string;
+  kind: PackageKind;
+  id: string;
+}
 
 /** Where the window is. Chats aren't saved until their first message, so a new one is a draft. */
 export type Route =
@@ -16,6 +24,8 @@ export type Route =
   | { page: 'project'; id: string; tab: ProjectTab; ticket?: string | null; run?: string | null }
   | { page: 'new-project' }
   | { page: 'models' }
+  /** The marketplace, or one package in it. */
+  | { page: 'marketplace'; open?: PackageRef | null }
   | { page: 'settings' };
 
 export interface Nav {

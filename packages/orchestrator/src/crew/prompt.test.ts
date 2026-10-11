@@ -74,6 +74,8 @@ function sentinel(): Clank {
     doc: 'bundled',
     docError: null,
     custom: true,
+    marketplace: false,
+    revoked: null,
   };
 }
 
@@ -197,6 +199,18 @@ describe('assemblePrompt', () => {
       expect(runPort(id)).toBeGreaterThanOrEqual(41_000);
       expect(runPort(id)).toBeLessThan(49_000);
     }
+  });
+
+  it("says how to match a site's look, to a clank that can read one", () => {
+    const text = (tools: string[]) =>
+      assemblePrompt(input({ run: chat({ tools }) })).layers.at(-1)!.text;
+    const reads = text(['browser_open', 'browser_styles']);
+    expect(reads).toContain('To match how a site looks, open it and call browser_styles');
+    expect(reads).not.toContain('browser_save_image');
+    expect(text(['browser_open', 'browser_styles', 'browser_save_image'])).toContain(
+      "browser_save_image puts one of the pictures it lists, such as the logo, in the project's design/assets",
+    );
+    expect(text(['browser_open'])).not.toContain('browser_styles');
   });
 
   it("adds the project's instructions for this clank, untemplated", () => {

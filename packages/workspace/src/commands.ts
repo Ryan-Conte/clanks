@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { git } from './git';
+import { commandJob } from './jobs';
 
 /** The shell clanks' commands run in. */
 export interface Shell {
@@ -120,19 +121,31 @@ export interface CommandOptions {
  */
 export function runCommand(options: CommandOptions): CommandHandle {
   const { shell } = options;
-  const child = spawn(shell.file, shell.args(options.command), {
+  // Under Git's bash on Windows the command starts behind a gate, a read that waits for a line,
+  // and its shell is put in a job while it waits: everything it then starts is in the job, and
+  // ends with it. Otherwise nothing gates it, and its input is empty from the start.
+  const job = shell.name === 'bash' ? commandJob() : null;
+  const command = job ? `IFS= read -r _ || true\n${options.command}` : options.command;
+  const child = spawn(shell.file, shell.args(command), {
     cwd: options.cwd,
     env: options.env ?? commandEnv(),
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
     windowsVerbatimArguments: shell.verbatim,
     // Its own process group on macOS and Linux, so stopping it stops what it started.
     detached: process.platform !== 'win32',
   });
+  // A command has no input: its end comes at once, after the line that opens the gate if there
+  // is one, so nothing can wait for a keyboard that isn't there.
+  const open = () => child.stdin.end(job ? '\n' : undefined);
+  child.stdin.on('error', () => {});
+  if (job && child.pid !== undefined) void job.adopt(child.pid).then(open, open);
+  else open();
   let reason: CommandExit['reason'] = 'exited';
   const stop = (why: CommandExit['reason']) => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     reason = why;
+    job?.end();
     if (child.pid !== undefined) killTree(child.pid);
   };
   const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8')] as const;
@@ -149,6 +162,8 @@ export function runCommand(options: CommandOptions): CommandHandle {
       settled = true;
       if (timer) clearTimeout(timer);
       if (grace) clearTimeout(grace);
+      // Whatever the command left running goes with it.
+      job?.end();
       const rest = decoders[0].end() + decoders[1].end();
       if (rest) options.onOutput(rest);
       resolve(exit);
@@ -197,23 +212,30 @@ export function withJobsStopped(
 const EXIT_GRACE_MS = 1500;
 
 /**
- * Stops a process and everything it started. On Windows a process tree can come apart, as Git's
- * bash launcher does when it's killed, so the processes are also found from the process table,
- * where an orphan still names the parent it was started by. That runs as a process of its own, so
- * it finishes even when the app is quitting.
+ * Stops a process and everything it started. On Windows a process tree comes apart as it's
+ * killed: stop a launcher such as the `cmd` that npm runs a script through, and the server under
+ * it is an orphan nothing leads to any more. So the whole tree is found from the process table
+ * first, and only then stopped, in one process of its own that finishes even when the app is
+ * quitting. `taskkill` on its own is the fallback where PowerShell can't run.
+ *
+ * It finds only what still names a parent in the tree. Under Git's bash much doesn't: each script
+ * bash runs is a new process whose parent is gone before it starts. Commands run there are in a
+ * job (see jobs.ts), which is what ends those; this is for the rest, and for when there's no job.
  */
 export function killTree(pid: number): void {
   if (process.platform === 'win32') {
-    const quiet = { windowsHide: true, stdio: 'ignore' as const, detached: true };
-    spawn('taskkill', ['/f', '/t', '/pid', String(pid)], quiet)
-      .on('error', () => {})
-      .unref();
+    const quiet = { windowsHide: true, stdio: 'ignore' as const };
+    const taskkill = () =>
+      spawn('taskkill', ['/f', '/t', '/pid', String(pid)], { ...quiet, detached: true })
+        .on('error', () => {})
+        .unref();
+    // Not detached: PowerShell started with no console at all exits at once, having done nothing.
     spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', treeKillScript(pid)],
       quiet,
     )
-      .on('error', () => {})
+      .on('error', taskkill)
       .unref();
     return;
   }
@@ -228,12 +250,21 @@ export function killTree(pid: number): void {
   setTimeout(() => signal('SIGKILL'), 3000).unref();
 }
 
-/** PowerShell that stops a Windows process and its descendants, found from the process table. */
+/**
+ * PowerShell that stops a Windows process and its descendants, found from the process table,
+ * where each process names the parent that started it. It looks twice: a process started while
+ * the first were being stopped still names a parent in the list, alive or not.
+ */
 export function treeKillScript(root: number): string {
-  return [
-    `$found = [System.Collections.Generic.List[int]]::new(); $found.Add(${root})`,
+  const sweep = [
     '$all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId',
     'for ($i = 0; $i -lt $found.Count; $i++) { foreach ($p in $all) { if ($p.ParentProcessId -eq $found[$i] -and -not $found.Contains([int]$p.ProcessId)) { $found.Add([int]$p.ProcessId) } } }',
     'foreach ($id in $found) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }',
+  ];
+  return [
+    `$found = [System.Collections.Generic.List[int]]::new(); $found.Add(${root})`,
+    ...sweep,
+    'Start-Sleep -Milliseconds 400',
+    ...sweep,
   ].join('; ');
 }

@@ -1,13 +1,13 @@
 import { type ChatEvent, type ToolPart, columnOf } from '@clanks/core';
 import { git } from '@clanks/workspace';
 import { eq } from 'drizzle-orm';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runPort } from '../chat/service';
 import { project as projectTable } from '../store/schema';
 import { tempDir } from '../test-helpers';
-import { call, quiet, setup, until, who } from './test-kit';
+import { call, gitEnv, quiet, repository, say, setup, until, who } from './test-kit';
 
 const usage = (tokens: number): ChatEvent => ({
   type: 'usage',
@@ -102,6 +102,16 @@ describe('the workflow engine', () => {
 
     let card = board.snapshot(project.id).tickets[0]!;
     expect(card).toMatchObject({ bounces: 1, state: 'idle', column: 'ready' });
+    // Gauge checked twice. The second time it was told the work had changed since it looked.
+    const gauge = card.runs.find((r) => r.clankId === 'gauge')!;
+    const asked = chat
+      .get(gauge.conversationId)
+      .messages.filter((m) => m.role === 'user')
+      .map((m) => m.content);
+    expect(asked).toEqual([
+      'Forge handed in SURF-1. Check it against its criteria.',
+      'Forge handed in SURF-1. Check it against its criteria. It has changed since you last looked, so what you found then may not hold: read it again before you decide.',
+    ]);
     expect(card.route.map((s) => s.clankId)).toEqual(['forge', 'gauge', 'atlas']);
     expect(card.delivery).toMatchObject({
       branch: 'clanks/SURF-1',
@@ -224,6 +234,230 @@ describe('the workflow engine', () => {
       'clanks/SURF-2',
       'clanks/SURF-3',
     ]);
+  }, 60_000);
+
+  it("won't let a check pass on a build it never ran, or one it saw fail", async () => {
+    const { context, project, folder, board, chat } = await setup(
+      {
+        'forge ticket': [
+          [call('fs_write', { path: 'boards.txt', content: 'Fish 6\n' })],
+          [call('submit_output', { type: 'pr', title: 'List boards' })],
+          // Sent back: the build was red all along, and now it's Forge's to fix.
+          [call('fs_write', { path: 'build.js', content: 'process.exit(0);\n' })],
+          [call('submit_output', { type: 'pr', title: 'List boards', notes: 'Fixed the build.' })],
+        ],
+        'gauge ticket': [
+          [call('review_pass', { summary: 'The file is there.' })],
+          [call('shell_exec', { command: 'npm run build' })],
+          [call('review_pass', { summary: 'The build was failing before this change.' })],
+          [
+            call('ticket_bounce', {
+              to: 'forge',
+              reason: 'The build fails',
+              issues: ['Make `npm run build` pass'],
+            }),
+          ],
+          [call('shell_exec', { command: 'npm run build' })],
+          [call('review_pass', { summary: 'It builds, and the file is there.' })],
+        ],
+        'atlas ticket': [[call('review_pass', { summary: 'Fine.' })]],
+      },
+      { crew: ['forge', 'gauge'], held: true },
+    );
+    // A project with a build, which is failing before anyone touches it.
+    writeFileSync(join(folder, 'package.json'), '{ "scripts": { "build": "node build.js" } }\n');
+    writeFileSync(join(folder, 'build.js'), 'process.exit(1);\n');
+    await git(['add', '-A'], { cwd: folder });
+    await git(['commit', '--quiet', '-m', 'Add a build'], { cwd: folder, env: gitEnv });
+    context.projects.update(project.id, { held: false });
+    const ticket = board.addTicket({
+      projectId: project.id,
+      title: 'List the boards',
+      type: 'pr',
+      description: '',
+      criteria: ['It lists them'],
+      stories: [],
+      assignee: 'forge',
+    });
+    await until(() => columnOf(board.ticket(ticket.id)) === 'ready', 'it is signed off');
+    await until(() => quiet(context), 'the runs are over');
+    const gauge = board.snapshot(project.id).tickets[0]!.runs.find((r) => r.clankId === 'gauge')!;
+    const passes = chat
+      .get(gauge.conversationId)
+      .messages.flatMap((m) => m.parts)
+      .filter((p): p is ToolPart => p.type === 'tool' && p.name === 'review_pass')
+      .map((p) => p.result);
+    expect(passes).toEqual([
+      "You haven't built SURF-1 as it was handed in this time. Run the project's build (`npm run build`) and look at the result, then pass it or send it back.",
+      "`npm run build` failed the last time you ran it, so SURF-1 can't pass: a pass says the build and tests are green. Send it back to its maker with ticket_bounce and what failed, even if the failure was there before this change. If nobody in the crew can fix it, call ask_user.",
+      'Passed. SURF-1 goes to Atlas next. Your run ends here.',
+    ]);
+    expect(board.ticket(ticket.id)).toMatchObject({ bounces: 1 });
+  }, 90_000);
+
+  it('keeps a chat in a project up with it as tickets merge, until the chat changes something', async () => {
+    const { context, project, folder, board, chat } = await setup(
+      {
+        'forge ticket': [
+          [call('fs_write', { path: 'boards.txt', content: 'Fish 6\n' })],
+          [call('submit_output', { type: 'pr', title: 'List boards' })],
+        ],
+        'gauge ticket': [[call('review_pass', { summary: 'Fine.' })]],
+        'atlas ticket': [[call('review_pass', { summary: 'Fine.' })]],
+        'atlas chat': [
+          [call('fs_list', { path: '.' })],
+          say('Only the README.'),
+          [call('fs_list', { path: '.' })],
+          say('The boards are there now.'),
+        ],
+        'forge chat': [
+          [call('fs_write', { path: 'notes.txt', content: 'Mine\n' })],
+          say('Noted.'),
+          [call('fs_list', { path: '.' })],
+          say('Still as I left it.'),
+        ],
+      },
+      { crew: ['forge', 'gauge'] },
+    );
+    const listed = (id: string) =>
+      chat
+        .get(id)
+        .messages.flatMap((m) => m.parts)
+        .filter((p): p is ToolPart => p.type === 'tool' && p.name === 'fs_list')
+        .map((p) => p.result ?? '');
+    // Two chats start on the project as it is: Atlas only looks, Forge writes a file.
+    const atlas = chat.start('atlas', 'What is in the project?', null, project.id).conversation;
+    const forge = chat.start('forge', 'Keep a note', null, project.id).conversation;
+    await until(() => quiet(context), 'both have answered');
+    expect(listed(atlas.id)[0]).toContain('README.md');
+    expect(listed(atlas.id)[0]).not.toContain('boards.txt');
+
+    // A ticket adds a file and is merged.
+    const ticket = board.addTicket({
+      projectId: project.id,
+      title: 'List the boards',
+      type: 'pr',
+      description: '',
+      criteria: ['It lists them'],
+      stories: [],
+      assignee: 'forge',
+    });
+    await until(() => columnOf(board.ticket(ticket.id)) === 'ready', 'it is signed off');
+    await until(() => quiet(context), 'the runs are over');
+    await board.approve(ticket.id);
+    expect(existsSync(join(folder, 'boards.txt'))).toBe(true);
+
+    // Atlas's chat has changed nothing, so it sees the project as it is now.
+    chat.send(atlas.id, 'And now?');
+    await until(() => quiet(context), 'Atlas has answered again');
+    expect(listed(atlas.id)[1]).toContain('boards.txt');
+    // Forge's chat has a file of its own, so its copy is left alone.
+    chat.send(forge.id, 'What is there?');
+    await until(() => quiet(context), 'Forge has answered again');
+    expect(listed(forge.id)[0]).toContain('notes.txt');
+    expect(listed(forge.id)[0]).not.toContain('boards.txt');
+  }, 60_000);
+
+  it("won't file a ticket that's on the board already, least of all the one being worked", async () => {
+    const { context, project, board, chat } = await setup(
+      {
+        'forge ticket': [
+          // A maker's first move, sometimes: to file the work it was just given.
+          [call('board_create_ticket', { title: 'make the file.', type: 'pr' })],
+          [call('board_create_ticket', { title: 'Make another file', type: 'pr' })],
+          [call('board_create_ticket', { title: 'Make another file!', type: 'pr' })],
+          [call('fail', { reason: 'Only filing', tried: 'Nothing' })],
+        ],
+      },
+      { crew: ['forge', 'gauge'] },
+    );
+    const ticket = board.addTicket({
+      projectId: project.id,
+      title: 'Make the file',
+      type: 'pr',
+      description: '',
+      criteria: ['It exists'],
+      stories: [],
+      assignee: 'forge',
+    });
+    await until(() => board.ticket(ticket.id).state === 'failed', 'the run is over');
+    await until(() => quiet(context), 'nothing is replying');
+    const run = board.snapshot(project.id).tickets[0]!.runs[0]!;
+    const filed = chat
+      .get(run.conversationId)
+      .messages.flatMap((m) => m.parts)
+      .filter((p): p is ToolPart => p.type === 'tool' && p.name === 'board_create_ticket')
+      .map((p) => p.result);
+    expect(filed[0]).toBe(
+      "No ticket was made. That's SURF-1, the ticket you're working now. Don't file it again: do its work, and hand it in with submit_output.",
+    );
+    expect(filed[1]).toMatch(/^Filed SURF-2 as a proposal/);
+    expect(filed[2]).toBe(
+      'No ticket was made. SURF-2 is that ticket already: "Make another file". Change it with board_update_ticket if it needs more, rather than filing it twice.',
+    );
+    expect(board.tickets(project.id).map((t) => t.key)).toEqual(['SURF-1', 'SURF-2']);
+  }, 60_000);
+
+  it('shares a model between projects, so a busy one never keeps every slot', async () => {
+    // Which ticket each run was started on, in the order the model first heard of it.
+    const starts: string[] = [];
+    const { context, project, board } = await setup(
+      {
+        'forge ticket': (request) => {
+          const key = /Start on (\w+-\d+)/.exec(request.messages[1]!.content)?.[1] ?? '?';
+          if (request.messages.length === 2) starts.push(key);
+          return request.messages.at(-1)!.role === 'tool'
+            ? [call('submit_output', { type: 'pr', title: 'Done' })]
+            : [call('fs_write', { path: `${key}.txt`, content: 'x\n' })];
+        },
+        'gauge ticket': [[call('review_pass', { summary: 'Fine.' })]],
+        'atlas ticket': [[call('review_pass', { summary: 'Fine.' })]],
+      },
+      { crew: ['forge', 'gauge'], held: true },
+    );
+    const side = await context.projects.create({
+      name: 'Side project',
+      brief: 'Something else on the same model.',
+      key: 'SIDE',
+      workspace: { kind: 'folder', path: await repository() },
+      crew: ['forge', 'gauge'],
+      model: null,
+      models: {},
+    });
+    context.projects.update(side.id, { held: true });
+    const add = (projectId: string, title: string) =>
+      board.addTicket({
+        projectId,
+        title,
+        type: 'pr',
+        description: '',
+        criteria: ['It exists'],
+        stories: [],
+        assignee: null,
+      });
+    // Four tickets in the busy project and one in the other, on a model with two slots.
+    const busy = ['one', 'two', 'three', 'four'].map((n) => add(project.id, `Make file ${n}`));
+    const other = add(side.id, 'Make the side file');
+    context.projects.update(project.id, { held: false });
+    board.pumpAll();
+    expect(busy.map((t) => board.ticket(t.id).state)).toEqual([
+      'working',
+      'working',
+      'waiting',
+      'waiting',
+    ]);
+    context.projects.update(side.id, { held: false });
+    board.pumpAll();
+    expect(board.ticket(other.id).reason).toBe('Waiting for tiny:1b: its 2 slots are busy.');
+
+    await until(
+      () => [...busy, other].every((t) => columnOf(board.ticket(t.id)) === 'ready'),
+      'all five are signed off',
+    );
+    await until(() => quiet(context), 'the runs are over');
+    // The first slot the busy project freed went to the other project, not to its own queue.
+    expect(starts.slice(0, 2).sort()).toEqual(['SURF-1', 'SURF-2']);
+    expect(starts[2]).toBe('SIDE-1');
   }, 60_000);
 
   it('sends a spec gap to Scribe, who answers and hands the ticket back', async () => {
@@ -528,6 +762,52 @@ describe('the workflow engine', () => {
     expect(notes).toEqual([
       'Gauge ran out of room before deciding, so it was asked to decide now.',
     ]);
+  }, 60_000);
+
+  it('gives a run on a ticket more rounds than a chat, warns it near the end, then pauses it', async () => {
+    let rounds = 0;
+    const { context, project, board, chat, fake } = await setup(
+      // A maker that only ever reports progress, and never hands in.
+      { 'forge ticket': () => [call('post_progress', { message: `Step ${++rounds}` })] },
+      { crew: ['forge', 'gauge'] },
+    );
+    const ticket = board.addTicket({
+      projectId: project.id,
+      title: 'Make a',
+      type: 'pr',
+      description: '',
+      criteria: ['a exists'],
+      stories: [],
+      assignee: 'forge',
+    });
+    await until(() => board.ticket(ticket.id).state === 'paused', 'the run reached its limit');
+    await until(() => quiet(context), 'the run is over');
+    // Three times the forty rounds a chat gets, and it's a pause: the work so far is all there.
+    expect(rounds).toBe(120);
+    expect(board.ticket(ticket.id)).toMatchObject({
+      state: 'paused',
+      reason: 'Paused: Forge made 120 rounds of tool calls without handing in.',
+    });
+    const run = board.snapshot(project.id).tickets[0]!.runs[0]!;
+    const notes = chat
+      .get(run.conversationId)
+      .messages.flatMap((m) => m.parts)
+      .filter((p) => p.type === 'note')
+      .map((p) => (p as { text: string }).text);
+    expect(notes).toEqual([
+      'Told Forge to finish up: this run is near its limit of 120 rounds.',
+      'Stopped after 120 rounds of tool calls. Carry on to let Forge continue.',
+    ]);
+    // Eight rounds from the end it was told to hand in what it had.
+    const told = fake.requests.findIndex((r) =>
+      r.messages.some(
+        (m) => m.role === 'user' && m.content.startsWith('This run has only a few rounds'),
+      ),
+    );
+    expect(told).toBe(112);
+    expect(fake.requests[told]!.messages.at(-1)!.content).toBe(
+      "This run has only a few rounds of tool calls left. Start nothing new: finish the step you're on, then hand in what you have with `submit_output`, and say in its notes what is left to do.",
+    );
   }, 60_000);
 
   it('previews what a clank sees on a ticket, layer by layer', async () => {

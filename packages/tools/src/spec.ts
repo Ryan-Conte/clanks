@@ -56,6 +56,16 @@ export interface ToolImage {
   mediaType: 'image/jpeg' | 'image/png';
 }
 
+/** A picture `browser_styles` listed on a page: where to get it, or the drawing itself. */
+export interface ListedImage {
+  kind: string;
+  note: string;
+  /** Its address, which may be a `data:` one. Null for a drawing that's part of the page. */
+  url: string | null;
+  /** The drawing as an SVG document, when it's part of the page. */
+  svg: string | null;
+}
+
 /** What a browser step did, worded for the clank. */
 export interface BrowserResult {
   content: string;
@@ -89,6 +99,15 @@ export interface BrowserAccess {
    * as text instead.
    */
   search(query: string, count: number): Promise<{ results: SearchResult[]; page: string | null }>;
+  /**
+   * A page as text once its scripts have drawn it, for a page that is empty until they run. It's
+   * read in the tab searches use, so it takes none of the clank's own.
+   */
+  text(url: string): Promise<string>;
+  /** How the current page looks: its fonts, colours, buttons, logo and pictures. */
+  styles(): Promise<BrowserResult>;
+  /** A picture from the list `styles` last gave for the current page, by its number. */
+  listed(index: number): Promise<ListedImage>;
 }
 
 /** What a design step did, worded for the clank. */
@@ -316,6 +335,8 @@ export interface ToolSpec<A = unknown> {
   /** Checks the arguments the model wrote. Throws a `ToolArgumentsError` saying what's wrong. */
   parse(raw: unknown): A;
   needs: ToolNeed[];
+  /** What it makes use of when the chat has it, without needing it to be offered. */
+  uses?: ToolNeed[];
   /** It can change files, so a checkpoint follows it. */
   mutates: boolean;
   /** One line for the chat and the board, such as "Running `npm test`". */
@@ -327,6 +348,11 @@ export interface ToolSpec<A = unknown> {
    * unless the user wants to be asked about every one. A tool without this is always high risk.
    */
   risk?(args: A, ctx: RiskContext): Risk;
+  /**
+   * It asks every time, such as a call that spends money through a connected service: no "always
+   * allow" rule, setting or policy lets one through without the user.
+   */
+  locked?: boolean;
   run(args: A, ctx: ToolContext): Promise<ToolResult>;
 }
 

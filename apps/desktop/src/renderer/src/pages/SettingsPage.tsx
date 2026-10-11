@@ -4,7 +4,9 @@ import { type ReactNode, useState } from 'react';
 import { GitHubAccount, GitHubSignIn } from '../components/project/GitHub';
 import { GitLabAccount, GitLabSignIn } from '../components/project/GitLab';
 import { EmailPanel } from '../components/settings/EmailPanel';
+import { IntegrationsPanel } from '../components/settings/IntegrationsPanel';
 import { LocalApiPanel } from '../components/settings/LocalApiPanel';
+import { MarketplacePanel } from '../components/settings/MarketplacePanel';
 import { ProfilePanel } from '../components/settings/ProfilePanel';
 import { CloudPanel, ServersPanel } from '../components/settings/ProvidersPanels';
 import {
@@ -32,6 +34,7 @@ export function SettingsPage() {
       <ModelSettingsPanel />
       <CloudPanel />
       <ServersPanel />
+      <IntegrationsPanel />
       <McpPanel />
       <WebSearchPanel />
       <ApprovalsPanel />
@@ -40,6 +43,7 @@ export function SettingsPage() {
       <EmailPanel />
       <GitHubPanel />
       <GitLabPanel />
+      <MarketplacePanel />
       <HuggingFacePanel />
       <BackgroundPanel />
       <AppPanel />
@@ -65,7 +69,7 @@ function GitHubPanel() {
   return (
     <Panel
       title="GitHub"
-      description="For projects on a GitHub repository: listing and making repositories, and cloning them. The token stays in your keychain and only goes to GitHub."
+      description="For projects on a GitHub repository: listing and making repositories, and cloning them. Publishing to the marketplace opens a pull request from this account. The token stays in your keychain and only goes to GitHub."
     >
       {status?.signedIn ? <GitHubAccount status={status} /> : <GitHubSignIn />}
     </Panel>

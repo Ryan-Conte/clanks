@@ -12,7 +12,7 @@ const TIMEOUT_MS = 60_000;
  * migrated database, the crew's bundled priming docs must load, the bundled llama.cpp build must
  * start and report this machine's devices, the browser pane must read and click a page, and a
  * design's frame must be drawn, measured and pictured out of sight, then exported as an SVG and a
- * PDF, with a document printed beside it.
+ * PDF, with a document printed beside it, and the integrations that ship with the app must load.
  * CI runs this against the packaged app on every platform, with `--screenshot=<file>` to keep a
  * picture of the window.
  */
@@ -20,7 +20,9 @@ export async function runSmokeTest(
   window: BrowserWindow,
   browser: BrowserHost,
   design: Required<DesignHost>,
-  screenshot?: string,
+  screenshot: string | undefined,
+  /** The ids of the integrations the orchestrator loaded from beside the main bundle. */
+  integrations: () => string[],
 ): Promise<string> {
   // Anything the window reports goes to the log, so a failure in CI says why.
   const { webContents } = window;
@@ -50,7 +52,13 @@ export async function runSmokeTest(
         const browsed = await checkBrowser(browser);
         const drawn = await checkDesign(design);
         const exported = await checkExports(design, screenshot);
-        return `${text.trim().replace(/\s*\n\s*/g, ' | ')} | ${browsed} | ${drawn} | ${exported}`;
+        const shipped = integrations();
+        if (!shipped.includes('stripe')) {
+          throw new Error(
+            `The integrations didn't ship with the app: ${shipped.join(', ') || 'none'}`,
+          );
+        }
+        return `${text.trim().replace(/\s*\n\s*/g, ' | ')} | ${browsed} | ${drawn} | ${exported} | ${shipped.length} integrations`;
       }
     }
     if (Date.now() > deadline) {

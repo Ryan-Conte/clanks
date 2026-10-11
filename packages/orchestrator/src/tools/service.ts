@@ -6,12 +6,15 @@ import {
   type ToolGroup,
   type ToolPolicyLevel,
   type ToolRule,
+  isIntegrationTool,
   isTicketRole,
   matchesPattern,
   toolGroupOf,
 } from '@clanks/core';
+import type { GuideEntry } from '@clanks/integrations';
 import {
   BUILTIN_TOOLS,
+  LOW_RISK,
   type McpManager,
   type ToolNeed,
   type ToolSpec,
@@ -26,6 +29,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Clank, CrewService } from '../crew/crew';
+import type { IntegrationService } from '../integrations/service';
 import type { McpService } from '../mcp/service';
 import type { SecretStore } from '../secrets';
 import type { SettingsService } from '../settings';
@@ -54,6 +58,7 @@ const CONSULT_TOOLS = new Set([
   'browser_click',
   'browser_scroll',
   'browser_screenshot',
+  'browser_styles',
   'browser_back',
   'browser_close',
   'design_read',
@@ -72,6 +77,22 @@ export interface Toolset {
   definitions: ToolDefinition[];
   /** MCP servers that couldn't start, so the clank can be told they're missing. */
   problems: string[];
+  /** The connected services whose tools are among these, for the prompt's integrations layer. */
+  services: GuideEntry[];
+}
+
+/**
+ * A clank's policy for a connected service's tool. A read is allowed and a change asks, unless the
+ * user says otherwise on the clank's profile. One that's locked asks every time whatever they say:
+ * it can be denied or turned off, never allowed.
+ */
+export function integrationLevel(
+  tool: { read: boolean; locked: boolean },
+  override: ToolPolicyLevel | undefined,
+): { level: ToolPolicyLevel; defaultLevel: ToolPolicyLevel } {
+  const defaultLevel: ToolPolicyLevel = tool.read ? 'allow' : 'ask';
+  const level = override ?? defaultLevel;
+  return { level: tool.locked && level === 'allow' ? 'ask' : level, defaultLevel };
 }
 
 export interface ToolServiceOptions {
@@ -81,6 +102,8 @@ export interface ToolServiceOptions {
   manager: McpManager;
   settings: SettingsService;
   secrets: SecretStore;
+  /** Connected services. Without it, clanks get no `int_` tools. */
+  integrations?: IntegrationService;
   fetch?: typeof fetch;
 }
 
@@ -115,6 +138,8 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       crew?: boolean;
       /** The app keeps what's saved with the ticket or chat. */
       artifacts?: boolean;
+      /** The project the chat or run is in, whose connected services it may use. */
+      projectId?: string | null;
     },
   ): Promise<Toolset> {
     const specs = new Map<string, ToolSpec>();
@@ -136,6 +161,7 @@ export class ToolService extends EventEmitter<{ change: [] }> {
       crew: (chat.crew ?? false) && chat.role !== 'consult',
     };
     const consult = chat.role === 'consult';
+    const capped = clank.marketplace;
     for (const spec of BUILTIN_TOOLS) {
       if (consult && !CONSULT_TOOLS.has(spec.name)) continue;
       if (spec.name.startsWith('artifact_') && !chat.artifacts) continue;
@@ -143,6 +169,7 @@ export class ToolService extends EventEmitter<{ change: [] }> {
         doc: clank.frontmatter.tools,
         overrides: clank.overrides.tools,
         name: spec.name,
+        capped,
       });
       if (level === 'off') continue;
       if (!spec.needs.every((need) => has[need])) continue;
@@ -167,7 +194,28 @@ export class ToolService extends EventEmitter<{ change: [] }> {
         problems.push(`${config.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    return { specs, levels, definitions: definitionsOf([...specs.values()]), problems };
+    // A connected service's tools reach past the computer, so a quick answer goes without them too.
+    const services: GuideEntry[] = [];
+    if (chat.projectId && !consult && this.options.integrations) {
+      const given = this.options.integrations.toolsFor(chat.projectId, clank.id);
+      const offered = new Set<string>();
+      for (const spec of given.specs) {
+        const read = (spec.risk?.({}, { worktree: null, browserUrl: null }) ?? null) === LOW_RISK;
+        const { level } = integrationLevel(
+          { read, locked: spec.locked === true },
+          clank.overrides.tools[spec.name],
+        );
+        if (level === 'off' || specs.has(spec.name)) continue;
+        specs.set(spec.name, spec);
+        levels.set(spec.name, level);
+        offered.add(spec.name);
+      }
+      for (const service of given.services) {
+        const tools = service.tools.filter((tool) => offered.has(tool));
+        if (tools.length > 0) services.push({ ...service, tools });
+      }
+    }
+    return { specs, levels, definitions: definitionsOf([...specs.values()]), problems, services };
   }
 
   /** Every tool on a clank's profile, with what applies. */
@@ -181,6 +229,7 @@ export class ToolService extends EventEmitter<{ change: [] }> {
           doc: clank.frontmatter.tools,
           overrides: clank.overrides.tools,
           name,
+          capped: clank.marketplace,
         });
         // Tools from later milestones are listed only when the doc already gives them.
         if (!spec && decision.defaultLevel === 'off') continue;
@@ -210,6 +259,19 @@ export class ToolService extends EventEmitter<{ change: [] }> {
         });
       }
     }
+    for (const operation of this.options.integrations?.operationsFor(clankId) ?? []) {
+      const override = clank.overrides.tools[operation.tool];
+      const decision = integrationLevel(operation, override);
+      policies.push({
+        name: operation.tool,
+        group: 'integration',
+        description: operation.description,
+        ...decision,
+        overridden: override !== undefined && override !== decision.defaultLevel,
+        available: true,
+        ...(operation.locked ? { locked: true } : {}),
+      });
+    }
     return policies;
   }
 
@@ -217,13 +279,21 @@ export class ToolService extends EventEmitter<{ change: [] }> {
   setPolicy(clankId: string, tool: string, level: ToolPolicyLevel | null): void {
     const clank = this.options.crew.get(clankId);
     const tools = { ...clank.overrides.tools };
+    const operation = isIntegrationTool(tool)
+      ? this.options.integrations?.operationsFor(clankId).find((o) => o.tool === tool)
+      : undefined;
     const isMcp = !toolGroupOf(tool);
-    const defaultLevel = policyFor({
-      doc: clank.frontmatter.tools,
-      overrides: {},
-      name: tool,
-      mcp: isMcp,
-    }).level;
+    const defaultLevel = operation
+      ? integrationLevel(operation, undefined).defaultLevel
+      : policyFor({
+          doc: clank.frontmatter.tools,
+          overrides: {},
+          name: tool,
+          mcp: isMcp,
+          capped: clank.marketplace,
+        }).level;
+    // Allowing a call that asks every time would change nothing, so it isn't kept.
+    if (operation?.locked && level === 'allow') level = null;
     if (level === null || level === defaultLevel) delete tools[tool];
     else tools[tool] = level;
     this.options.crew.updateProfile(clank.id, { tools });

@@ -8,6 +8,7 @@ import {
   columnOf,
   currentClank,
   currentRole,
+  itemText,
   moveRefusal,
   parseCriterion,
   pickMaker,
@@ -48,6 +49,26 @@ const crew: WorkflowMember[] = [
     bounceTo: ['maker'],
   }),
 ];
+
+describe('a list item a clank wrote as an object', () => {
+  it('reads as a line: a criterion with its verdict and evidence, a frame with what it shows', () => {
+    expect(itemText('Plain words')).toBe('Plain words');
+    expect(
+      itemText({ evidence: 'The calendar covers launch week.', met: true, status: 'met' }),
+    ).toBe('Met. The calendar covers launch week.');
+    expect(
+      itemText({ text: 'npm run build succeeds.', status: 'not met', evidence: 'It exits 1.' }),
+    ).toBe('npm run build succeeds: not met. It exits 1.');
+    expect(itemText({ criterion: 'AC-1.1', met: false })).toBe('AC-1.1: not met');
+    expect(itemText({ name: 'Home / Desktop', shows: 'The hero' })).toBe(
+      'Home / Desktop: The hero',
+    );
+    expect(itemText({ name: 'Home / Desktop' })).toBe('Home / Desktop');
+    expect(itemText({ channel: 'X', at: null, limit: 280 })).toBe('channel: X; limit: 280');
+    expect(itemText(7)).toBe('7');
+    expect(itemText(['a'])).toBe('["a"]');
+  });
+});
 
 describe('routes', () => {
   it('go maker, then the checkers for the type in stage order, ending with sign-off', () => {

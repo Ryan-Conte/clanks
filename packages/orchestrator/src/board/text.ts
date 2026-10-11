@@ -1,12 +1,14 @@
 import {
   type Bounce,
   COLUMN_TITLES,
+  type MessagePart,
   type Project,
   type RepoHost,
   type SpecVersion,
   type Ticket,
   columnOf,
   criterionText,
+  itemText,
   currentClank,
   parseSpec,
   pullRequestName,
@@ -16,6 +18,120 @@ import {
 export interface Names {
   clank(id: string): string;
   user: string;
+}
+
+/**
+ * The frames a design hand-in says it made, by the names frames go by, such as "Home / Desktop":
+ * those it lists, and those it quotes in what it says. A clank that gave up on a screen still
+ * tends to say it's there.
+ */
+export function framesNamed(output: Record<string, unknown>): string[] {
+  const names = new Set<string>();
+  const framed = (name: string) => / \/ /.test(name) && name.length <= 120;
+  for (const frame of Array.isArray(output.frames) ? output.frames : []) {
+    const said =
+      typeof frame === 'string'
+        ? frame
+        : typeof (frame as { name?: unknown } | null)?.name === 'string'
+          ? (frame as { name: string }).name
+          : '';
+    // A line such as "Home / Desktop: the hero and the grid" names the frame before the colon.
+    const name = said.split(/:\s/)[0]!.trim();
+    if (framed(name)) names.add(name);
+  }
+  const texts: unknown[] = [output.summary, output.body, output.notes];
+  for (const criterion of Array.isArray(output.criteria) ? output.criteria : []) {
+    texts.push(
+      typeof criterion === 'string'
+        ? criterion
+        : (criterion as { evidence?: unknown } | null)?.evidence,
+    );
+  }
+  for (const text of texts) {
+    if (typeof text !== 'string') continue;
+    for (const [, name] of text.matchAll(
+      /['"`“‘]([^'"`“”‘’\n]{1,80} \/ [^'"`“”‘’\n]{1,80})['"`”’]/g,
+    )) {
+      if (framed(name!.trim())) names.add(name!.trim());
+    }
+  }
+  return [...names];
+}
+
+/**
+ * The frames a design hand-in records: the ones in the file, once each and in its order, with what
+ * the clank said of each where it said anything. A reviewer reads this list, so it's the file's
+ * and not the clank's account of it.
+ */
+export function framesAsMade(made: string[], said: unknown): unknown[] {
+  const entries: unknown[] = Array.isArray(said) ? said : [];
+  const nameOf = (entry: unknown): string =>
+    (typeof entry === 'string'
+      ? entry.split(/:\s/)[0]!
+      : typeof (entry as { name?: unknown } | null)?.name === 'string'
+        ? (entry as { name: string }).name
+        : ''
+    )
+      .trim()
+      .toLowerCase();
+  return [...new Set(made)].map(
+    (name) => entries.find((entry) => nameOf(entry) === name.toLowerCase()) ?? name,
+  );
+}
+
+/** A command that builds, tests or checks a project, as against one that only looks around. */
+const CHECK_COMMAND =
+  /\b(build|tests?|typecheck|type-check|tsc|lint|check|vitest|jest|pytest|mypy|clippy)\b/i;
+/** A check that never ran: the project has no such script, or the program isn't there. */
+const NO_SUCH_CHECK =
+  /missing script|no test specified|no tests? found|command not found|is not recognized as/i;
+
+/** The command a `shell_exec` call ran, from its arguments as the model wrote them. */
+function commandOf(args: string): string {
+  try {
+    const parsed = JSON.parse(args) as { command?: unknown };
+    return typeof parsed.command === 'string' ? parsed.command.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * What a checker's own run says about the build and tests, from the commands it ran in this
+ * reply: `failed` is a build or test command whose latest run failed, and `built` whether any
+ * build ran and passed. A checker that sees a red build and passes the ticket anyway, calling
+ * the failure someone else's, is how broken work reaches the user.
+ */
+export function checksRun(parts: MessagePart[]): { failed: string | null; built: boolean } {
+  // Each command by its latest run: a build that failed and then passed is fine.
+  const latest = new Map<string, boolean>();
+  for (const part of parts) {
+    if (part.type !== 'tool' || part.name !== 'shell_exec') continue;
+    if (part.status !== 'done' && part.status !== 'failed') continue;
+    const command = commandOf(part.arguments);
+    if (!CHECK_COMMAND.test(command)) continue;
+    if (part.status === 'failed' && NO_SUCH_CHECK.test(part.result ?? '')) continue;
+    latest.delete(command);
+    latest.set(command, part.status === 'failed');
+  }
+  const failed = [...latest].filter(([, red]) => red).map(([command]) => command);
+  const built = [...latest].some(([command, red]) => !red && /\bbuild\b/i.test(command));
+  return { failed: failed.at(-1) ?? null, built };
+}
+
+/** The frames design tickets have handed in so far, by name, once each. */
+export function designedFrames(all: Pick<Ticket, 'type' | 'output'>[]): string[] {
+  const names = all
+    .filter((t) => t.type === 'design' && Array.isArray(t.output?.frames))
+    .flatMap((t) => t.output!.frames as unknown[])
+    .map((frame) =>
+      typeof frame === 'string'
+        ? frame.split(/:\s/)[0]!.trim()
+        : typeof (frame as { name?: unknown } | null)?.name === 'string'
+          ? (frame as { name: string }).name.trim()
+          : '',
+    );
+  return [...new Set(names.filter(Boolean))];
 }
 
 /** Where a ticket is, in a few words: "Build · Forge working", "Backlog · open, waits on SURF-2". */
@@ -158,7 +274,7 @@ export function fieldsText(fields: Record<string, unknown>): string {
         return value.includes('\n') ? `${key}:\n${value}` : `${key}: ${value}`;
       }
       if (Array.isArray(value)) {
-        const items = value.map((v) => `  - ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+        const items = value.map((v) => `  - ${itemText(v)}`);
         return `${key}:\n${items.join('\n')}`;
       }
       return `${key}: ${JSON.stringify(value)}`;
@@ -212,6 +328,8 @@ export function projectContext(input: {
   crew?: string[];
   /** The base branch tickets merge into. */
   base?: string | null;
+  /** The services connected to the project: which account, which mode, and who can use it. */
+  integrations?: string[];
   /** Project notes as lines, pinned and most relevant first, and how many didn't fit. */
   notes?: { lines: string[]; left: number; total: number };
 }): string {
@@ -229,6 +347,9 @@ export function projectContext(input: {
     `- Ticket keys start with ${project.key}-.`,
   ];
   if (input.crew && input.crew.length > 0) lines.push(`- Crew: ${input.crew.join('; ')}.`);
+  if (input.integrations && input.integrations.length > 0) {
+    lines.push(`- Connected services: ${input.integrations.join('; ')}.`);
+  }
   if (approved) {
     const stories = parseSpec(approved.body).stories.filter((s) => !s.removed);
     const list = stories.map((s) => `${s.id} ${s.title}`).join('; ');

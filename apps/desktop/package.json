@@ -24,6 +24,8 @@
     "@clanks/browser": "workspace:*",
     "@clanks/core": "workspace:*",
     "@clanks/design": "workspace:*",
+    "@clanks/integrations": "workspace:*",
+    "@clanks/marketplace": "workspace:*",
     "@clanks/models": "workspace:*",
     "@clanks/orchestrator": "workspace:*",
     "@clanks/providers": "workspace:*",

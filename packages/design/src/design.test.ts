@@ -433,6 +433,35 @@ describe('lint', () => {
     expect(text).toContain("Sizes weren't measured");
   });
 
+  it('wants a headline that reads on a graphic made for a feed', () => {
+    const graphic = (type: string, size = 'w=1080 h=1080') =>
+      build(
+        `<Frame name="Promo / X" ${size} layout=col fill={color.bg}><Text name="Headline" ${type} color={color.text}>Find your next board.</Text></Frame>`,
+      ).state;
+    const small = graphic('style={type.display}');
+    const issue = lint(small.design, small.tokens).find((i) => i.rule === 'graphic-type');
+    expect(issue).toMatchObject({ level: 'warning', name: 'Promo / X' });
+    expect(issue?.message).toMatch(/its biggest text is \d+px\. Make the headline at least 56px\./);
+    // Big type is fine, and a screen of the same width isn't a graphic.
+    const big = graphic('style={type.display} size=72');
+    expect(lint(big.design, big.tokens).some((i) => i.rule === 'graphic-type')).toBe(false);
+    const screen = graphic('style={type.display}', 'w=1080');
+    expect(lint(screen.design, screen.tokens).some((i) => i.rule === 'graphic-type')).toBe(false);
+  });
+
+  it('finds frames that share a name, since a frame is found by its name', () => {
+    const one = '<Frame name="Promo / X" w=400 layout=col fill={color.bg}></Frame>';
+    const first = build(one);
+    const both = build(`${one}\n${one}`).state;
+    const issues = lint(both.design, both.tokens).filter((i) => i.rule === 'duplicate-frame');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ level: 'error', name: 'Promo / X' });
+    expect(issues[0]!.message).toMatch(
+      /^is the name of 2 frames \(n\d+, n\d+\)\. A frame is found/,
+    );
+    expect(lint(first.state.design, first.state.tokens)).toEqual([]);
+  });
+
   it('checks contrast in every mode, through instances', () => {
     const set = tokens();
     // Dark text that stays dark: fine on the light background, unreadable on the dark one.

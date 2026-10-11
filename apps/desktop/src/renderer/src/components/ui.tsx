@@ -221,6 +221,21 @@ export function ChipIcon() {
   );
 }
 
+/** Shelves with things on them: the marketplace. */
+export function ShelfIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M2.5 2.5v11m11-11v11m-11-6.5h11m-11 5h11M5 7V4.5h2.5V7m2 0V5.5H11V7m-5.5 5V9.5H8V12m2.5 0v-1.5h1V12"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function Icon({ children, size = 16 }: { children: ReactNode; size?: number }) {
   return (
     <svg

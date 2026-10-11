@@ -5,6 +5,7 @@ import { Avatar } from '../components/Avatar';
 import { ModelPicker } from '../components/ModelPicker';
 import { BrowserPanel } from '../components/crew/BrowserPanel';
 import { ToolsPanel } from '../components/crew/ToolsPanel';
+import { Publish } from '../components/integrations/Publish';
 import { Badge, Button, ErrorText, Panel, inputClass } from '../components/ui';
 import {
   AVATAR_GRADIENTS,
@@ -14,6 +15,7 @@ import {
   useProviders,
   whereItRuns,
 } from '../lib/crew';
+import { indexLabel, useMarketplace } from '../lib/integrations';
 import { useNav } from '../lib/nav';
 import { useTRPC } from '../lib/trpc';
 
@@ -42,9 +44,12 @@ export function CrewPage() {
             of your own.
           </p>
         </div>
-        <Button variant="primary" onClick={() => go({ page: 'new-clank' })}>
-          Make a clank
-        </Button>
+        <span className="flex shrink-0 gap-2">
+          <Button onClick={() => go({ page: 'marketplace' })}>Find one</Button>
+          <Button variant="primary" onClick={() => go({ page: 'new-clank' })}>
+            Make a clank
+          </Button>
+        </span>
       </header>
       {broken.map((b) => (
         <p
@@ -88,7 +93,11 @@ function CrewRow(props: {
         <span className="flex items-center gap-2">
           <span className="font-medium">{clank.name}</span>
           <span className="text-[12px] text-dim">{clank.role}</span>
-          {clank.custom && <Badge tone="mint">Custom</Badge>}
+          {clank.marketplace ? (
+            <Badge tone="lavender">Marketplace</Badge>
+          ) : (
+            clank.custom && <Badge tone="mint">Custom</Badge>
+          )}
           {clank.doc === 'edited' && !clank.custom && <Badge tone="lavender">Edited</Badge>}
           {clank.docError && <Badge tone="rose">Doc has problems</Badge>}
         </span>
@@ -124,7 +133,11 @@ export function ClankPage({ clankId }: { clankId: string }) {
             <p className="text-dim">{clank.summary}</p>
             <span className="flex flex-wrap gap-1.5">
               <Badge>{clank.role}</Badge>
-              {clank.custom && <Badge tone="mint">Custom</Badge>}
+              {clank.marketplace ? (
+                <Badge tone="lavender">Marketplace</Badge>
+              ) : (
+                clank.custom && <Badge tone="mint">Custom</Badge>
+              )}
               <Badge>
                 {clank.kind === 'maker' ? 'Maker' : 'Checker'} ·{' '}
                 {STAGES[clank.stage] ?? clank.stage}
@@ -141,10 +154,12 @@ export function ClankPage({ clankId }: { clankId: string }) {
           Chat with {clank.name}
         </Button>
       </header>
+      {clank.marketplace && <PackagePanel clank={clank} />}
       <ProfilePanel clank={clank} />
       <ToolsPanel clank={clank} />
       <BrowserPanel clank={clank} />
       <DocPanel clank={clank} />
+      {clank.custom && !clank.marketplace && <PublishPanel clank={clank} />}
       {clank.custom && <DeletePanel clank={clank} />}
     </div>
   );
@@ -322,6 +337,71 @@ function DocPanel({ clank }: { clank: ClankSummary }) {
       {(save.error ?? reset.error) && (
         <p className="text-sm whitespace-pre-wrap text-rose-300">
           {(save.error ?? reset.error)!.message}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+/** Where a clank from a marketplace came from, and whether there's news of it. */
+function PackagePanel({ clank }: { clank: ClankSummary }) {
+  const { go } = useNav();
+  const installed = useMarketplace()?.installed.find(
+    (item) => item.kind === 'clank' && item.id === clank.id,
+  );
+  if (!installed) return null;
+  const open = () =>
+    go({ page: 'marketplace', open: { index: installed.index, kind: 'clank', id: clank.id } });
+  return (
+    <Panel
+      title="From the marketplace"
+      description={`Version ${installed.version}, by ${installed.publisher}, under the ${installed.licence} licence, from ${indexLabel(installed.index)}. Its prompt and permissions never change unless you accept an update.`}
+      actions={
+        <Button size="sm" onClick={open}>
+          Open its page
+        </Button>
+      }
+    >
+      {installed.status === 'revoked' ? (
+        <p className="rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">
+          Its marketplace took it down{installed.notice ? `: ${installed.notice}` : '.'} It can't
+          work until you uninstall it. To keep what it does, copy its doc into a clank of your own.
+        </p>
+      ) : installed.status === 'update_available' ? (
+        <p className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-white/90">Version {installed.latest} is out.</span>
+          <Button size="sm" variant="primary" onClick={open}>
+            See what changed
+          </Button>
+        </p>
+      ) : (
+        <p className="text-sm text-dim">
+          {installed.pinned ? `Staying on ${installed.version}.` : 'Up to date.'}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+/** Sharing a clank the user made: checked, licensed, and sent as a pull request. */
+function PublishPanel({ clank }: { clank: ClankSummary }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Panel
+      title={`Share ${clank.name}`}
+      description="Publish it to the marketplace for anyone to install, for free. It's checked first, you pick an open licence, and it goes as a pull request from your GitHub account that a maintainer reads before it's listed."
+      actions={
+        <Button size="sm" onClick={() => setOpen((o) => !o)}>
+          {open ? 'Close' : 'Publish…'}
+        </Button>
+      }
+    >
+      {open ? (
+        <Publish kind="clank" id={clank.id} />
+      ) : (
+        <p className="text-sm text-dim">
+          People see its whole priming doc and every tool it asks for before they install it, and on
+          their machine nothing above read starts higher than ask.
         </p>
       )}
     </Panel>

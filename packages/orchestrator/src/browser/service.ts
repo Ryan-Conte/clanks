@@ -1,11 +1,16 @@
 import {
+  BROKEN_IMAGES,
   type BrowserHost,
   BrowserError,
   type BrowserSearchResult,
   type DownloadRequest,
   type HostTab,
+  PAGE_LOOK,
   PageDriver,
+  type PageLook,
   type Rect,
+  brokenImagesText,
+  lookText,
   SEARCH_HOST,
   SEARCH_RESULTS,
   type SessionKey,
@@ -45,6 +50,8 @@ interface Tab {
   ready: Promise<void>;
   /** Pages the guard refused since the clank last heard. */
   blocked: string[];
+  /** What `browser_styles` last found here, for saving one of its pictures by number. */
+  look: PageLook | null;
 }
 
 interface ChatBrowser {
@@ -128,12 +135,17 @@ export class BrowserService extends EventEmitter<{ change: [conversationId: stri
     /** The page as text, from a line on, as browser_read gives it. */
     const page = async (tab: Tab, fromLine = 1) => {
       const snapshot = await tab.driver.snapshot();
+      // Text shows a picture by its description, loaded or not: say which didn't.
+      const broken = tab.driver.loading
+        ? null
+        : brokenImagesText(await tab.driver.evaluate<unknown>(BROKEN_IMAGES).catch(() => null));
       const header = [
         snapshot.title || '(no title)',
         snapshot.url,
         ...(tab.driver.loading
           ? ['(The page is still loading; read it again if parts are missing.)']
           : []),
+        ...(broken ? [broken] : []),
       ].join('\n');
       return pageText(header, snapshot.lines, fromLine, maxChars);
     };
@@ -292,6 +304,67 @@ export class BrowserService extends EventEmitter<{ change: [conversationId: stri
         );
         if (step.error) throw new ToolFailure(step.content);
         return found;
+      },
+
+      text: async (url) => {
+        const c = chat();
+        let text = '';
+        const step = await this.step(
+          c,
+          signal,
+          async () => {
+            this.checkSite(c, url);
+            // The tab searches run in: it's the web tools' own, and never counts as the clank's.
+            let tab = c.tabs.find((t) => t.info.search);
+            if (!tab) {
+              if (c.tabs.length >= MAX_TABS) {
+                throw new BrowserError(`There are ${MAX_TABS} tabs open already.`);
+              }
+              tab = this.newTab(c, true);
+              c.current ??= tab.info.id;
+              this.changed(c);
+            }
+            await tab.ready;
+            await this.load(c, tab, url);
+            const snapshot = await tab.driver.snapshot();
+            // Refs are for acting on a page, which a clank only reading it can't do.
+            text = snapshot.lines.map((line) => line.replace(/^(\s*)\[\d+\] /, '$1')).join('\n');
+            return { content: '' };
+          },
+          false,
+        );
+        if (step.error) throw new ToolFailure(step.content);
+        return text;
+      },
+
+      styles: () =>
+        tabStep(async (tab) => {
+          const look = await tab.driver.evaluate<PageLook>(PAGE_LOOK);
+          tab.look = look;
+          return { content: headTail(lookText(look), maxChars) };
+        }, false),
+
+      listed: (index) => {
+        const c = chat();
+        const tab = c.current ? this.tab(c, c.current) : undefined;
+        const look = tab?.look?.url === tab?.driver.currentUrl ? tab?.look : null;
+        if (!look) {
+          throw new ToolFailure(
+            'Call browser_styles on this page first: it lists the pictures with their numbers.',
+          );
+        }
+        const image = look.images[index - 1];
+        if (!image) {
+          throw new ToolFailure(
+            `There's no picture ${index}: browser_styles listed ${look.images.length} on this page.`,
+          );
+        }
+        return Promise.resolve({
+          kind: image.kind,
+          note: image.note,
+          url: image.url,
+          svg: image.svg,
+        });
       },
     };
   }
@@ -642,6 +715,7 @@ export class BrowserService extends EventEmitter<{ change: [conversationId: stri
         .then(() => driver.attach())
         .then(() => (chat.control === 'user' ? driver.setUploads(true) : undefined)),
       blocked: [],
+      look: null,
     };
     self.tab = tab;
     // A page that never answers CDP still gets used; its steps will say what failed.

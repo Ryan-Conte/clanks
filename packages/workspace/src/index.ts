@@ -3,6 +3,7 @@ export * from './commands';
 export * from './docker';
 export * from './git';
 export * from './hunks';
+export * from './jobs';
 export * from './paths';
 export * from './pty';
 export * from './remove';

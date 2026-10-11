@@ -6,6 +6,8 @@ export * from './context';
 export * from './conversations';
 export * from './crew';
 export * from './home';
+export * from './integrations';
+export * from './marketplace';
 export * from './mcp';
 export * from './models';
 export * from './outputs';

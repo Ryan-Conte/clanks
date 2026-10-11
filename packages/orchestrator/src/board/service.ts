@@ -14,6 +14,7 @@ import {
   type NewTicket,
   type OutputType,
   type Project,
+  type ProjectIntegration,
   type ProjectSummary,
   REPO_HOST_NAMES,
   type RunRole,
@@ -86,9 +87,21 @@ import { DeliveryError, type DeliveryService } from '../delivery/service';
 import { EmailError, type EmailService } from '../email/service';
 import type { ProjectService } from '../projects/service';
 import type { WorkBase } from '../workspace/service';
+import {
+  firstBuilds,
+  folderState,
+  hasBuildScript,
+  listOf,
+  planCheckText,
+  planProblems,
+} from './plan';
 import { BoardStore, type UsageRow } from './store';
 import {
   type Names,
+  checksRun,
+  designedFrames,
+  framesAsMade,
+  framesNamed,
   dependencyOutputs,
   fieldsText,
   projectContext,
@@ -113,6 +126,8 @@ const FEED_LINES = 120;
 const RECENT_MEMORIES = 4;
 /** The most pictures of its sources a research note keeps. */
 const MAX_SOURCE_SHOTS = 8;
+/** How often a plan is sent back to its planner for a problem that stops it working. */
+const MAX_PLAN_CHECKS = 2;
 
 /** What a run is for, as its prompt and tools need it. */
 export interface RunScope {
@@ -236,7 +251,7 @@ export interface BoardServiceOptions {
   designCheck?: (
     conversationId: string,
     file: string | undefined,
-  ) => Promise<{ file: string; frames: string[]; lint: string }>;
+  ) => Promise<{ file: string; frames: string[]; layers?: string[]; lint: string }>;
   /** Where hand-ins that aren't code are kept, with every version. */
   artifacts?: ArtifactService;
   /** Sends the emails the user approves. Without it, they're approved unsent. */
@@ -247,6 +262,11 @@ export interface BoardServiceOptions {
    */
   writeDocument?: (conversationId: string, path: string, text: string) => Promise<void>;
   capacity?: ModelCapacity;
+  /** The services connected to each project, for its board and what its crew is told. */
+  integrations?: {
+    forProject(projectId: string): ProjectIntegration[];
+    facts(projectId: string, name: (clankId: string) => string): string[];
+  };
   now?: () => Date;
 }
 
@@ -273,8 +293,10 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
   private host: RunHost | null = null;
   /** Which project each conversation is in, so live events find their board cheaply. */
   private readonly projectOf = new Map<string, string | null>();
-  private readonly pumping = new Set<string>();
-  private readonly pumpAgain = new Set<string>();
+  private pumping = false;
+  private pumpAgain = false;
+  /** How often each problem with a plan was raised with its planner, by planning run. */
+  private readonly planChecks = new Map<string, Map<string, number>>();
 
   constructor(private readonly options: BoardServiceOptions) {
     super();
@@ -351,6 +373,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       events: this.store.events(projectId, FEED_LINES),
       needsYou,
       clanks,
+      integrations: this.options.integrations?.forProject(projectId) ?? [],
     };
   }
 
@@ -1127,6 +1150,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         return model ? `${c.name} on ${model.model}` : c.name;
       }),
       base: project.baseBranch,
+      integrations: this.options.integrations?.facts(project.id, (id) => names.clank(id)) ?? [],
     };
     const factsTokens = Math.ceil(projectContext(facts).length / 4);
     const notes = this.relevantNotes(project.id, hint, budgets.context - factsTokens - 60, names);
@@ -1232,11 +1256,17 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
    */
   async workBase(conversation: Conversation): Promise<WorkBase | null> {
     const delivery = this.options.delivery;
-    if (!delivery || !conversation.ticketId || !conversation.projectId) return null;
-    if (!isTicketRole(conversation.role)) return null;
-    const ticket = this.store.ticket(conversation.ticketId);
+    if (!delivery || !conversation.projectId) return null;
     const project = this.options.projects.find(conversation.projectId);
-    if (!ticket || !project) return null;
+    if (!project) return null;
+    if (!conversation.ticketId || !isTicketRole(conversation.role)) {
+      // A chat, or Atlas planning: it works from the project as it is now, and keeps up with it
+      // as tickets merge for as long as it has changed nothing itself.
+      const base = await delivery.start(project).catch(() => null);
+      return base ? { from: base.from, follow: 'unchanged' } : null;
+    }
+    const ticket = this.store.ticket(conversation.ticketId);
+    if (!ticket) return null;
     const start = await delivery.start(project).catch(() => null);
     if (!start) return null;
     if (conversation.role === 'maker') return { from: start.from };
@@ -1297,6 +1327,12 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       const created = this.store
         .tickets(projectId)
         .filter((t) => t.conversationId === conversation.id);
+      // A plan that can't work goes back to its planner before anything starts.
+      if (outcome.status === 'done' && !outcome.stopped && this.checkPlan(conversation, created)) {
+        this.emit('change', projectId);
+        return;
+      }
+      this.planChecks.delete(conversation.id);
       if (created.length > 0) {
         this.event(
           projectId,
@@ -1412,7 +1448,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
 
   /** Starts whatever can start, in every project: after a restart, or when models change. */
   pumpAll(): void {
-    for (const project of this.options.projects.list()) this.pump(project.id);
+    this.pump();
   }
 
   // Tickets
@@ -1798,20 +1834,26 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
    * finishes, then backlog tickets whose dependencies are done, specs first, then by rank. Each
    * needs a free run in the project, room in its budgets and a free slot on its clank's model.
    */
-  private pump(projectId: string): void {
+  private pump(projectId?: string): void {
     if (!this.host) return;
-    if (this.pumping.has(projectId)) {
-      this.pumpAgain.add(projectId);
+    if (this.pumping) {
+      this.pumpAgain = true;
       return;
     }
-    this.pumping.add(projectId);
+    this.pumping = true;
     try {
       do {
-        this.pumpAgain.delete(projectId);
-        this.pumpOnce(projectId);
-      } while (this.pumpAgain.has(projectId));
+        this.pumpAgain = false;
+        // Whatever changed, every project gets its turn, the one with the least going first.
+        // Models are shared: a busy project would otherwise take each slot its own runs free, and
+        // another project's tickets would wait for as long as it had work.
+        const ids = this.options.projects.list().map((project) => project.id);
+        if (projectId && !ids.includes(projectId)) ids.push(projectId);
+        const going = new Map(ids.map((id) => [id, this.load(id).running]));
+        for (const id of ids.sort((a, b) => going.get(a)! - going.get(b)!)) this.pumpOnce(id);
+      } while (this.pumpAgain);
     } finally {
-      this.pumping.delete(projectId);
+      this.pumping = false;
     }
   }
 
@@ -1866,6 +1908,15 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     }
     const crew = this.members(projectId);
     for (const ticket of ready) {
+      // A plan is whole before any of it starts: what a ticket waits on may be linked last.
+      if (
+        ticket.origin === 'spec' &&
+        ticket.conversationId &&
+        this.host?.replying(ticket.conversationId)
+      ) {
+        hold(ticket, `${this.names().clank(LEAD_CLANK)} is still planning the board.`);
+        continue;
+      }
       if (project.held) {
         hold(ticket, `${cap(this.options.userName())} is holding new work on this project.`);
         continue;
@@ -2142,7 +2193,13 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         : signoff
           ? `${ticket.key} passed its checks. Sign it off, or send it back.`
           : `${handedIn} handed in ${ticket.key}. Check it against its criteria.`;
-    this.enqueue(next, what);
+    // A checker that saw an earlier hand-in remembers what was wrong with that one.
+    const checker = currentClank(next);
+    const before = checker && this.runFor(next, checker, 'checker');
+    const again = before
+      ? ` It has changed since you last looked, so what you found then may not hold: read it again before you decide.`
+      : '';
+    this.enqueue(next, `${what}${again}`);
   }
 
   /**
@@ -2339,6 +2396,56 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     }
   }
 
+  /**
+   * Checks a plan its planner has finished. What would stop it working is sent back to the
+   * planner, which carries on in the same run: true when that happened. A problem still there
+   * after that is put right here where it can be, so the board never starts work that can't end
+   * well.
+   */
+  private checkPlan(conversation: Conversation, planned: Ticket[]): boolean {
+    const project = this.options.projects.find(conversation.projectId!);
+    if (!project || !this.host || planned.length === 0) return false;
+    const names = this.names();
+    const folder = folderState(project.folder);
+    const problems = planProblems({
+      planned,
+      all: this.store.tickets(project.id),
+      crew: this.members(project.id),
+      folder,
+      names,
+    });
+    const raised = this.planChecks.get(conversation.id) ?? new Map<string, number>();
+    const open = problems.filter((p) => (raised.get(p.id) ?? 0) < (p.firm ? MAX_PLAN_CHECKS : 1));
+    if (open.length > 0) {
+      for (const p of open) raised.set(p.id, (raised.get(p.id) ?? 0) + 1);
+      this.planChecks.set(conversation.id, raised);
+      this.host.post(conversation.id, planCheckText(open, names));
+      return true;
+    }
+    if (problems.some((p) => p.id === 'empty-folder')) {
+      // Asked twice and still side by side: one after another always works.
+      const first = firstBuilds(this.store.tickets(project.id));
+      const moved: string[] = [];
+      for (let i = 1; i < first.length; i++) {
+        const ticket = first[i]!;
+        if (ticket.step >= 0) continue;
+        this.store.addDependency(ticket.id, first[i - 1]!.id);
+        this.store.updateTicket(ticket.id, { updatedAt: this.now() });
+        moved.push(ticket.key);
+      }
+      if (moved.length > 0) {
+        this.event(
+          project.id,
+          null,
+          'app',
+          'linked',
+          `put ${listOf(moved)} in order behind ${first[0]!.key}: the folder has no code yet, so they can't start together`,
+        );
+      }
+    }
+    return false;
+  }
+
   /** Atlas plans the board from an approved spec, in a run of its own. */
   private plan(specTicket: Ticket, spec: SpecVersion): void {
     if (!this.host) return;
@@ -2490,6 +2597,18 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
 
       create: guard((draft: TicketDraft) => {
         const proposed = !lead;
+        // The same ticket twice is a slip: a maker filing the work it was just given, most often.
+        const plain = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g, '');
+        const same = this.store
+          .tickets(project.id)
+          .find((t) => !t.doneAt && plain(t.title) === plain(draft.title));
+        if (same) {
+          throw new BoardError(
+            same.id === this.runTicket(conversation)?.id
+              ? `That's ${same.key}, the ticket you're working now. Don't file it again: do its work, and hand it in with submit_output.`
+              : `${same.key} is that ticket already: "${same.title}". Change it with board_update_ticket if it needs more, rather than filing it twice.`,
+          );
+        }
         const { ticket, notes } = this.create(project, {
           ...draft,
           skipChecks: draft.skipChecks ?? [],
@@ -2668,14 +2787,19 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
             conversation.id,
             typeof output.file === 'string' ? output.file : undefined,
           );
+          // What the hand-in says was made has to be in the design.
+          const made = new Set((checked.layers ?? checked.frames).map((n) => n.toLowerCase()));
+          const missing = framesNamed(output).filter((n) => !made.has(n.toLowerCase()));
+          if (missing.length > 0) {
+            throw new BoardError(
+              `The hand-in names ${listOf(missing.map((n) => `"${n}"`))}, but the design has no frame called that. Its frames: ${checked.frames.join(', ')}. Build what's missing with design_create, or hand in only what is there and say in your notes what isn't.`,
+            );
+          }
           output = {
             ...output,
             file: checked.file,
-            // The frames as they are in the file, with what the clank said of each.
-            frames:
-              Array.isArray(output.frames) && output.frames.length > 0
-                ? output.frames
-                : checked.frames,
+            // The frames as they are in the file, each with what the clank said of it.
+            frames: framesAsMade(checked.frames, output.frames),
             lint: checked.lint,
           };
         }
@@ -2729,6 +2853,21 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
 
       pass: guard((review) => {
         const ticket = own('checker');
+        if (ticket.type === 'pr') {
+          // A pass says the build and tests are green. What this run itself ran decides that.
+          const ran = checksRun(this.host?.inFlight(conversation.id)?.parts ?? []);
+          if (ran.failed) {
+            throw new BoardError(
+              `\`${short(ran.failed)}\` failed the last time you ran it, so ${ticket.key} can't pass: a pass says the build and tests are green. Send it back to its maker with ticket_bounce and what failed, even if the failure was there before this change. If nobody in the crew can fix it, call ask_user.`,
+            );
+          }
+          const qa = this.members(project.id).find((c) => c.id === actor)?.stage === 'qa';
+          if (qa && !ran.built && hasBuildScript(project.folder)) {
+            throw new BoardError(
+              `You haven't built ${ticket.key} as it was handed in this time. Run the project's build (\`npm run build\`) and look at the result, then pass it or send it back.`,
+            );
+          }
+        }
         const reviews = [
           ...ticket.reviews,
           { ...review, clankId: actor, at: this.now().toISOString() },
@@ -3017,10 +3156,25 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         );
       } else if (isWrittenOutput(ticket.type)) {
         lines.push(writtenBrief(ticket.type, names));
+        if (ticket.type === 'campaign') {
+          // The graphics are there to be used; a writer who isn't told describes new ones.
+          const frames = designedFrames(all);
+          if (frames.length > 0) {
+            lines.push(
+              `The project's design has these frames: ${listOf(frames.map((name) => `"${name}"`))}. Give a post one of them as its \`visual\`, by name, where it fits. Describe a picture only where none does.`,
+            );
+          }
+        }
       } else {
         lines.push(
           `Your work goes on your branch \`clanks/${ticket.key}\`. Commit it as you go; whatever you leave uncommitted is committed for you when you hand in.${ticket.type === 'pr' ? ' The app pushes the branch and opens the pull request; you never push or merge.' : ''}`,
         );
+        const project = this.options.projects.find(ticket.projectId);
+        if (ticket.type === 'pr' && project && folderState(project.folder).unstarted) {
+          lines.push(
+            "The project's folder has no code yet, so your copy starts empty: there is nothing to look for, and this ticket starts the project. Set up what it needs first, with the framework's own starter where there is one, run so that it asks no questions (such as `npx create-next-app@latest . --yes`), then build on that.",
+          );
+        }
         if (ticket.type === 'design') {
           lines.push(
             `The design lives in \`design/\` on that branch, and ${names.user} watches it in Studio as you build it. Handing in checks it: a frame that uses a token, icon, image or component that isn't there is refused, and what design_lint still finds goes on the ticket.`,
@@ -3095,6 +3249,23 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         : 'what changed, though no story did; check whether any ticket is needed'
       : 'its stories';
     const existing = all.filter((t) => t.id !== ticket.id);
+    // What the folder and the crew mean for this plan, said up front rather than after it's made.
+    const folder = folderState(project.folder);
+    const crew = this.members(project.id);
+    const designer = makersOf('design', crew)[0];
+    const facts = [
+      // Only where someone writes code: a crew of writers has no app to set up.
+      ...(folder.unstarted && makersOf('pr', crew).length > 0
+        ? [
+            "The project's folder has no code yet. If anything in this plan is built in code, one ticket sets the app up first (type `pr`, no stories, criteria of its own), and every other `pr` ticket waits on it or on a ticket that does: two tickets can't both start on an empty folder.",
+          ]
+        : []),
+      ...(designer && !folder.designed && !all.some((t) => t.type === 'design')
+        ? [
+            `${designer.name} is in the crew and nothing is designed yet. Screens are designed before they're built: create a \`design\` ticket for the design language and the screens, and make each ticket that builds a screen wait on it.`,
+          ]
+        : []),
+    ];
     const lines = [
       `Mode: planning. ${cap(names.user)} approved spec v${spec.version} of ${project.name}. Turn ${focus} into tickets, as your instructions say for breaking a spec into tickets.`,
       '',
@@ -3104,8 +3275,9 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       '',
       'Every ticket needs acceptance criteria. A ticket with stories gets theirs when you leave criteria empty. Give a ticket without stories, such as setup, criteria of its own, such as "`npm run build` succeeds and the home page renders".',
       '',
-      'Tickets start as soon as they are created and what they wait on is done, so create them in the order they should be built.',
+      "Nothing starts until you've finished planning. Then each ticket starts as soon as what it waits on is done, so link what must come first.",
       '',
+      ...facts.flatMap((fact) => [fact, '']),
       existing.length > 0
         ? `Already on the board:\n${existing.map((t) => `- ${ticketLine(t, all, names)}`).join('\n')}`
         : 'The board has no other tickets yet.',

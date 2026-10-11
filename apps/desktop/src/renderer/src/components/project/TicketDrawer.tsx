@@ -8,6 +8,7 @@ import {
   criterionText,
   emailOf,
   isWrittenOutput,
+  itemText,
   parseSpec,
   pullRequestName,
 } from '@clanks/core';
@@ -28,6 +29,7 @@ import { useNav } from '../../lib/nav';
 import { useTRPC } from '../../lib/trpc';
 import { Avatar } from '../Avatar';
 import { Markdown } from '../chat/Markdown';
+import { ModeBadge } from '../integrations/shared';
 import { WrittenOutput } from './Output';
 import { Badge, Button, Dot, ErrorText, IconButton, TrashIcon, XIcon, inputClass } from '../ui';
 
@@ -122,6 +124,8 @@ export function TicketDrawer(props: {
           <Route card={card} name={name} />
           <Checks card={card} snapshot={snapshot} name={name} />
         </Section>
+
+        <Services card={card} snapshot={snapshot} name={name} />
 
         {(card.column === 'backlog' || (card.column === 'build' && !card.detour)) &&
           card.type !== 'spec' && <Assignee card={card} snapshot={snapshot} />}
@@ -903,7 +907,7 @@ function Fields({ fields, hide }: { fields: Record<string, unknown>; hide?: Set<
             ) : Array.isArray(value) ? (
               <ul className="flex list-disc flex-col gap-0.5 pl-4">
                 {value.map((item, i) => (
-                  <li key={i}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>
+                  <li key={i}>{itemText(item)}</li>
                 ))}
               </ul>
             ) : (
@@ -932,6 +936,46 @@ function ChatLink(props: {
       <span className="flex-1">{props.label}</span>
       <span className="text-dim">›</span>
     </button>
+  );
+}
+
+/**
+ * The connected services the clanks on this ticket's route can use, each with the account's mode,
+ * so it's plain on every ticket whether a clank is working against a test account or the real one.
+ */
+function Services(props: {
+  card: TicketCard;
+  snapshot: BoardSnapshot;
+  name: (id: string) => string;
+}) {
+  const onRoute = new Set(
+    [...props.card.route.map((step) => step.clankId), props.card.detour?.clankId].filter(
+      (id): id is string => typeof id === 'string',
+    ),
+  );
+  const services = props.snapshot.integrations
+    .map((service) => ({ ...service, clanks: service.clanks.filter((id) => onRoute.has(id)) }))
+    .filter((service) => service.clanks.length > 0);
+  if (services.length === 0) return null;
+  return (
+    <Section title="Connected services">
+      <ul className="flex flex-col gap-1.5">
+        {services.map((service) => (
+          <li key={service.connectionId} className="flex flex-wrap items-center gap-2 text-[13px]">
+            <span className="text-white/90">{service.name}</span>
+            <ModeBadge mode={service.mode} />
+            <span className="text-dim">
+              {service.label}, for {service.clanks.map(props.name).join(', ')}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {services.some((service) => service.mode === 'live') && (
+        <p className="text-[12px] text-amber-200">
+          A live account is the real thing. Every change to it waits for you, every time.
+        </p>
+      )}
+    </Section>
   );
 }
 

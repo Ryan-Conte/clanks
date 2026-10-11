@@ -54,6 +54,12 @@ importers:
       '@clanks/design':
         specifier: workspace:*
         version: link:../../packages/design
+      '@clanks/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
+      '@clanks/marketplace':
+        specifier: workspace:*
+        version: link:../../packages/marketplace
       '@clanks/models':
         specifier: workspace:*
         version: link:../../packages/models
@@ -201,6 +207,47 @@ importers:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@26.6.5)(vite@7.3.6(@types/node@26.6.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/integrations:
+    dependencies:
+      '@clanks/core':
+        specifier: workspace:*
+        version: link:../core
+      '@clanks/tools':
+        specifier: workspace:*
+        version: link:../tools
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.5
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@22.20.5)(vite@7.3.6(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/marketplace:
+    dependencies:
+      '@clanks/core':
+        specifier: workspace:*
+        version: link:../core
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.5
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@22.20.5)(vite@7.3.6(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/models:
     dependencies:
       '@clanks/core':
@@ -237,6 +284,12 @@ importers:
       '@clanks/design':
         specifier: workspace:*
         version: link:../design
+      '@clanks/integrations':
+        specifier: workspace:*
+        version: link:../integrations
+      '@clanks/marketplace':
+        specifier: workspace:*
+        version: link:../marketplace
       '@clanks/models':
         specifier: workspace:*
         version: link:../models
@@ -286,6 +339,9 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
       vitest:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@22.20.5)(vite@7.3.6(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)(yaml@2.9.1))

@@ -12,7 +12,9 @@ import type { DesignService } from './design/service';
 import type { EmailService } from './email/service';
 import type { GitHubService } from './github/service';
 import type { GitLabService } from './gitlab/service';
+import type { IntegrationService } from './integrations/service';
 import type { LocalApi } from './local-api/server';
+import type { MarketplaceService } from './marketplace/service';
 import type { McpService } from './mcp/service';
 import type { AppDataLayout } from './paths';
 import type { ProjectService } from './projects/service';
@@ -49,6 +51,8 @@ export interface Host {
     options: { title: string; defaultName: string; extensions: string[] },
     data: Uint8Array,
   ): Promise<string | null>;
+  /** Opens an https page in the user's own browser, such as a service's sign-in. */
+  openUrl(url: string): Promise<void>;
 }
 
 export interface OrchestratorContext {
@@ -93,6 +97,10 @@ export interface OrchestratorContext {
   artifacts: ArtifactService;
   /** The account emails the user approves go out through. */
   email: EmailService;
+  /** Connected services: integrations, the accounts connected to each, and who may use them. */
+  integrations: IntegrationService;
+  /** What marketplaces list, what's installed from them, and publishing to one. */
+  marketplace: MarketplaceService;
   /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
   localApi: LocalApi;
   host: Host | null;

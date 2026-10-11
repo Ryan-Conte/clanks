@@ -1,6 +1,6 @@
 import type { ClankFrontmatter } from '@clanks/core';
 import { git } from '@clanks/workspace';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -11,7 +11,15 @@ import { BUILTIN_TOOLS, builtinTool } from './index';
 import { McpManager, mcpSlug, mcpToolName, mcpToolSpec } from './mcp';
 import { docLevel, policyFor } from './policy';
 import { redactCommand, redactUrl } from './redact';
-import type { BrowserAccess, CommandResult, ToolContext, ToolSpec } from './spec';
+import { inertSvg } from './browser';
+import {
+  type BrowserAccess,
+  type CommandResult,
+  type ListedImage,
+  type ToolContext,
+  ToolFailure,
+  type ToolSpec,
+} from './spec';
 import { htmlToText, searchWith } from './web';
 import { tree } from './files';
 
@@ -260,6 +268,35 @@ describe('the web tools', () => {
     expect((await call('web_fetch', { url: `${url}/missing` }, ctx)).error).toBe(true);
   });
 
+  it('read a page its scripts draw in the browser, and say so when there is none', async () => {
+    const shell =
+      '<html><head><title>Scruka</title><meta property="og:description" content="Planning poker &amp; boards"><script src="/app.js"></script></head><body><div id="root"></div><noscript>Turn on JavaScript</noscript></body></html>';
+    const url = await site({ '/': ['text/html', shell] });
+    const opened: string[] = [];
+    const browser = {
+      text: (address: string) => {
+        opened.push(address);
+        return Promise.resolve('# Connect planning poker and boards\n\nlink "Pricing" (/pricing)');
+      },
+    } as unknown as BrowserAccess;
+    const drawn = await call('web_fetch', { url: `${url}/` }, context(tempDir(), 'x', { browser }));
+    expect(opened).toEqual([`${url}/`]);
+    expect(drawn.content).toBe(
+      `URL: ${url}/\nStatus: 200\nTitle: Scruka\nDescription: Planning poker & boards\nIts scripts draw the page, so it was read in the browser.\n\n# Connect planning poker and boards\n\nlink "Pricing" (/pricing)`,
+    );
+    // With no browser, or one that can't show it, the page's own description is what there is.
+    const failing = {
+      text: () => Promise.reject(new ToolFailure('No tab')),
+    } as unknown as BrowserAccess;
+    for (const extra of [{}, { browser: failing }]) {
+      const bare = await call('web_fetch', { url: `${url}/` }, context(tempDir(), 'x', extra));
+      expect(bare.content).toMatch(
+        /Description: Planning poker & boards\n\n\(The page has no text of its own/,
+      );
+      expect(bare.content).not.toMatch(/read in the browser/);
+    }
+  });
+
   it('search through the backend that is set up', async () => {
     const url = await site({
       '/search?q=surf+wax&format=json': [
@@ -284,8 +321,8 @@ describe('the web tools', () => {
 });
 
 describe('the browser tools', () => {
-  /** Records each step and answers it with the step's name. */
-  function browser(): { access: BrowserAccess; steps: unknown[][] } {
+  /** Records each step and answers it with the step's name. `pictures` is what a page lists. */
+  function browser(pictures: ListedImage[] = []): { access: BrowserAccess; steps: unknown[][] } {
     const steps: unknown[][] = [];
     const step =
       (name: string) =>
@@ -320,9 +357,92 @@ describe('the browser tools', () => {
                   page: null,
                 },
           ),
+        text: () => Promise.resolve('The page'),
+        styles: step('styles'),
+        listed: (index: number) =>
+          pictures[index - 1]
+            ? Promise.resolve(pictures[index - 1]!)
+            : Promise.reject(new ToolFailure(`There's no picture ${index}`)),
       },
     };
   }
+
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  it("read a page's look, and save its pictures into the project's design", async () => {
+    const logo =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" onload="steal()"><script>steal()</script><path fill="#01cc8e" d="M0 0h8v8H0z"/></svg>';
+    const { access, steps } = browser([
+      { kind: 'logo', note: 'in the header, drawn in the page', url: null, svg: logo },
+      {
+        kind: 'icon',
+        note: 'the site icon',
+        url: `data:image/png;base64,${PNG.toString('base64')}`,
+        svg: null,
+      },
+      {
+        kind: 'card',
+        note: 'shown when shared',
+        url: 'https://brand.test/og-image.jpg',
+        svg: null,
+      },
+      { kind: 'image', note: 'on the page', url: 'https://brand.test/page.html', svg: null },
+    ]);
+    const { root, base } = await workspace({ 'README.md': 'Brand\n' });
+    // The server calls its PNG a JPEG, as real ones do; what the bytes are is what counts.
+    const web = {
+      search: null,
+      fetch: ((address: string) =>
+        Promise.resolve(
+          String(address).endsWith('.jpg')
+            ? new Response(PNG, { headers: { 'content-type': 'image/jpeg' } })
+            : new Response('<html></html>', { headers: { 'content-type': 'text/html' } }),
+        )) as unknown as typeof fetch,
+    };
+    const ctx = context(root, base, { browser: access, web });
+    expect((await call('browser_styles', {}, ctx)).content).toBe('did styles');
+    expect(steps).toEqual([['styles']]);
+
+    const saved = await call('browser_save_image', { image: '[1]', name: 'Scruka Logo.svg' }, ctx);
+    expect(saved.content).toMatch(
+      /^Saved the logo in the header.* as `design\/assets\/scruka-logo\.svg`/,
+    );
+    const svg = readFileSync(join(root, 'design/assets/scruka-logo.svg'), 'utf8');
+    expect(svg).toContain('fill="#01cc8e"');
+    expect(svg).not.toMatch(/script|onload/);
+
+    await call('browser_save_image', { image: 2 }, ctx);
+    expect(readFileSync(join(root, 'design/assets/icon.png')).equals(PNG)).toBe(true);
+    // A second one of the same name is kept beside the first.
+    await call('browser_save_image', { image: 2 }, ctx);
+    expect(existsSync(join(root, 'design/assets/icon-2.png'))).toBe(true);
+    await call('browser_save_image', { image: 3 }, ctx);
+    expect(existsSync(join(root, 'design/assets/social-card.png'))).toBe(true);
+
+    await expect(call('browser_save_image', { image: 4 }, ctx)).rejects.toThrow(
+      /isn't a picture a design can show \(it's text\/html\)/,
+    );
+    await expect(call('browser_save_image', { image: 9 }, ctx)).rejects.toThrow(/no picture 9/);
+    await expect(call('browser_save_image', { image: 'the logo' }, ctx)).rejects.toThrow(
+      /isn't a picture's address/,
+    );
+    const save = builtinTool('browser_save_image')!;
+    expect(save.needs).toEqual(['browser', 'workspace']);
+    expect(save.risk!(save.parse({ image: 2 }), { worktree: root, browserUrl: null }).level).toBe(
+      'low',
+    );
+  });
+
+  it('takes what could run out of an SVG', () => {
+    expect(
+      inertSvg(
+        '<svg onclick="x()"><a href="javascript:alert(1)"><foreignObject><b>hi</b></foreignObject><rect onmouseover=\'y()\' width="1"/></a><script>z()</script></svg>',
+      ),
+    ).toBe('<svg><a href="#"><rect width="1"/></a></svg>');
+  });
 
   it('act through the browser, taking refs however the model writes them', async () => {
     const { access, steps } = browser();
@@ -400,6 +520,30 @@ describe('the policy', () => {
       overridden: true,
     });
     expect(policyFor({ doc, overrides: {}, name: 'mcp_x_y', mcp: true }).level).toBe('ask');
+  });
+
+  it("won't let a marketplace clank's doc give it more than ask above read", () => {
+    const generous: ClankFrontmatter['tools'] = {
+      allow: ['fs_read', 'fs_write', 'shell_exec', 'git_commit', 'web_fetch', 'review_pass'],
+      ask: ['browser_*'],
+      deny: ['fs_edit'],
+    };
+    const starts = (name: string, overrides = {}) =>
+      policyFor({ doc: generous, overrides, name, capped: true }).level;
+    // Looking, and a checker's own verdict, are as the doc says.
+    expect(starts('fs_read')).toBe('allow');
+    expect(starts('review_pass')).toBe('allow');
+    expect(starts('post_progress')).toBe('allow');
+    // Anything that changes things or reaches out starts at ask.
+    for (const name of ['fs_write', 'shell_exec', 'git_commit', 'web_fetch']) {
+      expect(starts(name), name).toBe('ask');
+      expect(policyFor({ doc: generous, overrides: {}, name }).level, name).toBe('allow');
+    }
+    // A cap never loosens anything, and the user can still raise what they choose to.
+    expect(starts('browser_open')).toBe('ask');
+    expect(starts('fs_edit')).toBe('deny');
+    expect(starts('fs_list')).toBe('off');
+    expect(starts('shell_exec', { shell_exec: 'allow' })).toBe('allow');
   });
 });
 

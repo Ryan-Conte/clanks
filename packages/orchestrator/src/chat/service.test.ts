@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { sqliteModelRepository } from '../store/models';
 import { startTestOrchestrator, tempDir } from '../test-helpers';
-import { fitHistory, titleFrom, toTurns } from './service';
+import { compactTurns, fitHistory, titleFrom, toTurns } from './service';
 
 const MODEL = 'tiny:1b';
 
@@ -336,6 +336,96 @@ describe('history', () => {
     // Room for two turns, but the older is the model's, so only the latest goes.
     expect(fitHistory(turns, 250).map((t) => t.content[0])).toEqual(['e']);
     expect(fitHistory(turns, 10).map((t) => t.content[0])).toEqual(['e']);
+  });
+
+  it('makes room in a long run in stages, and only as far as it takes', () => {
+    const round = (n: number) => [
+      {
+        role: 'assistant' as const,
+        content: '',
+        toolCalls: [
+          {
+            id: `c${n}`,
+            name: 'design_create',
+            arguments: JSON.stringify({ markup: 'm'.repeat(2000) }),
+          },
+        ],
+      },
+      {
+        role: 'tool' as const,
+        toolCallId: `c${n}`,
+        content: `Added layers ${n}. ${'r'.repeat(2000)}`,
+      },
+    ];
+    const run = () => [
+      { role: 'system' as const, content: 'You are Prism.' },
+      { role: 'user' as const, content: 'Start on SURF-3.' },
+      ...[1, 2, 3, 4, 5].flatMap(round),
+    ];
+    const sizeOf = (messages: ReturnType<typeof run>) =>
+      messages.reduce(
+        (sum, m) =>
+          sum + m.content.length + ('toolCalls' in m ? m.toolCalls![0]!.arguments.length : 0),
+        0,
+      );
+
+    // Enough room: nothing is touched.
+    const whole = run();
+    compactTurns(whole, 10_000);
+    expect(sizeOf(whole)).toBe(sizeOf(run()));
+
+    // A little short: old results are cut to their first lines, and nothing else.
+    const results = run();
+    compactTurns(results, 4200);
+    expect(results).toHaveLength(12);
+    expect(results[3]!.content).toMatch(/^Added layers 1\. r+\n\n\[Cut to make room/);
+    expect(results.at(-1)!.content).toHaveLength(2016);
+    expect(
+      (results[2] as { toolCalls: { arguments: string }[] }).toolCalls[0]!.arguments,
+    ).toHaveLength(2013);
+
+    // Shorter still: what the clank wrote in its old calls is cut, and stays JSON.
+    const calls = run();
+    compactTurns(calls, 2600);
+    expect(calls).toHaveLength(12);
+    const cut = (calls[2] as { toolCalls: { arguments: string }[] }).toolCalls[0]!.arguments;
+    expect(JSON.parse(cut)).toEqual({
+      cut: expect.stringMatching(/^\{"markup":"m+… \[The rest was cut/) as string,
+    });
+    // The two newest rounds are what it's working from: they stay whole.
+    expect(
+      (calls[8] as { toolCalls: { arguments: string }[] }).toolCalls[0]!.arguments,
+    ).toHaveLength(2013);
+    expect(calls.at(-1)!.content).toHaveLength(2016);
+
+    // No room for that either: the oldest rounds go, and the run is told.
+    const dropped = run();
+    compactTurns(dropped, 2300);
+    expect(dropped.map((m) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
+    ]);
+    expect(dropped[1]!.content).toBe(
+      'Start on SURF-3.\n\n[Your earliest steps in this run were dropped to make room. What they made is in the files and on the board: read again what you need.]',
+    );
+    expect(dropped.at(-1)!.content).toBe(`Added layers 5. ${'r'.repeat(2000)}`);
+    // Asked for the impossible, it keeps the two newest rounds and the start.
+    compactTurns(dropped, 10);
+    expect(dropped.map((m) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
+    ]);
+    expect(dropped[1]!.content.match(/earliest steps/g)).toHaveLength(1);
   });
 
   it('titles a chat from its first words', () => {

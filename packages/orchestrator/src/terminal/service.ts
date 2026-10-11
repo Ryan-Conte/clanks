@@ -7,6 +7,7 @@ import {
   commandEnv,
   commandShell,
   headTail,
+  jobsReady,
   markedExecArgs,
   openPty,
   plainOutput,
@@ -78,7 +79,9 @@ export class TerminalService extends EventEmitter<{
     /** Variables commands get besides the usual, such as the port a run's servers use. */
     env?: Record<string, string>;
   }): Promise<ShellAccess> {
-    return commandShell().then((shell) => {
+    // On Windows a command's processes are held in a job, which a helper makes: the first
+    // command of a session waits a moment for it to start.
+    return Promise.all([commandShell(), jobsReady()]).then(([shell]) => {
       const find = (handle: string) =>
         [...this.sessions.values()].find(
           (s) => s.info.conversationId === options.conversationId && s.handle === handle,

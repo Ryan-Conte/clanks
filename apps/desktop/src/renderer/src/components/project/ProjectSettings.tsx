@@ -17,6 +17,7 @@ import { useNav } from '../../lib/nav';
 import { useTRPC } from '../../lib/trpc';
 import { Avatar } from '../Avatar';
 import { ModelPicker } from '../ModelPicker';
+import { ProjectIntegrations } from './ProjectIntegrations';
 import { Button, Dot, ErrorText, Panel, Row, Switch, Toggle, inputClass } from '../ui';
 
 /** A project's name, workspace, crew and models, how the crew works, and deleting it. */
@@ -162,6 +163,8 @@ export function ProjectSettings({ snapshot }: { snapshot: BoardSnapshot }) {
         <BudgetsPanel snapshot={snapshot} onChange={patch} />
 
         <SandboxPanel snapshot={snapshot} onChange={(sandbox) => patch({ sandbox })} />
+
+        <ProjectIntegrations snapshot={snapshot} />
 
         <Panel
           title="Crew and models"

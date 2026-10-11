@@ -1,0 +1,105 @@
+# A trimmed description of the Slack Web API: only the methods the manifest lists.
+openapi: 3.0.3
+info:
+  title: Slack Web API (trimmed for clanks)
+  version: '2'
+servers:
+  - url: https://slack.com/api
+components:
+  parameters:
+    limit:
+      name: limit
+      in: query
+      description: How many to return. 100 unless you say; at most 200 is sensible.
+      schema: { type: integer, minimum: 1, maximum: 1000 }
+    cursor:
+      name: cursor
+      in: query
+      description: The next_cursor from the page before, for the next one.
+      schema: { type: string }
+paths:
+  /auth.test:
+    post:
+      summary: Who this token is, and which workspace it belongs to.
+  /conversations.list:
+    get:
+      summary: List the workspace's channels.
+      parameters:
+        - name: types
+          in: query
+          description: 'Comma-separated: public_channel, private_channel. Public unless you say.'
+          schema: { type: string }
+        - name: exclude_archived
+          in: query
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+  /conversations.history:
+    get:
+      summary: A channel's messages, newest first.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          description: The channel's id, such as C0123ABCD.
+          schema: { type: string }
+        - name: oldest
+          in: query
+          description: Only messages after this time, as seconds since 1970.
+          schema: { type: string }
+        - name: latest
+          in: query
+          description: Only messages before this time, as seconds since 1970.
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+  /conversations.replies:
+    get:
+      summary: A thread, the message that started it first.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          schema: { type: string }
+        - name: ts
+          in: query
+          required: true
+          description: The ts of the message that started the thread.
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+  /users.list:
+    get:
+      summary: The people in the workspace, with their ids and names.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+  /chat.postMessage:
+    post:
+      summary: Post a message to a channel, or as a reply in a thread.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel, text]
+              properties:
+                channel: { type: string, description: The channel's id. }
+                text: { type: string, description: The message, in Slack's markup. }
+                thread_ts: { type: string, description: The ts of a message to reply under. }
+                unfurl_links: { type: boolean }
+  /chat.update:
+    post:
+      summary: Change a message the app posted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel, ts, text]
+              properties:
+                channel: { type: string }
+                ts: { type: string, description: The message's ts. }
+                text: { type: string }

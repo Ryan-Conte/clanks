@@ -90,6 +90,21 @@ describe('a design ticket', () => {
           ],
           [call('design_lint', {})],
           [call('design_render', { frame: 'Home / Desktop' })],
+          // Saying a screen is there when it isn't is refused too.
+          [
+            call('submit_output', {
+              type: 'design',
+              title: 'Home page',
+              frames: ['Home / Desktop: the hero', 'Button / primary'],
+              criteria: [
+                {
+                  text: 'Phones too',
+                  status: 'met',
+                  evidence: "The frame 'Home / Mobile' shows it.",
+                },
+              ],
+            }),
+          ],
           [
             call('submit_output', {
               type: 'design',
@@ -136,7 +151,10 @@ describe('a design ticket', () => {
     const run = chat.list().find((c) => c.ticketId === design.id && c.role === 'maker')!;
     const submits = results(chat, run.id, 'submit_output');
     expect(submits[0]).toMatch(/There's no design to hand in yet/);
-    expect(submits[1]).toMatch(/^Handed in\./);
+    expect(submits[1]).toBe(
+      'The hand-in names "Home / Mobile", but the design has no frame called that. Its frames: Home / Desktop. Build what\'s missing with design_create, or hand in only what is there and say in your notes what isn\'t.',
+    );
+    expect(submits[2]).toMatch(/^Handed in\./);
     expect(results(chat, run.id, 'design_tokens_set')[0]).toMatch(/added 13/);
     expect(results(chat, run.id, 'design_make_component')[0]).toMatch(
       /Made the component Button \(c\d+\) with the variant "primary"/,

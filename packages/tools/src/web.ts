@@ -6,7 +6,9 @@ import { type SearchResult, ToolFailure, defineTool, short } from './spec';
 
 const FETCH_TIMEOUT_MS = 20_000;
 const MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024;
-const USER_AGENT = 'Mozilla/5.0 (compatible; clanks; +https://clanks.si)';
+export const USER_AGENT = 'Mozilla/5.0 (compatible; clanks; +https://clanks.si)';
+/** A page with scripts and less text than this is taken to be drawn by them. */
+const DRAWN_PAGE_CHARS = 200;
 
 const ENTITIES: Record<string, string> = {
   amp: '&',
@@ -44,10 +46,14 @@ function decodeEntities(text: string): string {
 
 /**
  * A web page as readable text, close to Markdown: headings, lists and links kept, scripts, styles
- * and navigation chrome dropped. Small models read this far better than HTML.
+ * and navigation chrome dropped. Small models read this far better than HTML. `description` is
+ * what the page says about itself in its head, which is all a page drawn by scripts says.
  */
-export function htmlToText(html: string): { title: string; text: string } {
+export function htmlToText(html: string): { title: string; text: string; description: string } {
   const title = decodeEntities(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const description = decodeEntities(metaContent(html, 'description') ?? '')
     .replace(/\s+/g, ' ')
     .trim();
   // The main content, when the page marks it.
@@ -85,11 +91,23 @@ export function htmlToText(html: string): { title: string; text: string } {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  return { title, text };
+  return { title, text, description };
+}
+
+/** A `<meta>` tag's content by its name, or by its Open Graph property of the same name. */
+function metaContent(html: string, name: string): string | null {
+  for (const tag of html.match(/<meta\s[^>]*>/gi) ?? []) {
+    const key = /\b(?:name|property)\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1]?.toLowerCase();
+    if (key !== name && key !== `og:${name}`) continue;
+    const content = /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+    const value = content?.[1] ?? content?.[2];
+    if (value) return value;
+  }
+  return null;
 }
 
 /** Reads at most `max` bytes of a response. */
-async function readCapped(
+export async function readCapped(
   response: Response,
   max: number,
 ): Promise<{ body: Buffer; cut: boolean }> {
@@ -110,11 +128,12 @@ async function readCapped(
 export const webFetch = defineTool({
   name: 'web_fetch',
   description:
-    'Fetches a web page or file over http(s) and returns it as text. Pages come back as readable text, not HTML.',
+    'Fetches a web page or file over http(s) and returns it as text. Pages come back as readable text, not HTML. It gives what a page says, not how it looks.',
   schema: z.object({
     url: z.string().url().describe('The full address, starting with https://'),
   }),
   needs: [],
+  uses: ['browser'],
   mutates: false,
   label: (args) => `Fetching \`${short(redactUrl(args.url))}\``,
   approval(args) {
@@ -160,14 +179,37 @@ export const webFetch = defineTool({
     }
     const raw = body.toString('utf8');
     const isHtml = /html/i.test(type) || /^\s*<(!doctype html|html)/i.test(raw);
-    const { title, text } = isHtml ? htmlToText(raw) : { title: '', text: raw };
+    const page = isHtml ? htmlToText(raw) : { title: '', text: raw, description: '' };
+    const { title, description } = page;
+    let text = page.text;
+    // A page that's empty until its scripts run is read where they do, when there's a browser.
+    const drawn = isHtml && text.length < DRAWN_PAGE_CHARS && /<script[\s>]/i.test(raw);
+    let inBrowser = false;
+    if (drawn && response.ok && ctx.browser) {
+      try {
+        const shown = await ctx.browser.text(response.url || args.url);
+        if (shown.trim().length > text.length) {
+          text = shown.trim();
+          inBrowser = true;
+        }
+      } catch (error) {
+        if (ctx.signal.aborted) throw error;
+        // The browser couldn't show it either: what was fetched is all there is.
+      }
+    }
     const header = [
       `URL: ${response.url || args.url}`,
       `Status: ${response.status}${response.ok ? '' : ` ${response.statusText}`}`,
       ...(title ? [`Title: ${title}`] : []),
+      ...(description ? [`Description: ${description}`] : []),
+      ...(inBrowser ? ['Its scripts draw the page, so it was read in the browser.'] : []),
     ].join('\n');
+    const empty =
+      drawn && !inBrowser
+        ? "(The page has no text of its own: its scripts draw it in a browser, which isn't here to run them. The description above is all it says without one.)"
+        : '(The page has no text.)';
     const content = headOnly(
-      `${header}\n\n${text || '(The page has no text.)'}${cut ? '\n\n[Only the first 5 MB was downloaded.]' : ''}`,
+      `${header}\n\n${text || empty}${cut ? '\n\n[Only the first 5 MB was downloaded.]' : ''}`,
       ctx.maxChars,
       'The rest of the page was cut to fit.',
     );

@@ -11,12 +11,15 @@ import { ChatService } from './chat/service';
 import { ChatStore } from './chat/store';
 import { ContextService } from './context/service';
 import { CrewService } from './crew/crew';
+import { removeCustomClank } from './crew/remove';
 import { DeliveryService } from './delivery/service';
 import { DesignError, type DesignHost, DesignService } from './design/service';
 import { EmailService, type MailTransport, type SmtpConfig } from './email/service';
 import { GitHubService } from './github/service';
 import { GitLabService } from './gitlab/service';
+import { IntegrationService } from './integrations/service';
 import { LocalApi } from './local-api/server';
+import { DEFAULT_MARKETPLACE_INDEX, MarketplaceService } from './marketplace/service';
 import { McpService } from './mcp/service';
 import { ProjectService } from './projects/service';
 import { SandboxService } from './sandbox/service';
@@ -45,6 +48,13 @@ export interface OrchestratorOptions {
   migrationsFolder: string;
   /** The crew's priming docs, shipped next to the main bundle. */
   bundledCrewDir: string;
+  /** The integrations that ship with the app, one folder each. Without it, there are none. */
+  bundledIntegrationsDir?: string | null;
+  /** The marketplace the app starts with, rather than the public one. */
+  marketplaceIndex?: string | null;
+  /** Tests stand in for the services integrations call, and for the marketplace's host. */
+  integrationsFetch?: typeof fetch;
+  marketplaceFetch?: typeof fetch;
   cipher: SecretCipher;
   appInfo: AppInfo;
   /** The llama.cpp builds shipped with the app, one folder per backend. */
@@ -157,6 +167,22 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     ...(options.mailTransport ? { transport: options.mailTransport } : {}),
   });
   const contextNotes = new ContextService({ db: store.db });
+  const mcpManager = new McpManager({ name: 'clanks', version: options.appInfo.version });
+  const mcp = new McpService({ db: store.db, secrets, manager: mcpManager });
+  const sandbox = new SandboxService();
+  const integrations = new IntegrationService({
+    db: store.db,
+    secrets,
+    bundledDir: options.bundledIntegrationsDir ?? null,
+    installedDir: paths.integrations,
+    mcp,
+    onProjectChange: (projectId) => {
+      if (projects.find(projectId)) projects.touch(projectId);
+    },
+    docker: () => sandbox.docker(),
+    ...(options.host ? { openUrl: (url: string) => options.host!.openUrl(url) } : {}),
+    ...(options.integrationsFetch ? { fetch: options.integrationsFetch } : {}),
+  });
 
   const chatStore = new ChatStore(store.db);
   const activity = new ActivityService(store.db);
@@ -210,6 +236,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     delivery,
     artifacts,
     email,
+    integrations,
     userName: () => settings.get().profile.name || 'the user',
     prices: () => settings.get().cloudPrices,
     // eslint-disable-next-line @typescript-eslint/require-await -- a bad path rejects
@@ -250,8 +277,6 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     },
   });
   const terminal = new TerminalService();
-  const mcpManager = new McpManager({ name: 'clanks', version: options.appInfo.version });
-  const mcp = new McpService({ db: store.db, secrets, manager: mcpManager });
   const tools = new ToolService({
     db: store.db,
     crew,
@@ -259,6 +284,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     manager: mcpManager,
     settings,
     secrets,
+    integrations,
   });
 
   const browser = new BrowserService({
@@ -267,7 +293,6 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     userName: () => settings.get().profile.name || 'The user',
   });
 
-  const sandbox = new SandboxService();
   const chat = new ChatService({
     store: chatStore,
     crew,
@@ -318,6 +343,27 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
   chat.on('live', (id, event) => {
     if (event.type !== 'delta') board.touchConversation(id);
   });
+  const marketplace = new MarketplaceService({
+    db: store.db,
+    settings,
+    crew,
+    integrations,
+    github,
+    defaultIndex: options.marketplaceIndex || DEFAULT_MARKETPLACE_INDEX,
+    removeClank: (id) => removeCustomClank({ crew, projects, chat }, id),
+    userName: () => settings.get().profile.name,
+    ...(options.marketplaceFetch ? { fetch: options.marketplaceFetch } : {}),
+  });
+  // What's installed is checked against its marketplace now and then: for a newer version to
+  // offer, or a notice that it was taken down. With nothing installed, nothing is fetched.
+  const checkPackages = () => {
+    if (marketplace.snapshot().installed.length === 0) return;
+    void marketplace.refresh().catch(() => {});
+  };
+  const packagesSoon = setTimeout(checkPackages, 20_000);
+  packagesSoon.unref();
+  const packagesTimer = setInterval(checkPackages, 6 * 60 * 60_000);
+  packagesTimer.unref();
   chat.recover();
   board.recover();
   // Models loading, unloading and freeing up may let waiting runs start; so may a crew model.
@@ -378,6 +424,8 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     gitlab,
     artifacts,
     email,
+    integrations,
+    marketplace,
     localApi,
     host: options.host ?? null,
   };
@@ -392,6 +440,9 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     ready,
     close: () => {
       clearInterval(prTimer);
+      clearTimeout(packagesSoon);
+      clearInterval(packagesTimer);
+      integrations.close();
       if (pumpTimer) clearTimeout(pumpTimer);
       for (const timer of designTimers.values()) clearTimeout(timer);
       void localApi.stop();

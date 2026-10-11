@@ -33,7 +33,8 @@ export class McpService extends EventEmitter<{ change: [] }> {
     return this.rows().map((row) => this.status(row));
   }
 
-  add(input: McpServerInput): McpServerStatus {
+  /** Adds a server. `managed` is set for one an integration installs, which pins its command. */
+  add(input: McpServerInput, managed?: { integration: string; docker: boolean }): McpServerStatus {
     const parsed = this.parse(input);
     const id = randomUUID();
     this.saveSecrets(id, parsed.secrets ?? {});
@@ -47,6 +48,8 @@ export class McpService extends EventEmitter<{ change: [] }> {
       url: parsed.url,
       secretNames: Object.keys(parsed.secrets ?? {}),
       clanks: parsed.clanks,
+      integration: managed?.integration ?? null,
+      docker: managed?.docker ?? false,
       createdAt: new Date(),
     };
     this.options.db.insert(mcpServer).values(row).run();
@@ -59,14 +62,16 @@ export class McpService extends EventEmitter<{ change: [] }> {
     const current = this.require(id);
     const parsed = this.parse(input);
     if (parsed.secrets !== null) this.saveSecrets(id, parsed.secrets);
+    // An integration's server keeps the command it was pinned to, whatever the form sends.
+    const pinned = current.integration !== null;
     const next: Row = {
       ...current,
       name: parsed.name,
       slug: parsed.name === current.name ? current.slug : this.uniqueSlug(parsed.name, id),
-      transport: parsed.transport,
-      command: parsed.command,
-      args: parsed.args,
-      url: parsed.url,
+      transport: pinned ? current.transport : parsed.transport,
+      command: pinned ? current.command : parsed.command,
+      args: pinned ? current.args : parsed.args,
+      url: pinned ? current.url : parsed.url,
       secretNames: parsed.secrets !== null ? Object.keys(parsed.secrets) : current.secretNames,
       clanks: parsed.clanks,
     };
@@ -82,6 +87,28 @@ export class McpService extends EventEmitter<{ change: [] }> {
     this.options.db.delete(mcpServer).where(eq(mcpServer.id, id)).run();
     this.options.secrets.delete(secretRef(id));
     this.emit('change');
+  }
+
+  /** The server an integration was installed as, if it was. */
+  forIntegration(integration: string): McpServerStatus | null {
+    const row = this.rows().find((r) => r.integration === integration);
+    return row ? this.status(row) : null;
+  }
+
+  /**
+   * Changes the command an integration's server runs: a new pinned version, or the same one moved
+   * into or out of Docker. It restarts with it the next time it's used.
+   */
+  async repin(
+    id: string,
+    command: { command: string; args: string[]; docker: boolean },
+  ): Promise<McpServerStatus> {
+    const current = this.require(id);
+    const next: Row = { ...current, ...command };
+    this.options.db.update(mcpServer).set(next).where(eq(mcpServer.id, id)).run();
+    await this.options.manager.disconnect(id);
+    this.emit('change');
+    return this.status(next);
   }
 
   /** Starts a server, or asks a running one again, for its tools. */
@@ -133,6 +160,8 @@ export class McpService extends EventEmitter<{ change: [] }> {
       url: row.url,
       secretNames: row.secretNames,
       clanks: row.clanks,
+      integration: row.integration,
+      docker: row.docker,
       state: state.state,
       error: state.error,
       tools: state.tools.map(({ name, fullName, description }) => ({

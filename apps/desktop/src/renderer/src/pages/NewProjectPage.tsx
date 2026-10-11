@@ -42,6 +42,8 @@ export function NewProjectPage() {
   const [repo, setRepo] = useState<GitHubRepo | null>(null);
   const [into, setInto] = useState<string | null>(null);
   const [members, setMembers] = useState<Set<string>>(new Set(DEFAULT_PROJECT_CREW));
+  // Crews installed from a marketplace: a set of clanks for a kind of project.
+  const crews = useQuery(trpc.marketplace.crews.queryOptions()).data ?? [];
   const [model, setModel] = useState<ModelChoice | null>(null);
   const [perClank, setPerClank] = useState(false);
   const [models, setModels] = useState<Record<string, ModelChoice>>({});
@@ -233,6 +235,22 @@ export function NewProjectPage() {
       </Step>
 
       <Step number={3} title="Pick the crew">
+        {crews.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] text-dim">Start from a crew:</span>
+            {crews.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => setMembers(new Set(preset.clanks))}
+                title={`${preset.clanks.length} clanks${preset.integrations.length ? `, expecting ${preset.integrations.join(', ')}` : ''}`}
+                className="rounded-full border border-line px-3 py-1 text-[13px] text-dim transition-colors hover:border-accent/50 hover:text-white"
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        )}
         <ul className="grid grid-cols-2 gap-2">
           {crew.map((clank) => {
             const lead = clank.id === LEAD_CLANK;

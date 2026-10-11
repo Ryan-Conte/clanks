@@ -7,10 +7,11 @@ import type { Plugin } from 'vite';
 
 const migrations = join(import.meta.dirname, '../../packages/orchestrator/drizzle');
 const crew = join(import.meta.dirname, '../../crew');
+const integrations = join(import.meta.dirname, '../../integrations');
 
 /**
- * Ships the orchestrator's SQL migrations and the crew's priming docs next to the main bundle,
- * where the orchestrator reads them.
+ * Ships the orchestrator's SQL migrations, the crew's priming docs and the first-party
+ * integrations next to the main bundle, where the orchestrator reads them.
  */
 function copyResources(): Plugin {
   return {
@@ -19,6 +20,7 @@ function copyResources(): Plugin {
       if (!options.dir) return;
       cpSync(migrations, join(options.dir, 'migrations'), { recursive: true });
       cpSync(crew, join(options.dir, 'crew'), { recursive: true });
+      cpSync(integrations, join(options.dir, 'integrations'), { recursive: true });
     },
   };
 }

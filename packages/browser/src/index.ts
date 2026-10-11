@@ -3,6 +3,7 @@ export * from './driver';
 export * from './errors';
 export * from './host';
 export * from './keys';
+export * from './look';
 export * from './search';
 export * from './sites';
 export * from './snapshot';

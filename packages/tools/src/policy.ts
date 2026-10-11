@@ -3,6 +3,7 @@ import {
   type ClankFrontmatter,
   type ToolOverrides,
   type ToolPolicyLevel,
+  isReadOnlyTool,
 } from '@clanks/core';
 
 type DocPolicy = ClankFrontmatter['tools'];
@@ -32,15 +33,20 @@ export interface PolicyDecision {
 
 /**
  * A clank's policy for one tool: the user's, if they set one, over the doc's. An MCP server's
- * tools start at ask for the clanks it's attached to, since they can do anything.
+ * tools start at ask for the clanks it's attached to, since they can do anything. A clank from a
+ * marketplace is `capped`: whatever its doc allows, nothing above read starts higher than ask, so
+ * a package can't give itself permissions. The user can still raise them.
  */
 export function policyFor(options: {
   doc: DocPolicy;
   overrides: ToolOverrides;
   name: string;
   mcp?: boolean;
+  capped?: boolean;
 }): PolicyDecision {
-  const defaultLevel = options.mcp ? 'ask' : docLevel(options.doc, options.name);
+  const fromDoc = options.mcp ? 'ask' : docLevel(options.doc, options.name);
+  const defaultLevel =
+    options.capped && fromDoc === 'allow' && !isReadOnlyTool(options.name) ? 'ask' : fromDoc;
   const override = options.overrides[options.name];
   return {
     level: override ?? defaultLevel,

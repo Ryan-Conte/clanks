@@ -1,9 +1,13 @@
+import { PathError, resolveInside, toRelative } from '@clanks/workspace';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, extname } from 'node:path';
 import { z } from 'zod';
 import { redactUrl } from './redact';
 import { LOW_RISK, pageActionRisk, urlRisk } from './risk';
 import {
   type BrowserAccess,
   type BrowserResult,
+  type ListedImage,
   type ToolContext,
   ToolFailure,
   type ToolResult,
@@ -11,6 +15,22 @@ import {
   defineTool,
   short,
 } from './spec';
+import { USER_AGENT, readCapped } from './web';
+
+/** Where a design's pictures live in a project: the design package's `ASSETS_DIR`. */
+const ASSETS_DIR = 'design/assets';
+/** The pictures a design can show, by media type. */
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/avif': '.avif',
+  'image/svg+xml': '.svg',
+};
+/** Bigger than this isn't a picture for a design. */
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+const IMAGE_TIMEOUT_MS = 20_000;
 
 function browserOf(ctx: ToolContext): BrowserAccess {
   if (!ctx.browser) throw new ToolFailure("There's no browser in this chat.");
@@ -190,6 +210,188 @@ export const browserScreenshot = defineTool({
   },
 });
 
+export const browserStyles = defineTool({
+  name: 'browser_styles',
+  description:
+    "Reads how the current page looks, as the browser drew it: its fonts and where each is used, its colours as hex, how its buttons and cards are shaped, and its logo and pictures, numbered. Use it to match a site's design language; browser_read gives only the words.",
+  schema: z.object({}),
+  needs: ['browser'],
+  mutates: false,
+  label: () => "Reading the page's look",
+  approval: () => ({
+    kind: 'tool',
+    subject: "Read the page's fonts, colours and pictures",
+    pattern: '*',
+  }),
+  risk: () => LOW_RISK,
+  run: async (_args, ctx) => result(await browserOf(ctx).styles()),
+});
+
+/** What a picture's bytes are, whatever its address or its server says. */
+function sniffImage(data: Uint8Array): string | null {
+  const head = Buffer.from(data.subarray(0, 512));
+  if (head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+    return 'image/png';
+  if (head[0] === 0xff && head[1] === 0xd8) return 'image/jpeg';
+  const start = head.toString('latin1');
+  if (start.startsWith('GIF8')) return 'image/gif';
+  if (start.startsWith('RIFF') && start.slice(8, 12) === 'WEBP') return 'image/webp';
+  if (start.slice(4, 12) === 'ftypavif') return 'image/avif';
+  if (/^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!doctype svg[^>]*>\s*)?<svg[\s>]/i.test(start))
+    return 'image/svg+xml';
+  return null;
+}
+
+/**
+ * An SVG with what could run taken out. A design draws it as an image, where nothing in it runs,
+ * but the file is in the project, where a page might use it some other way.
+ */
+export function inertSvg(svg: string): string {
+  return svg
+    .replace(/<script[\s\S]*?(<\/script\s*>|$)/gi, '')
+    .replace(/<foreignObject[\s\S]*?(<\/foreignObject\s*>|$)/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/((?:xlink:)?href\s*=\s*["'])\s*javascript:[^"']*/gi, '$1#');
+}
+
+/** A listed picture's bytes and what kind of picture they are. */
+async function pictureOf(
+  image: ListedImage,
+  ctx: ToolContext,
+): Promise<{ data: Buffer; type: string }> {
+  let data: Buffer;
+  // What its address or its server calls it, which the bytes may contradict.
+  let said: string;
+  if (image.svg) {
+    data = Buffer.from(image.svg, 'utf8');
+    said = 'image/svg+xml';
+  } else if (image.url?.startsWith('data:')) {
+    const comma = image.url.indexOf(',');
+    const meta = image.url.slice(5, Math.max(5, comma));
+    const payload = image.url.slice(comma + 1);
+    said = meta.split(';')[0]!.toLowerCase();
+    try {
+      data = /;base64$/i.test(meta)
+        ? Buffer.from(payload, 'base64')
+        : Buffer.from(decodeURIComponent(payload), 'utf8');
+    } catch {
+      throw new ToolFailure("The picture is embedded in the page in a way that can't be read.");
+    }
+  } else if (image.url && /^https?:\/\//i.test(image.url)) {
+    let response: Response;
+    try {
+      response = await ctx.web.fetch(image.url, {
+        headers: { 'User-Agent': USER_AGENT, Accept: 'image/*,*/*;q=0.5' },
+        redirect: 'follow',
+        signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(IMAGE_TIMEOUT_MS)]),
+      });
+    } catch (error) {
+      const cause = (error as Error & { cause?: Error }).cause;
+      throw new ToolFailure(
+        `Couldn't fetch ${image.url}: ${cause?.message ?? (error as Error).message}`,
+      );
+    }
+    if (!response.ok) {
+      throw new ToolFailure(`${image.url} answered ${response.status}, so nothing was saved.`);
+    }
+    const read = await readCapped(response, MAX_IMAGE_BYTES + 1);
+    data = read.body;
+    said = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+  } else {
+    throw new ToolFailure(
+      "That isn't a picture's address. Give a number from browser_styles' list, or an address starting with https://.",
+    );
+  }
+  if (data.length > MAX_IMAGE_BYTES) {
+    throw new ToolFailure('The picture is bigger than 12 MB, too big for a design.');
+  }
+  const type = sniffImage(data) ?? (said in IMAGE_EXTENSIONS ? said : null);
+  if (!type) {
+    throw new ToolFailure(
+      `That isn't a picture a design can show${said ? ` (it's ${said})` : ''}. Designs take PNG, JPEG, GIF, WebP, AVIF and SVG.`,
+    );
+  }
+  return type === 'image/svg+xml'
+    ? { data: Buffer.from(inertSvg(data.toString('utf8')), 'utf8'), type }
+    : { data, type };
+}
+
+const DEFAULT_NAMES: Record<string, string> = { logo: 'logo', icon: 'icon', card: 'social-card' };
+
+/** Models write a picture's number as 2, "2" or "[2]". */
+function listNumber(image: number | string): number | null {
+  if (typeof image === 'number') return image;
+  return /^\s*\[?\s*\d+\s*\]?\s*$/.test(image) ? Number(image.replace(/\D/g, '')) : null;
+}
+
+export const browserSaveImage = defineTool({
+  name: 'browser_save_image',
+  description:
+    "Saves a picture from the current page into the project's `design/assets` folder, so a design can show it: the logo, icon or a product picture of the site you are designing for. Give its number from browser_styles' list.",
+  schema: z.object({
+    image: z
+      .union([z.number().int().min(1), z.string().trim().min(1).max(4000)])
+      .describe("Its number in browser_styles' list, such as 1, or the picture's address"),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(60)
+      .optional()
+      .describe('What to call the file, without an extension, such as logo'),
+  }),
+  needs: ['browser', 'workspace'],
+  mutates: true,
+  label: (args) =>
+    `Saving ${args.name ? `\`${short(args.name, 30)}\`` : 'a picture'} from the page`,
+  approval: () => ({
+    kind: 'tool',
+    subject: "Save a picture from the page into the project's design/assets",
+    pattern: '*',
+  }),
+  risk: (args) =>
+    typeof args.image === 'string' && listNumber(args.image) === null
+      ? urlRisk(args.image)
+      : LOW_RISK,
+  async run(args, ctx) {
+    const ws = ctx.workspace;
+    if (!ws) throw new ToolFailure('This chat has no workspace, so there is nowhere to save it.');
+    const number = listNumber(args.image);
+    const listed: ListedImage =
+      number !== null
+        ? await browserOf(ctx).listed(number)
+        : { kind: 'image', note: '', url: String(args.image), svg: null };
+    const { data, type } = await pictureOf(listed, ctx);
+    const extension = IMAGE_EXTENSIONS[type]!;
+    const given = args.name ? args.name.slice(0, args.name.length - extname(args.name).length) : '';
+    const base =
+      (given || DEFAULT_NAMES[listed.kind] || 'image')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'image';
+    let full: string;
+    let path = `${ASSETS_DIR}/${base}${extension}`;
+    try {
+      full = resolveInside(ws.root, ws.cwd, path);
+      for (let i = 2; existsSync(full); i++) {
+        path = `${ASSETS_DIR}/${base}-${i}${extension}`;
+        full = resolveInside(ws.root, ws.cwd, path);
+      }
+    } catch (error) {
+      if (error instanceof PathError) throw new ToolFailure(error.message);
+      throw error;
+    }
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, data);
+    const rel = toRelative(ws.cwd, full).replace(/\\/g, '/');
+    const size =
+      data.length < 1024 ? `${data.length} bytes` : `${Math.round(data.length / 1024)} kB`;
+    return {
+      content: `Saved the ${listed.kind}${listed.note ? ` ${listed.note}` : ''} as \`${rel}\` (${size}). A design shows it with \`<Image src="${rel}" alt="…" />\`.`,
+    };
+  },
+});
+
 export const browserConsole = defineTool({
   name: 'browser_console',
   description:
@@ -237,6 +439,8 @@ export const BROWSER_TOOLS = [
   browserPress,
   browserScroll,
   browserScreenshot,
+  browserStyles,
+  browserSaveImage,
   browserConsole,
   browserBack,
   browserClose,

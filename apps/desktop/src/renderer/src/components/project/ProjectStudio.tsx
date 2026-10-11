@@ -36,6 +36,20 @@ export function ProjectStudio({
     setSeenRun(run);
     setPicked(run);
   }
+  // A project has no design of its own until its first design ticket is approved. Until then the
+  // one a ticket is making is what there is to see, so Studio opens on it, once, not on nothing.
+  const own = useQuery(
+    trpc.design.snapshot.queryOptions(
+      { source: { projectId: project.id } },
+      { enabled: run === null && picked === null },
+    ),
+  );
+  const [offered, setOffered] = useState(false);
+  const making = runs.data?.find((r) => r.ticketKey !== null && r.role === 'maker');
+  if (!offered && run === null && picked === null && own.data?.design === null && making) {
+    setOffered(true);
+    setPicked(making.conversationId);
+  }
   const current = runs.data?.find((r) => r.conversationId === picked) ?? null;
   const status = useQuery(
     trpc.design.status.queryOptions(project.id, {

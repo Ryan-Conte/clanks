@@ -1,5 +1,6 @@
 import {
   type ApprovalDecision,
+  type ChatEvent,
   type ChatImage,
   type ChatLiveEvent,
   type ChatMessage,
@@ -21,6 +22,7 @@ import {
   isTicketRole,
   textOf,
 } from '@clanks/core';
+import type { GuideEntry } from '@clanks/integrations';
 import { BUILTIN_PROVIDER, ProviderError, type ProviderRegistry } from '@clanks/providers';
 import {
   type CrewAccess,
@@ -152,12 +154,58 @@ const DEFAULT_CLOUD_CONTEXT = 128_000;
 const DEFAULT_SERVER_CONTEXT = 32_768;
 /** One reply makes at most this many rounds of tool calls before it stops to check in. */
 const MAX_ROUNDS = 40;
+/**
+ * A run on a ticket has nobody there to say "go on", and a design or a build takes more rounds
+ * than a chat. Its budget, and the checks for a clank going in circles, are what bound it.
+ */
+const MAX_TICKET_ROUNDS = 120;
+/** This many rounds before its last, a ticket's run is told to finish up and hand in. */
+const WRAP_UP_ROUNDS = 8;
+/** A reply stops when this many tool calls in a row don't fit their tools. */
+const MAX_MALFORMED = 3;
+/**
+ * The most of the window a conversation takes before it's cut down. The rest is the reply's:
+ * thinking, and then a call that may hold a whole file.
+ */
+const CONVERSATION_SHARE = 0.7;
+/** After a call is cut off for want of room, the conversation gives up this much more. */
+const SQUEEZE = 0.15;
+/** How often a round is asked for again when the model's server couldn't read its tool call. */
+const MAX_UNREADABLE = 2;
+/** What a model's server says when the tool call the model wrote isn't valid. */
+const UNREADABLE_CALL = /parse tool call/i;
+/** What a model's server says when the conversation is bigger than the model can hold. */
+const TOO_BIG =
+  /exceeds? the (available )?context|context (length|window|size)|too many tokens|prompt is too long/i;
+/**
+ * Tokens are estimated from characters, which comes out low for markup and code. Each reply says
+ * how many its conversation really was, and the estimate is scaled by that, at most this much.
+ */
+const MAX_DRIFT = 2.5;
 /** Earlier replies' tool results are cut to this in the history, to save room. */
 const OLD_RESULT_CHARS = 3000;
 /** Roughly what a picture costs a model that sees it, in tokens. */
 const IMAGE_TOKENS = 1000;
 /** A run that stops with a plain reply is reminded this often to end with a finishing call. */
 const MAX_NUDGES = 2;
+/**
+ * Tools that find something out, where the same call with the same answer teaches nothing new.
+ * Polling a command's output or clicking the same button again are left alone: those repeat on
+ * purpose.
+ */
+const REPEATABLE =
+  /^(shell_exec|fs_(read|list|search)|git_(status|diff|log)|web_(fetch|search)|spec_read|context_search|memory_search|design_(read|lint)|artifact_read)$/;
+/** The same call with the same result this many times in a row gets a note saying so. */
+const REPEATS_NOTED = 3;
+/** From this many on it isn't run again, and the clank is told to do something else. */
+const REPEATS_REFUSED = 5;
+/**
+ * A reply whose last few calls were all refused as repeats, with nothing else done in between, is
+ * stopped. One that is refused a call and gets on with something else is left to.
+ */
+const REFUSALS_STOPPED = 3;
+/** How often a reply's own words are checked for going round in circles, in characters. */
+const CIRCLING_CHECK_CHARS = 600;
 /** How long one clank waits for another's answer to a quick question. */
 const CONSULT_TIMEOUT_MS = 10 * 60_000;
 /** The most of an answer that goes back to the clank that asked, in characters. */
@@ -174,6 +222,8 @@ export class ChatService extends EventEmitter<{
   list: [];
 }> {
   private readonly runs = new Map<string, Run>();
+  /** How far under each conversation's real size its token estimate has come out, at least 1. */
+  private readonly drift = new Map<string, number>();
   /** What the app wrote to a run while it was replying, waiting its turn. */
   private readonly queued = new Map<string, string[]>();
   private readonly store: ChatStore;
@@ -712,6 +762,7 @@ export class ChatService extends EventEmitter<{
       role: scope?.run?.role ?? conversation?.role ?? null,
       crew: true,
       artifacts: this.options.artifacts !== undefined,
+      projectId: scope?.project.id ?? null,
     });
     return this.prompt(
       clank.id,
@@ -728,6 +779,7 @@ export class ChatService extends EventEmitter<{
       window,
       this.designLayer(clank, run?.cwd ?? conversation?.folder ?? null, scope, window),
       conversation?.role ?? null,
+      choice && !this.callsTools(choice) ? [] : toolset.services,
     );
   }
 
@@ -780,6 +832,11 @@ export class ChatService extends EventEmitter<{
   /** The model a clank runs on: the project's pick for it, its own, or the crew's. */
   modelFor(clankId: string, projectId: string | null = null): ModelChoice {
     const clank = this.options.crew.get(clankId);
+    if (clank.revoked) {
+      throw new ChatError(
+        `${clank.name} can't work: ${clank.revoked.charAt(0).toLowerCase()}${clank.revoked.slice(1)} Uninstall it from the Marketplace page, or copy its doc into a clank of your own.`,
+      );
+    }
     const own =
       (projectId ? this.options.board?.modelFor(projectId, clank.id) : null) ??
       clank.overrides.model;
@@ -942,11 +999,12 @@ export class ChatService extends EventEmitter<{
         role,
         crew: true,
         artifacts: this.options.artifacts !== undefined,
+        projectId: scope?.project.id ?? null,
       });
       const callsTools = this.callsTools(choice);
       const offered: Toolset = callsTools
         ? toolset
-        : { specs: new Map(), levels: new Map(), definitions: [], problems: [] };
+        : { specs: new Map(), levels: new Map(), definitions: [], problems: [], services: [] };
       const sandbox = scope?.project.sandbox;
       const shellName =
         offered.specs.has('shell_exec') || offered.specs.has('shell_start')
@@ -973,19 +1031,35 @@ export class ChatService extends EventEmitter<{
         window,
         this.designLayer(clank, workspace?.cwd ?? null, scope, window),
         conversation.role,
+        offered.services,
       );
       const toolTokens = estimateTokens(JSON.stringify(offered.definitions));
       const maxChars = Math.max(4000, Math.min(40_000, Math.floor(window * 4 * 0.12)));
+      let drift = this.drift.get(conversation.id) ?? 1;
+      let share = CONVERSATION_SHARE;
       const turns = fitHistory(
         toTurns(history),
-        window * HISTORY_SHARE - prompt.tokens - toolTokens,
+        (window * HISTORY_SHARE) / drift - prompt.tokens - toolTokens,
       );
       const messages: ChatMessage[] = [{ role: 'system', content: prompt.system }, ...turns];
       const local = choice.provider === BUILTIN_PROVIDER;
       // A run on a ticket must end by handing it on, not with a plain reply.
       const mustFinish = isTicketRole(role) && callsTools;
+      const maxRounds = mustFinish ? MAX_TICKET_ROUNDS : MAX_ROUNDS;
+      const offeredNames = new Set(offered.definitions.map((d) => d.name));
       let malformed = 0;
       let nudges = 0;
+      // A chat reply that runs out of room with nothing said is asked once to answer.
+      let askedToAnswer = false;
+      // The finding-out calls made in this reply, for noticing one made over and over.
+      const repeats = new Map<
+        string,
+        { result: string; count: number; changes: number; callId: string }
+      >();
+      // How often the files changed in this reply: a call made again after a change isn't a repeat.
+      let changes = 0;
+      // Calls refused as repeats since one last ran.
+      let refusals = 0;
       const totals = {
         prompt: 0,
         completion: 0,
@@ -1014,26 +1088,58 @@ export class ChatService extends EventEmitter<{
           message.finishReason = 'stop';
           break;
         }
-        compactTurns(messages, window * 0.85 - toolTokens);
-        const used = toolTokens + messages.reduce((sum, m) => sum + tokensOf(m), 0);
+        compactTurns(messages, (window * share) / drift - toolTokens);
+        const estimated = toolTokens + messages.reduce((sum, m) => sum + tokensOf(m), 0);
+        const used = Math.round(estimated * drift);
         const started = this.now();
         const calls: ToolCall[] = [];
         let text = '';
         let finish: FinishReason = 'stop';
         let usage: ChatUsage | null = null;
-        const events = this.options.providers.stream(
-          choice.provider,
-          {
-            model: choice.model,
-            messages,
-            ...(offered.definitions.length > 0 ? { tools: offered.definitions } : {}),
-            temperature: clank.frontmatter.model.temperature,
-            // A local model's reply shares its slot with the prompt, so it gets what's left.
-            ...(local
-              ? { maxTokens: Math.max(512, Math.min(LOCAL_MAX_REPLY, Math.floor(window - used))) }
-              : {}),
-          },
+        // A model that starts repeating itself is cut off, rather than left to fill its reply.
+        const circling = new AbortController();
+        let spoken = '';
+        let checkedAt = 0;
+        const request = {
+          model: choice.model,
+          messages,
+          ...(offered.definitions.length > 0 ? { tools: offered.definitions } : {}),
+          temperature: clank.frontmatter.model.temperature,
+          // A local model's reply shares its slot with the prompt, so it gets what's left.
+          ...(local
+            ? { maxTokens: Math.max(512, Math.min(LOCAL_MAX_REPLY, Math.floor(window - used))) }
+            : {}),
+        };
+        const events = askingAgain(
+          () =>
+            this.options.providers.stream(
+              choice.provider,
+              request,
+              AbortSignal.any([signal, circling.signal]),
+            ),
           signal,
+          (error) => {
+            if (!TOO_BIG.test(error.message)) {
+              this.addPart(conversation.id, message, {
+                type: 'note',
+                round,
+                text: `${choice.model} wrote a tool call that couldn't be read, so it was asked again.`,
+              });
+              return;
+            }
+            // The estimate was too low. The server may say by how much; either way, cut deeper.
+            const said = /\((\d+) tokens\) exceeds the available context size/.exec(error.message);
+            const now = toolTokens + messages.reduce((sum, m) => sum + tokensOf(m), 0);
+            const real = said ? (Number(said[1]) / now) * 1.05 : 0;
+            drift = Math.min(MAX_DRIFT, Math.max(drift * 1.25, real));
+            this.drift.set(conversation.id, drift);
+            compactTurns(messages, (window * 0.8) / drift - toolTokens);
+            this.addPart(conversation.id, message, {
+              type: 'note',
+              round,
+              text: `The conversation had grown past what ${choice.model} can hold, so its oldest steps were cut down.`,
+            });
+          },
         );
         for await (const event of events) {
           switch (event.type) {
@@ -1046,6 +1152,11 @@ export class ChatService extends EventEmitter<{
                 appendText(message, round, delta);
               }
               message.reasoning += reasoning;
+              spoken += delta + reasoning;
+              if (spoken.length - checkedAt >= CIRCLING_CHECK_CHARS) {
+                checkedAt = spoken.length;
+                if (isCircling(spoken)) circling.abort();
+              }
               this.emit('live', conversation.id, {
                 type: 'delta',
                 messageId: message.id,
@@ -1066,6 +1177,34 @@ export class ChatService extends EventEmitter<{
               finish = event.finishReason;
               break;
           }
+        }
+        if (circling.signal.aborted && !signal.aborted) {
+          // Cut off for going round in circles: the same as running out of room, only sooner.
+          finish = 'length';
+          calls.length = 0;
+        }
+        // A call the model wrote out as words was meant as a call: make it, and keep the words out
+        // of the reply.
+        const written = calls.length === 0 ? writtenCall(text, offeredNames) : null;
+        if (written) {
+          calls.push({
+            id: `call_${randomUUID()}`,
+            name: written.name,
+            arguments: written.arguments,
+          });
+          text = written.before;
+          const at = message.parts.findLastIndex((p) => p.type === 'text' && p.round === round);
+          const said = at === -1 ? undefined : message.parts[at];
+          if (said?.type === 'text' && written.before) said.text = written.before;
+          else if (at !== -1) message.parts.splice(at, 1);
+          this.emit('live', conversation.id, {
+            type: 'message',
+            message: structuredClone(message),
+          });
+        }
+        if (usage && estimated > 0 && usage.promptTokens / estimated > drift) {
+          drift = Math.min(MAX_DRIFT, usage.promptTokens / estimated);
+          this.drift.set(conversation.id, drift);
         }
         if (usage) {
           totals.prompt += usage.promptTokens;
@@ -1108,11 +1247,11 @@ export class ChatService extends EventEmitter<{
           break;
         }
         if (calls.length === 0) {
+          const outOfRoom = finish === 'length';
           // A run that stops talking, or runs out of room thinking, is asked to decide. Its
           // thinking isn't sent back, so a model going round in circles starts afresh.
           if (mustFinish && nudges < MAX_NUDGES) {
             nudges++;
-            const outOfRoom = finish === 'length';
             messages.push(
               { role: 'assistant', content: text.trim() || '…' },
               { role: 'user', content: nudgeText(role, outOfRoom) },
@@ -1126,13 +1265,44 @@ export class ChatService extends EventEmitter<{
             });
             continue;
           }
+          // In a chat, that would leave the user with tool calls and no answer.
+          if (!mustFinish && outOfRoom && !text.trim() && !askedToAnswer) {
+            askedToAnswer = true;
+            messages.push(
+              { role: 'assistant', content: '…' },
+              { role: 'user', content: answerNowText(this.userName()) },
+            );
+            this.addPart(conversation.id, message, {
+              type: 'note',
+              round,
+              text: `${clank.name} ran out of room before answering, so it was asked to answer now.`,
+            });
+            continue;
+          }
           message.finishReason = finish;
           message.status = 'done';
           break;
         }
 
-        messages.push({ role: 'assistant', content: text, toolCalls: calls });
+        messages.push({ role: 'assistant', content: text, toolCalls: calls.map(sendable) });
+        let stuck = false;
         for (const call of calls) {
+          const signature = `${call.name}\n${call.arguments.trim()}`;
+          const before = REPEATABLE.test(call.name) ? repeats.get(signature) : undefined;
+          // The same question, the same answer, and nothing changed in between: asking again
+          // only fills the conversation.
+          // Only while its last answer is still there whole: one cut down to make room says to
+          // call again for it, and asking then is no repeat.
+          const intact =
+            before !== undefined &&
+            messages.some(
+              (m) =>
+                m.role === 'tool' &&
+                m.toolCallId === before.callId &&
+                m.content.startsWith(before.result),
+            );
+          const repeated = before && intact && before.changes === changes ? before.count : 0;
+          const live = !signal.aborted && !run.finished;
           const outcome = signal.aborted
             ? this.skipCall(conversation, message, call, round)
             : run.finished
@@ -1143,19 +1313,56 @@ export class ChatService extends EventEmitter<{
                   round,
                   "The ticket was already handed on, so this didn't run.",
                 )
-              : await this.callTool({
-                  conversation,
-                  message,
-                  run,
-                  call,
+              : repeated >= REPEATS_REFUSED - 1
+                ? this.skipCall(conversation, message, call, round, repeatRefusal(repeated))
+                : await this.callTool({
+                    conversation,
+                    message,
+                    run,
+                    call,
+                    round,
+                    toolset: offered,
+                    workspace,
+                    clank,
+                    maxChars,
+                    scope,
+                    cutOff: finish === 'length',
+                  });
+          // A slip now and then is put right by the model; a run of them means it can't.
+          malformed = outcome.malformed ? malformed + 1 : 0;
+          // A call cut off for want of room gets more of it next time.
+          if (outcome.malformed && finish === 'length') share = Math.max(0.4, share - SQUEEZE);
+          if (live && before && repeated >= REPEATS_REFUSED - 1) {
+            before.count++;
+            stuck ||= ++refusals >= REFUSALS_STOPPED;
+          } else if (live) {
+            refusals = 0;
+            const made = message.parts.find(
+              (p): p is ToolPart => p.type === 'tool' && p.id === outcome.id,
+            );
+            const changed = Boolean(made?.checkpointId);
+            if (changed) changes++;
+            if (REPEATABLE.test(call.name)) {
+              const count =
+                !changed && before && repeated > 0 && before.result === outcome.result
+                  ? repeated + 1
+                  : 1;
+              repeats.set(signature, {
+                result: outcome.result,
+                count,
+                changes,
+                callId: outcome.id,
+              });
+              if (count === REPEATS_NOTED) {
+                outcome.result += `\n\n${REPEAT_NOTE}`;
+                this.addPart(conversation.id, message, {
+                  type: 'note',
                   round,
-                  toolset: offered,
-                  workspace,
-                  clank,
-                  maxChars,
-                  scope,
+                  text: `${clank.name} made the same call ${REPEATS_NOTED} times with the same result, so it was told to try something else.`,
                 });
-          if (outcome.malformed) malformed++;
+              }
+            }
+          }
           if (outcome.image && vision) {
             // Only the newest picture stays: each one costs as much as a page of text.
             for (const earlier of messages) {
@@ -1180,9 +1387,19 @@ export class ChatService extends EventEmitter<{
           message.finishReason = 'stop';
           break;
         }
-        if (malformed >= 2) {
+        if (stuck) {
+          this.addPart(conversation.id, message, {
+            type: 'note',
+            round,
+            text: `Stopped: ${clank.name} kept asking for the same call, which gives the same result every time.`,
+          });
+          message.status = 'done';
+          message.finishReason = 'length';
+          break;
+        }
+        if (malformed >= MAX_MALFORMED) {
           throw new ChatError(
-            `${choice.model} wrote tool calls that don't fit their tools twice, so the reply stopped. A bigger model, or one made for tool use, may do better.`,
+            `${choice.model} wrote ${MAX_MALFORMED} tool calls in a row that don't fit their tools, so the reply stopped. A bigger model, or one made for tool use, may do better.`,
           );
         }
         // Notes the user left in the diff editor meanwhile go to the clank before it goes on.
@@ -1198,15 +1415,29 @@ export class ChatService extends EventEmitter<{
           message.finishReason = 'cancelled';
           break;
         }
-        if (round + 1 >= MAX_ROUNDS) {
+        if (round + 1 >= maxRounds) {
           this.addPart(conversation.id, message, {
             type: 'note',
             round,
-            text: `Stopped after ${MAX_ROUNDS} rounds of tool calls. Say "go on" to let ${clank.name} continue.`,
+            text: mustFinish
+              ? `Stopped after ${maxRounds} rounds of tool calls. Carry on to let ${clank.name} continue.`
+              : `Stopped after ${maxRounds} rounds of tool calls. Say "go on" to let ${clank.name} continue.`,
           });
+          // On a ticket that's a pause, not a failure: the work so far is all there.
+          if (mustFinish) {
+            run.stopped = `${clank.name} made ${maxRounds} rounds of tool calls without handing in`;
+          }
           message.status = 'done';
           message.finishReason = 'length';
           break;
+        }
+        if (mustFinish && round + 1 === maxRounds - WRAP_UP_ROUNDS) {
+          messages.push({ role: 'user', content: wrapUpText(role) });
+          this.addPart(conversation.id, message, {
+            type: 'note',
+            round,
+            text: `Told ${clank.name} to finish up: this run is near its limit of ${maxRounds} rounds.`,
+          });
         }
       }
     } catch (error) {
@@ -1265,6 +1496,8 @@ export class ChatService extends EventEmitter<{
     clank: { id: string; name: string };
     maxChars: number;
     scope: ChatScope | null;
+    /** The reply ran out of room, so a call that doesn't parse was cut off, not written wrong. */
+    cutOff?: boolean;
   }): Promise<{ id: string; result: string; malformed: boolean; image?: ChatImage }> {
     const { conversation, message, run, call, round, toolset, workspace } = input;
     const signal = run.controller.signal;
@@ -1348,6 +1581,13 @@ export class ChatService extends EventEmitter<{
       args = spec.parse(raw);
       part.label = spec.label(args);
     } catch (error) {
+      if (error instanceof SyntaxError && input.cutOff) {
+        return finish(
+          'failed',
+          `Your call to ${call.name} was cut off before its end: it was longer than the room left in this reply, so nothing ran. Make it smaller. For a long file, write the first part with fs_write and add the rest with fs_edit; for anything else, say less in one call.`,
+          { malformed: true },
+        );
+      }
       const detail =
         error instanceof SyntaxError
           ? `they aren't valid JSON (${error.message})`
@@ -1370,6 +1610,9 @@ export class ChatService extends EventEmitter<{
       );
     }
     if (level === 'ask') {
+      // A call that spends money, publishes or contacts people asks every time: nothing below
+      // lets one through, and it's never offered an "always allow".
+      const locked = spec.locked === true;
       // An everyday call runs without asking, unless the user wants to be asked about every one.
       const risk = spec.risk?.(args, {
         worktree: workspace?.worktree ?? null,
@@ -1377,13 +1620,13 @@ export class ChatService extends EventEmitter<{
       }) ?? { level: 'high' as const, reason: null };
       const approval = {
         ...spec.approval(args),
-        scope: workspace?.repoRoot ?? null,
+        scope: locked ? null : (workspace?.repoRoot ?? null),
         reason: risk.reason,
       };
       const rule = approval.scope
         ? this.options.tools.ruleFor(approval.scope, call.name, approval.subject)
         : undefined;
-      if (risk.level === 'low' && this.options.settings.get().approvals === 'risky') {
+      if (!locked && risk.level === 'low' && this.options.settings.get().approvals === 'risky') {
         part.decidedBy = 'risk';
       } else if (rule) {
         part.decidedBy = 'rule';
@@ -1458,7 +1701,9 @@ export class ChatService extends EventEmitter<{
           : null,
       web: this.options.tools.web(),
       browser:
-        spec.needs.includes('browser') || spec.needs.includes('search')
+        spec.needs.includes('browser') ||
+        spec.needs.includes('search') ||
+        (spec.uses?.includes('browser') && this.options.browser.available)
           ? this.options.browser.access(conversation.id, input.clank, {
               signal,
               maxChars: input.maxChars,
@@ -1655,6 +1900,7 @@ export class ChatService extends EventEmitter<{
     window?: number,
     design: string | null = null,
     role: RunRole | null = null,
+    integrations: GuideEntry[] = [],
   ): AssembledPrompt {
     const { crew } = this.options;
     const settings = this.options.settings.get();
@@ -1680,6 +1926,7 @@ export class ChatService extends EventEmitter<{
       instructions: folder ? readProjectInstructions(folder) : null,
       context: scope?.context ?? null,
       memory: scope?.memory ?? null,
+      integrations,
       design,
       ...(window ? { window } : {}),
       run: {
@@ -1780,8 +2027,229 @@ function nudgeText(role: RunRole | null, outOfRoom = false): string {
         : 'If the work is done, call `submit_output`.';
   const opening = outOfRoom
     ? "You ran out of room while thinking, before you called anything. Don't go over what you've checked again: decide from what the tool results above show, now."
-    : "You're working this ticket on your own, so nobody reads a plain reply.";
+    : "Your last message made no tool call, so nothing has been handed on yet. You're working this ticket on your own, and nobody reads a plain reply.";
   return `${opening} ${done} If you can't go on, call \`ask_user\` with your question, or \`fail\` with what went wrong. End with one of these calls.`;
+}
+
+/** What a ticket's run is told when it's near the most rounds one run makes. */
+function wrapUpText(role: RunRole | null): string {
+  const hand =
+    role === 'checker'
+      ? 'decide from what you have checked: call `review_pass`, or `ticket_bounce` with the issues'
+      : 'hand in what you have with `submit_output`, and say in its notes what is left to do';
+  return `This run has only a few rounds of tool calls left. Start nothing new: finish the step you're on, then ${hand}.`;
+}
+
+/**
+ * A provider's stream that's asked for again when asking again can help: the model's server
+ * couldn't read the tool call the model wrote, which it writes anew each time, or the conversation
+ * was too big for the model, which `again` cuts down. Only before any of the reply's words or
+ * calls have come through, so nothing is said twice.
+ */
+async function* askingAgain(
+  open: () => AsyncIterable<ChatEvent>,
+  signal: AbortSignal,
+  again: (error: ProviderError) => void,
+): AsyncGenerator<ChatEvent> {
+  for (let attempt = 0; ; attempt++) {
+    let began = false;
+    try {
+      for await (const event of open()) {
+        began ||= event.type === 'text' || event.type === 'tool_call';
+        yield event;
+      }
+      return;
+    } catch (error) {
+      const worth =
+        error instanceof ProviderError &&
+        (UNREADABLE_CALL.test(error.message) || TOO_BIG.test(error.message));
+      if (!worth || began || attempt >= MAX_UNREADABLE || signal.aborted) throw error;
+      again(error);
+    }
+  }
+}
+
+/**
+ * A tool call the model wrote out as words instead of making it. A model's own call syntax comes
+ * through as text when its server can't read it, usually over one wrong quote: Gemma writes
+ * `call:name{key:<|"|>text<|"|>}`, others `<tool_call>{"name": …, "arguments": …}`. Null unless
+ * the text ends with one whole call to a tool on offer; `before` is what came ahead of it.
+ */
+export function writtenCall(
+  text: string,
+  names: Set<string>,
+): { name: string; arguments: string; before: string } | null {
+  if (names.size === 0 || !text.includes('{')) return null;
+  const clean = text.replace(/<\|"\|>/g, '"');
+  // Only closing marks may follow the call: it's the last thing the model said.
+  const ends = (from: number) =>
+    /^(\s|<\|?\/?tool_call\|?>|<\/?tool_call>|```|<end_of_turn>)*$/.test(clean.slice(from));
+  const opening = /(?:<\|?tool_call\|?>|```(?:json)?)?\s*(?:call:)?\s*([A-Za-z][\w-]*)\s*(?=\{)/g;
+  for (const match of clean.matchAll(opening)) {
+    const name = match[1]!;
+    if (!names.has(name)) continue;
+    const parsed = relaxedValue(clean, match.index + match[0].length);
+    if (!parsed || !isRecord(parsed.value) || !ends(parsed.end)) continue;
+    return {
+      name,
+      arguments: JSON.stringify(parsed.value),
+      before: clean.slice(0, match.index).trim(),
+    };
+  }
+  const wrapped = /<tool_call>\s*(?=\{)/g;
+  for (const match of clean.matchAll(wrapped)) {
+    const parsed = relaxedValue(clean, match.index + match[0].length);
+    if (!parsed || !isRecord(parsed.value) || !ends(parsed.end)) continue;
+    const { name } = parsed.value;
+    const args = parsed.value.arguments ?? parsed.value.parameters ?? {};
+    if (typeof name !== 'string' || !names.has(name) || !isRecord(args)) continue;
+    return { name, arguments: JSON.stringify(args), before: clean.slice(0, match.index).trim() };
+  }
+  return null;
+}
+
+/**
+ * A tool call as it can go back to a model. One whose arguments aren't JSON was answered with
+ * what was wrong, but stays in the conversation, and a server that reads every call's arguments
+ * to lay the conversation out refuses all of it from then on. What the model wrote goes back as
+ * a string it can still read.
+ */
+export function sendable(call: ToolCall): ToolCall {
+  try {
+    if (isRecord(JSON.parse(call.arguments || '{}'))) return call;
+  } catch {
+    // Not JSON: sent as below.
+  }
+  return { ...call, arguments: JSON.stringify({ unreadable: call.arguments.slice(0, 4000) }) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reads one value written as JSON or nearly: keys and plain words may go without quotes, and a
+ * string may hold line breaks. Null when it isn't one.
+ */
+function relaxedValue(text: string, start: number): { value: unknown; end: number } | null {
+  let at = start;
+  const space = () => {
+    while (at < text.length && /\s/.test(text[at]!)) at++;
+  };
+  const quoted = (): string | null => {
+    const quote = text[at];
+    if (quote !== '"' && quote !== "'") return null;
+    let out = '';
+    for (at++; at < text.length; at++) {
+      const ch = text[at]!;
+      if (ch === quote) {
+        at++;
+        return out;
+      }
+      if (ch === '\\' && at + 1 < text.length) {
+        const next = text[++at]!;
+        out += next === 'n' ? '\n' : next === 't' ? '\t' : next === 'r' ? '\r' : next;
+      } else out += ch;
+    }
+    return null;
+  };
+  const word = (): string => {
+    const from = at;
+    while (at < text.length && !/[\s,:{}[\]"']/.test(text[at]!)) at++;
+    return text.slice(from, at);
+  };
+  const value = (depth: number): { ok: true; value: unknown } | null => {
+    if (depth > 20) return null;
+    space();
+    const ch = text[at];
+    if (ch === '{') {
+      at++;
+      const record: Record<string, unknown> = {};
+      for (;;) {
+        space();
+        if (text[at] === '}') {
+          at++;
+          return { ok: true, value: record };
+        }
+        const key = quoted() ?? word();
+        space();
+        if (!key || text[at] !== ':') return null;
+        at++;
+        const item = value(depth + 1);
+        if (!item) return null;
+        record[key] = item.value;
+        space();
+        if (text[at] === ',') at++;
+        else if (text[at] !== '}') return null;
+      }
+    }
+    if (ch === '[') {
+      at++;
+      const list: unknown[] = [];
+      for (;;) {
+        space();
+        if (text[at] === ']') {
+          at++;
+          return { ok: true, value: list };
+        }
+        const item = value(depth + 1);
+        if (!item) return null;
+        list.push(item.value);
+        space();
+        if (text[at] === ',') at++;
+        else if (text[at] !== ']') return null;
+      }
+    }
+    if (ch === '"' || ch === "'") {
+      const string = quoted();
+      return string === null ? null : { ok: true, value: string };
+    }
+    const bare = word();
+    if (!bare) return null;
+    if (bare === 'true' || bare === 'false') return { ok: true, value: bare === 'true' };
+    if (bare === 'null') return { ok: true, value: null };
+    return { ok: true, value: /^-?\d+(\.\d+)?$/.test(bare) ? Number(bare) : bare };
+  };
+  const read = value(0);
+  return read ? { value: read.value, end: at } : null;
+}
+
+/** What a chat reply that ran out of room before saying anything is asked. */
+function answerNowText(user: string): string {
+  return `You ran out of room while thinking, before you answered. Don't go over what you've checked again. Decide from what the tool results above show, and reply to ${user} now in a few sentences: what you found, what you couldn't find out, and what you suggest next.`;
+}
+
+/** Added to a result the same call has now given several times running. */
+const REPEAT_NOTE =
+  "[You've made this exact call several times and got this exact result each time. It won't change. Work from it: try a different approach, or if you're stuck, say what you need.]";
+
+function repeatRefusal(times: number): string {
+  return `This didn't run: you've made this exact call ${times} times and it gave the same result every time. Asking again won't change it. Do something different with what you know, or if you can't go on, say what's stopping you.`;
+}
+
+/**
+ * Whether text has started repeating itself: its last few hundred characters are one passage,
+ * 20 to 400 characters long, said over and over. A model stuck like this fills its whole reply.
+ */
+export function isCircling(text: string): boolean {
+  const tail = text.slice(-2400);
+  for (let period = 20; period <= 400; period++) {
+    // At least four times round, and at least 600 characters of it.
+    const span = Math.max(600, period * 4);
+    if (tail.length < span + period) continue;
+    const unit = tail.slice(-period);
+    // A passage of one character, such as a ruled line or blank padding, isn't a thought.
+    if (new Set(unit.replace(/\s/g, '')).size < 4) continue;
+    let same = true;
+    for (let at = tail.length - span; at < tail.length - period; at++) {
+      if (tail[at] !== tail[at + period]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return true;
+  }
+  return false;
 }
 
 function isSettled(part: ToolPart): boolean {
@@ -1860,7 +2328,7 @@ export function toTurns(history: MessageRecord[]): ChatMessage[] {
         turns.push({
           role: 'assistant',
           content: text,
-          toolCalls: calls.map((c) => ({ id: c.id, name: c.name, arguments: c.arguments })),
+          toolCalls: calls.map((c) => sendable({ id: c.id, name: c.name, arguments: c.arguments })),
         });
         for (const call of calls) {
           const result = call.result ?? 'No result: the reply ended before it ran.';
@@ -1900,8 +2368,10 @@ export function fitHistory(turns: ChatMessage[], budget: number): ChatMessage[] 
 }
 
 /**
- * Makes room in a reply that has grown near the context limit: tool results from all but the last
- * two rounds are cut to their first lines, oldest first, until it fits.
+ * Makes room in a reply that has grown near the context limit, oldest first and only as far as it
+ * takes. Tool results from all but the last two rounds are cut to their first lines; then what
+ * the clank itself wrote in those rounds' calls, such as a whole screen's markup, which is in the
+ * files by now; then the oldest rounds go altogether, after the message that started the run.
  */
 export function compactTurns(messages: ChatMessage[], budget: number): void {
   let total = messages.reduce((sum, m) => sum + tokensOf(m), 0);
@@ -1917,6 +2387,40 @@ export function compactTurns(messages: ChatMessage[], budget: number): void {
     const before = tokensOf(message);
     message.content = `${message.content.slice(0, 300)}\n\n[Cut to make room. Call the tool again if you need it.]`;
     total -= before - tokensOf(message);
+  }
+  for (const i of assistantIndexes) {
+    if (total <= budget || i >= protectFrom) break;
+    const message = messages[i] as Extract<ChatMessage, { role: 'assistant' }>;
+    if (!message.toolCalls?.some((c) => c.arguments.length > 400)) continue;
+    const before = tokensOf(message);
+    message.toolCalls = message.toolCalls.map((call) =>
+      call.arguments.length <= 400
+        ? call
+        : {
+            ...call,
+            // Still JSON, as a model's server needs every call to be.
+            arguments: JSON.stringify({
+              cut: `${call.arguments.slice(0, 200)}… [The rest was cut to make room.]`,
+            }),
+          },
+    );
+    total -= before - tokensOf(message);
+  }
+  const first = messages.findIndex((m) => m.role === 'user');
+  let dropped = 0;
+  while (total > budget && first !== -1) {
+    const rounds = messages.flatMap((m, i) => (i > first && m.role === 'assistant' ? [i] : []));
+    if (rounds.length <= 2) break;
+    const gone = messages.splice(rounds[0]!, rounds[1]! - rounds[0]!);
+    total -= gone.reduce((sum, m) => sum + tokensOf(m), 0);
+    dropped += gone.filter((m) => m.role === 'tool').length;
+  }
+  if (dropped > 0) {
+    const start = messages[first]!;
+    const note = '[Your earliest steps in this run were dropped to make room.';
+    if (!start.content.includes(note)) {
+      start.content += `\n\n${note} What they made is in the files and on the board: read again what you need.]`;
+    }
   }
 }
 

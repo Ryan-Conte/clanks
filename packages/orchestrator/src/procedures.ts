@@ -12,6 +12,8 @@ import { DesignError } from './design/service';
 import { EmailError } from './email/service';
 import { GitHubError } from './github/service';
 import { GitLabError } from './gitlab/service';
+import { IntegrationError } from './integrations/service';
+import { MarketplaceError } from './marketplace/service';
 import { McpError } from './mcp/service';
 import { ProjectError } from './projects/service';
 import { SecretsUnavailableError } from './secrets';
@@ -37,7 +39,9 @@ export function isUserError(error: unknown): error is Error {
     error instanceof GitHubError ||
     error instanceof GitLabError ||
     error instanceof ArtifactError ||
-    error instanceof EmailError
+    error instanceof EmailError ||
+    error instanceof IntegrationError ||
+    error instanceof MarketplaceError
   );
 }
 

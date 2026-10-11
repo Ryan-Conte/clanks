@@ -181,6 +181,11 @@ export interface ClankSummary {
   doc: 'bundled' | 'edited';
   /** The user made it, so it has no doc shipped with the app to go back to. */
   custom: boolean;
+  /**
+   * It was installed from a marketplace. Whatever its doc says, nothing above read starts higher
+   * than ask.
+   */
+  marketplace: boolean;
   /** The edited copy doesn't parse, so the bundled doc is used until it's fixed. */
   docError: string | null;
   /** Context the doc asks for, in tokens. */

@@ -4,11 +4,13 @@ import type {
   CdpSession,
   DownloadRequest,
   HostTab,
+  PageLook,
   Rect,
   SessionKey,
   TabEvents,
   TabState,
 } from '@clanks/browser';
+import { BROKEN_IMAGES, PAGE_LOOK } from '@clanks/browser';
 import { randomUUID } from 'node:crypto';
 
 /** A page the fake browser can show. */
@@ -19,6 +21,10 @@ export interface FakePage {
   elements?: { role: 'link' | 'button' | 'textbox'; name: string; href?: string; type?: string }[];
   /** What the search results script finds on it. */
   results?: { title: string; url: string; snippet: string }[];
+  /** What the script that reads a page's look finds on it. */
+  look?: PageLook;
+  /** The pictures on it that don't load. */
+  broken?: { alt: string; src: string }[];
 }
 
 export interface FakeTab extends HostTab {
@@ -120,6 +126,8 @@ export function fakeBrowserHost(pages: Record<string, FakePage>) {
             return reply({ nodes: tree(page()) });
           case 'Runtime.evaluate': {
             const expression = params.expression as string;
+            if (expression === PAGE_LOOK) return value(page().look ?? null);
+            if (expression === BROKEN_IMAGES) return value(page().broken ?? []);
             if (expression.includes("querySelectorAll('.result')"))
               return value(page().results ?? []);
             const position = { top: 0, viewport: 600, height: 600 };

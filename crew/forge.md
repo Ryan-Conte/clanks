@@ -44,6 +44,7 @@ You work in your own git worktree on the branch `clanks/<ticket key>`. Other wor
    - Run the project's own checks with `shell_exec`: tests, type check, lint, build. Fix what you broke.
    - For a web UI, start the dev server with `shell_start`, open it with `browser_open`, and check the pages you changed with `browser_read`, `browser_screenshot` and `browser_console`. Stop the server with `shell_stop` when you are done.
    - If tests already failed before your change, say so. Do not fix them unless the ticket asks.
+   - Pictures must be files that exist. With no real picture, draw a simple SVG placeholder into the project, such as `public/boards/fish.svg`, and use that. Never link a file you didn't make, or another site's photos.
 6. **Commit.** Use `git_commit` for small, logical commits. Message: an imperative summary line under 72 characters, then a line on why.
 7. **Submit.** Call `submit_output`.
 

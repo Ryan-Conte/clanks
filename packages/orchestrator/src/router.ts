@@ -20,6 +20,7 @@ import { crewRouter } from './routers/crew';
 import { designRouter } from './routers/design';
 import { githubRouter } from './routers/github';
 import { gitlabRouter } from './routers/gitlab';
+import { integrationsRouter, marketplaceRouter } from './routers/integrations';
 import { boardRouter, projectsRouter } from './routers/projects';
 import { providersRouter } from './routers/providers';
 import { mcpRouter, toolsRouter } from './routers/tools';
@@ -78,6 +79,8 @@ export const appRouter = router({
   design: designRouter,
   artifacts: artifactsRouter,
   email: emailRouter,
+  integrations: integrationsRouter,
+  marketplace: marketplaceRouter,
 
   app: router({
     info: publicProcedure.query(({ ctx }) => ({

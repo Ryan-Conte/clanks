@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { indexUrlSchema } from './marketplace';
 import { modelIdSchema, runtimeBackendSchema } from './models';
 
 function isTimeZone(zone: string): boolean {
@@ -126,6 +127,11 @@ export const settingsSchema = z.object({
   ),
   /** The account emails the user approves are sent through. */
   email: emailSettingsSchema,
+  /**
+   * Marketplaces besides the public one, such as a team's own: the address of each one's
+   * `index.json`, or a folder that holds one.
+   */
+  marketplaceIndexes: z.array(indexUrlSchema).max(20),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -150,6 +156,7 @@ export const defaultSettings: Settings = {
   approvals: 'risky',
   cloudPrices: {},
   email: { kind: 'none', host: '', port: 587, secure: false, user: '', from: '', name: '' },
+  marketplaceIndexes: [],
 };
 
 export const settingsPatchSchema = settingsSchema.partial().strict();

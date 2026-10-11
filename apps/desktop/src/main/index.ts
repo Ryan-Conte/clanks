@@ -78,6 +78,9 @@ if (!app.requestSingleInstanceLock()) {
         dataDir: app.getPath('userData'),
         migrationsFolder: join(__dirname, 'migrations'),
         bundledCrewDir: join(__dirname, 'crew'),
+        bundledIntegrationsDir: join(__dirname, 'integrations'),
+        // A marketplace of your own to start from, for trying one out before it's public.
+        marketplaceIndex: process.env.CLANKS_MARKETPLACE_INDEX || null,
         cipher: keychainCipher,
         bundledRuntimeDir: resourcePath('llama'),
         browserHost,
@@ -114,6 +117,11 @@ if (!app.requestSingleInstanceLock()) {
             if (result.canceled || !result.filePath) return null;
             await writeFile(result.filePath, data);
             return result.filePath;
+          },
+          openUrl: async (url) => {
+            // Only ever a web page: a service's sign-in, which belongs in the user's own browser.
+            if (!/^https:\/\//i.test(url)) throw new Error(`${url} isn't an https address`);
+            await shell.openExternal(url);
           },
         },
         appInfo: {
@@ -152,6 +160,7 @@ if (!app.requestSingleInstanceLock()) {
           browserHost,
           designHost,
           app.commandLine.getSwitchValue('screenshot'),
+          () => started.context.integrations.snapshot().integrations.map((i) => i.id),
         );
         console.log(`Smoke test passed: ${info}`);
         app.quit();

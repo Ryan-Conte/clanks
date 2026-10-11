@@ -20,6 +20,7 @@ const GROUPS: Record<ClankToolPolicy['group'], string> = {
   artifacts: 'Artifacts',
   routines: 'Routines',
   mcp: 'MCP servers',
+  integration: 'Connected services',
 };
 
 const LEVELS: [ToolPolicyLevel, string][] = [
@@ -54,6 +55,8 @@ export function ToolsPanel({ clank }: { clank: ClankSummary }) {
           What {clank.name} can use. <b className="font-medium text-white/80">Ask</b> waits for your
           approval in the chat, where you can also always allow a command or site for a project.
           Your choices here win over the priming doc's.
+          {clank.marketplace &&
+            ' It came from a marketplace, so whatever its doc allows, nothing above read starts higher than ask.'}
         </>
       }
       actions={
@@ -78,6 +81,7 @@ export function ToolsPanel({ clank }: { clank: ClankSummary }) {
                       <span className="flex items-center gap-2">
                         <code className="font-mono text-[12.5px] text-white">{policy.name}</code>
                         {!policy.available && <Badge>Later</Badge>}
+                        {policy.locked && <Badge tone="amber">Asks every time</Badge>}
                         {policy.overridden && (
                           <button
                             type="button"
@@ -108,7 +112,12 @@ export function ToolsPanel({ clank }: { clank: ClankSummary }) {
                           type="button"
                           role="radio"
                           aria-checked={policy.level === level}
-                          disabled={set.isPending}
+                          disabled={set.isPending || (policy.locked === true && level === 'allow')}
+                          title={
+                            policy.locked && level === 'allow'
+                              ? 'It spends money, publishes or contacts people, or changes a live account, so it asks every time'
+                              : undefined
+                          }
                           onClick={() =>
                             set.mutate({ clankId: clank.id, tool: policy.name, level })
                           }
@@ -121,7 +130,7 @@ export function ToolsPanel({ clank }: { clank: ClankSummary }) {
                                   : level === 'allow'
                                     ? 'bg-accent-2/15 text-accent-2'
                                     : 'bg-white/10 text-white'
-                              : 'text-dim hover:text-white'
+                              : 'text-dim hover:text-white disabled:opacity-30 disabled:hover:text-dim'
                           }`}
                         >
                           {label}

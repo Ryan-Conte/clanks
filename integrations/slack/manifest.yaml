@@ -1,0 +1,25 @@
+id: slack
+name: Slack
+summary: Read channels and threads, and post messages as your Slack app.
+hosts: [slack.com]
+auth:
+  type: api_key
+  header: Authorization
+  format: 'Bearer {secret}'
+  label: Bot token
+  hint: api.slack.com/apps, your app, OAuth & Permissions. A bot token starts xoxb-. Give it channels:read, channels:history, users:read and chat:write, and invite the app to the channels it should see.
+openapi: openapi.yaml
+# Slack answers 200 to a call it turned down, and says so in the body.
+response: { ok: ok, error: error }
+check: auth_test
+account: team
+operations:
+  - { id: auth_test, op: 'POST /auth.test', risk: read }
+  - { id: list_channels, op: 'GET /conversations.list', risk: read }
+  - { id: list_messages, op: 'GET /conversations.history', risk: read }
+  - { id: list_replies, op: 'GET /conversations.replies', risk: read }
+  - { id: list_users, op: 'GET /users.list', risk: read }
+  # Posting reaches people, so it waits for approval every time.
+  - { id: post_message, op: 'POST /chat.postMessage', risk: outbound, verify: list_messages }
+  - { id: update_message, op: 'POST /chat.update', risk: outbound, verify: list_messages }
+guide: guide.md

@@ -8,6 +8,7 @@ import type {
   Usage,
 } from './board';
 import { type ClankId, clankIdSchema } from './crew';
+import type { ProjectIntegration } from './integrations';
 import { type ModelChoice, modelChoiceSchema } from './providers';
 
 /** Atlas leads every project, so it's always in the crew. */
@@ -159,6 +160,8 @@ export interface BoardSnapshot {
   needsYou: NeedsYouItem[];
   /** What each clank in the crew has spent here, against its budget. */
   clanks: Record<ClankId, BudgetStatus>;
+  /** The services turned on here, each with its mode and the clanks that may use it. */
+  integrations: ProjectIntegration[];
 }
 
 const folderSchema = z.string().min(1).max(4096);

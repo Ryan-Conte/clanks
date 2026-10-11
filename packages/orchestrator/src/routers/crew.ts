@@ -8,8 +8,8 @@ import {
 import { BUILTIN_PROVIDER } from '@clanks/providers';
 import { z } from 'zod';
 import { ChatError } from '../chat/service';
-import { CrewDocError } from '../crew/docs';
 import { draftClankPrompt } from '../crew/draft';
+import { removeCustomClank } from '../crew/remove';
 import { userProcedure } from '../procedures';
 import { type OrchestratorContext, publicProcedure, router } from '../trpc';
 
@@ -48,20 +48,9 @@ export const crewRouter = router({
    * crew first, so no ticket is left waiting on a clank that's gone.
    */
   remove: userProcedure.input(clankIdSchema).mutation(async ({ ctx, input }) => {
-    const clank = ctx.crew.get(input);
-    if (!clank.custom) {
-      throw new CrewDocError(`${clank.name} ships with the app, so it can't be deleted.`);
-    }
-    const using = ctx.projects.using(input);
-    if (using.length > 0) {
-      throw new CrewDocError(
-        `${clank.name} is in the crew of ${using.map((p) => p.name).join(', ')}. Take it out there first, in the project's settings.`,
-      );
-    }
-    for (const conversation of ctx.chat.list().filter((c) => c.clankId === input)) {
-      await ctx.chat.delete(conversation.id);
-    }
-    ctx.crew.deleteCustom(input);
+    await removeCustomClank(ctx, input);
+    // One that came from a marketplace is no longer installed.
+    ctx.marketplace.forget('clank', input);
   }),
 
   /**

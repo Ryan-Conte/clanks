@@ -12,6 +12,9 @@ export const migrationsFolder = fileURLToPath(new URL('../drizzle', import.meta.
 /** The priming docs that ship with the app. */
 export const crewFolder = fileURLToPath(new URL('../../../crew', import.meta.url));
 
+/** The integrations that ship with the app. */
+export const integrationsFolder = fileURLToPath(new URL('../../../integrations', import.meta.url));
+
 /** A fresh temporary folder, removed after the current test. */
 export function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'clanks-test-'));
@@ -68,6 +71,11 @@ export function startTestOrchestrator(options: Partial<OrchestratorOptions> = {}
     dataDir: join(tempDir(), 'clanks'),
     migrationsFolder,
     bundledCrewDir: crewFolder,
+    bundledIntegrationsDir: integrationsFolder,
+    // Never the public one: a test that reaches for the network should fail, not pass by luck.
+    marketplaceIndex: 'https://marketplace.test/index.json',
+    marketplaceFetch: () => Promise.reject(new TypeError('fetch failed')),
+    integrationsFetch: () => Promise.reject(new TypeError('fetch failed')),
     cipher: fakeCipher(),
     appInfo: {
       name: 'clanks',

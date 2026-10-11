@@ -1,0 +1,153 @@
+# A trimmed description of the Notion API, as of its 2022-06-28 version, which the manifest pins.
+openapi: 3.0.3
+info:
+  title: Notion API (trimmed for clanks)
+  version: '2022-06-28'
+servers:
+  - url: https://api.notion.com
+components:
+  parameters:
+    page_size:
+      name: page_size
+      in: query
+      description: How many to return, at most 100.
+      schema: { type: integer, minimum: 1, maximum: 100 }
+    start_cursor:
+      name: start_cursor
+      in: query
+      description: The next_cursor from the page before.
+      schema: { type: string }
+  schemas:
+    blocks:
+      type: array
+      description: 'Blocks, such as {"type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": "Hello"}}]}}.'
+      items: { type: object }
+paths:
+  /v1/users/me:
+    get:
+      summary: The integration itself, and the workspace it belongs to.
+  /v1/search:
+    post:
+      summary: Search the titles of the pages and databases shared with the integration.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  { type: string, description: Words from the title. Leave out to list everything. }
+                filter:
+                  type: object
+                  description: 'Only pages or only databases: {"property": "object", "value": "page"}.'
+                  properties:
+                    property: { type: string, enum: [object] }
+                    value: { type: string, enum: [page, database] }
+                page_size: { type: integer, minimum: 1, maximum: 100 }
+                start_cursor: { type: string }
+  /v1/pages:
+    post:
+      summary: Create a page under a page, or as a row in a database.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parent, properties]
+              properties:
+                parent:
+                  type: object
+                  description: 'Where it goes: {"page_id": "…"} or {"database_id": "…"}.'
+                  properties:
+                    page_id: { type: string }
+                    database_id: { type: string }
+                properties:
+                  type: object
+                  description: 'Its fields. Under a page, only a title: {"title": {"title": [{"text": {"content": "…"}}]}}.'
+                children: { $ref: '#/components/schemas/blocks' }
+  /v1/pages/{page_id}:
+    get:
+      summary: A page's properties. Its text is in its blocks.
+      parameters:
+        - name: page_id
+          in: path
+          required: true
+          schema: { type: string }
+    patch:
+      summary: Change a page's properties, or move it to the trash.
+      parameters:
+        - name: page_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  description: Only the fields to change, in the same shape as when creating.
+                archived: { type: boolean, description: True moves the page to the trash. }
+  /v1/blocks/{block_id}/children:
+    get:
+      summary: The blocks inside a page or block, which is where a page's text is.
+      parameters:
+        - name: block_id
+          in: path
+          required: true
+          description: A block's id, or a page's.
+          schema: { type: string }
+        - $ref: '#/components/parameters/page_size'
+        - $ref: '#/components/parameters/start_cursor'
+    patch:
+      summary: Add blocks to the end of a page or block.
+      parameters:
+        - name: block_id
+          in: path
+          required: true
+          description: A block's id, or a page's.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [children]
+              properties:
+                children: { $ref: '#/components/schemas/blocks' }
+  /v1/databases/{database_id}:
+    get:
+      summary: A database's title and the properties its rows have.
+      parameters:
+        - name: database_id
+          in: path
+          required: true
+          schema: { type: string }
+  /v1/databases/{database_id}/query:
+    post:
+      summary: A database's rows, filtered and sorted.
+      parameters:
+        - name: database_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filter:
+                  type: object
+                  description: 'Such as {"property": "Status", "select": {"equals": "Done"}}.'
+                sorts:
+                  type: array
+                  description: 'Such as [{"property": "Due", "direction": "ascending"}].'
+                  items: { type: object }
+                page_size: { type: integer, minimum: 1, maximum: 100 }
+                start_cursor: { type: string }

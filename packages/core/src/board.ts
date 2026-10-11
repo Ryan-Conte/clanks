@@ -509,6 +509,39 @@ export const ticketPatchSchema = z
 export type TicketPatch = z.infer<typeof ticketPatchSchema>;
 
 /** A criterion as written, `AC-4.2: Given …`, or plain words. */
+/**
+ * A list item a clank wrote as an object, as a line a person reads: a criterion with its verdict
+ * and the evidence for it, a frame with what it shows, anything else field by field. Hand-ins
+ * hold these as the clank wrote them, and both the user and the next clank read them.
+ */
+export function itemText(item: unknown): string {
+  if (typeof item === 'string') return item;
+  if (item === null || typeof item !== 'object' || Array.isArray(item)) return JSON.stringify(item);
+  const record = item as Record<string, unknown>;
+  const text = (key: string) => {
+    const value = record[key];
+    return typeof value === 'string' ? value.trim() : '';
+  };
+  const verdict =
+    text('status') || (typeof record.met === 'boolean' ? (record.met ? 'met' : 'not met') : '');
+  if (verdict) {
+    const what = text('text') || text('criterion') || text('id');
+    const evidence = text('evidence') || text('note') || text('notes');
+    const first = what
+      ? `${what.replace(/[.:]$/, '')}: ${verdict}`
+      : `${verdict.charAt(0).toUpperCase()}${verdict.slice(1)}`;
+    return evidence ? `${first}. ${evidence}` : first;
+  }
+  if (text('name')) {
+    const says = text('shows') || text('description') || text('note');
+    return says ? `${text('name')}: ${says}` : text('name');
+  }
+  return Object.entries(record)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
+    .join('; ');
+}
+
 export function parseCriterion(text: string): Criterion {
   const match = /^\s*(?:\*\*)?(AC-\d+\.\d+)(?:\*\*)?\s*[:.\-–—]?\s*(.*)$/i.exec(text);
   return match

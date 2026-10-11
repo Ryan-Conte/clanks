@@ -283,6 +283,114 @@ export class GitHubService extends EventEmitter<{ change: [] }> implements RepoH
     });
   }
 
+  /**
+   * Proposes files to a repository as a pull request from the user's account, the way publishing
+   * to a marketplace works. With push access the branch goes on the repository itself; without it,
+   * on the user's fork, which is made if there isn't one. Nothing is ever written to the default
+   * branch.
+   */
+  async proposeFiles(input: {
+    /** `owner/name` of the repository the pull request goes to. */
+    repo: string;
+    branch: string;
+    files: { path: string; text: string }[];
+    title: string;
+    body: string;
+  }): Promise<PullRequest & { repo: string }> {
+    const login = this.user()?.login;
+    if (!login) throw new GitHubError('Sign in to GitHub first');
+    const upstream = (await (await this.api(`/repos/${input.repo}`)).json()) as {
+      full_name: string;
+      default_branch: string;
+      permissions?: { push?: boolean };
+    };
+    const base = upstream.default_branch;
+    let head = upstream.full_name;
+    if (!upstream.permissions?.push) {
+      const fork = (await (
+        await this.api(`/repos/${upstream.full_name}/forks`, {
+          method: 'POST',
+          body: JSON.stringify({ default_branch_only: true }),
+        })
+      ).json()) as { full_name: string };
+      head = fork.full_name;
+      await this.waitForRepo(head);
+      // An older fork starts from wherever it was left: bring its base up to date first.
+      await this.api(`/repos/${head}/merge-upstream`, {
+        method: 'POST',
+        body: JSON.stringify({ branch: base }),
+      }).catch(() => {});
+    }
+    const ref = (await (
+      await this.api(`/repos/${head}/git/ref/heads/${encodeURIComponent(base)}`)
+    ).json()) as { object: { sha: string } };
+    try {
+      await this.api(`/repos/${head}/git/refs`, {
+        method: 'POST',
+        body: JSON.stringify({ ref: `refs/heads/${input.branch}`, sha: ref.object.sha }),
+      });
+    } catch (error) {
+      // Publishing the same version again carries on from the branch that's there.
+      if (!(error instanceof GitHubError) || !/already exists/i.test(error.message)) throw error;
+    }
+    for (const file of input.files) {
+      const path = file.path.split('/').map(encodeURIComponent).join('/');
+      let sha: string | undefined;
+      try {
+        const existing = (await (
+          await this.api(`/repos/${head}/contents/${path}?ref=${encodeURIComponent(input.branch)}`)
+        ).json()) as { sha?: string };
+        sha = existing.sha;
+      } catch {
+        // Not there yet, which is the usual case.
+      }
+      await this.api(`/repos/${head}/contents/${path}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          message: `${input.title}: ${file.path.split('/').pop()}`,
+          content: Buffer.from(file.text, 'utf8').toString('base64'),
+          branch: input.branch,
+          ...(sha ? { sha } : {}),
+        }),
+      });
+    }
+    const [headOwner] = head.split('/');
+    const headRef = head === upstream.full_name ? input.branch : `${headOwner}:${input.branch}`;
+    const open = await this.api(
+      `/repos/${upstream.full_name}/pulls?state=open&head=${encodeURIComponent(`${headOwner}:${input.branch}`)}`,
+    );
+    const found = ((await open.json()) as PullJson[])[0];
+    if (found) return { ...toPull(found), repo: upstream.full_name };
+    const response = await this.api(`/repos/${upstream.full_name}/pulls`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: input.title,
+        head: headRef,
+        base,
+        body: input.body,
+        maintainer_can_modify: true,
+      }),
+    });
+    return { ...toPull((await response.json()) as PullJson), repo: upstream.full_name };
+  }
+
+  /** A fork takes a moment to exist after GitHub agrees to make it. */
+  private async waitForRepo(fullName: string): Promise<void> {
+    const sleep = this.options.sleep ?? defaultSleep;
+    const never = new AbortController().signal;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        await this.api(`/repos/${fullName}/branches?per_page=1`);
+        return;
+      } catch {
+        await sleep(1500, never);
+      }
+    }
+    throw new GitHubError(
+      `GitHub hasn't finished making your fork, ${fullName}. Try again shortly.`,
+    );
+  }
+
   /** How the checks on a commit are doing, from check runs and commit statuses together. */
   async checks(repo: string, sha: string): Promise<CheckState> {
     const [runs, status] = await Promise.all([

@@ -73,6 +73,13 @@ export interface McpServerStatus {
   /** The names of its environment variables or headers. The values stay in the keychain. */
   secretNames: string[];
   clanks: string[];
+  /**
+   * The integration it was installed as. Its command is pinned to one version of one package, so
+   * it's changed by updating the integration, not by editing it here.
+   */
+  integration: string | null;
+  /** It runs in a Docker container rather than on this computer. */
+  docker: boolean;
   state: 'idle' | 'connecting' | 'ready' | 'failed';
   error: string | null;
   tools: McpToolInfo[];

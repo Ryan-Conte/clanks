@@ -7,9 +7,11 @@ import type {
   ChangedFile,
   ClankBrowser,
   ChatUsage,
+  ConnectionMode,
   Criterion,
   FinishReason,
   GgufFacts,
+  IntegrationAuthType,
   MessagePart,
   MessageStatus,
   ModelCapabilities,
@@ -19,6 +21,7 @@ import type {
   NoteKind,
   NoteStatus,
   OutputType,
+  PackageKind,
   ProjectRepo,
   RepoHost,
   NoteAnchor,
@@ -522,5 +525,88 @@ export const mcpServer = sqliteTable('mcp_server', {
   /** The names of its secrets, so Settings can show them without reading the keychain. */
   secretNames: text('secret_names', { mode: 'json' }).$type<string[]>().notNull(),
   clanks: text('clanks', { mode: 'json' }).$type<string[]>().notNull(),
+  /**
+   * The integration it was installed as, which pins its command to one version of one package.
+   * Null for a server the user added themselves.
+   */
+  integration: text('integration'),
+  /** An integration's server, run in a Docker container rather than on this computer. */
+  docker: integer('docker', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+/**
+ * An account the user connected to an integration. Its credential is in the keychain, under
+ * `integration:<id>`, and is read only by the orchestrator when it signs a request.
+ */
+export const connection = sqliteTable(
+  'connection',
+  {
+    id: text('id').primaryKey(),
+    integration: text('integration').notNull(),
+    label: text('label').notNull(),
+    authType: text('auth_type').$type<IntegrationAuthType>().notNull(),
+    mode: text('mode').$type<ConnectionMode>().notNull(),
+    /** Who it's connected as, when the service says. */
+    account: text('account'),
+    /** What the user filled in that isn't a secret, such as a shop's name. */
+    settings: text('settings', { mode: 'json' }).$type<Record<string, string>>().notNull(),
+    /**
+     * The hosts its credential may go to: the ones the integration declared when the user
+     * connected. A later version that calls more gets nothing sent there until the user agrees.
+     */
+    hosts: text('hosts', { mode: 'json' }).$type<string[]>().notNull(),
+    scopes: text('scopes', { mode: 'json' }).$type<string[]>().notNull(),
+    /** When an OAuth access token runs out. */
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }),
+    connectedAt: integer('connected_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('connection_integration').on(t.integration)],
+);
+
+/** A connection turned on in a project, and the clanks that may use it there. */
+export const projectIntegration = sqliteTable(
+  'project_integration',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    connectionId: text('connection_id')
+      .notNull()
+      .references(() => connection.id, { onDelete: 'cascade' }),
+    clanks: text('clanks', { mode: 'json' }).$type<string[]>().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.connectionId] })],
+);
+
+/** What a package brought with it besides files: a crew's members, or an integration's server. */
+export interface PackageData {
+  /** A crew: the clanks it's made of, premade ones and installed ones alike. */
+  clanks?: string[];
+  /** A crew: the integrations it expects. */
+  integrations?: string[];
+}
+
+/** Something installed from a marketplace: a clank, an integration or a crew. */
+export const pkg = sqliteTable('package', {
+  /** `kind/id`. */
+  key: text('key').primaryKey(),
+  kind: text('kind').$type<PackageKind>().notNull(),
+  packageId: text('package_id').notNull(),
+  name: text('name').notNull(),
+  /** The index it came from, which is where its updates come from too. */
+  indexUrl: text('index_url').notNull(),
+  version: text('version').notNull(),
+  sha256: text('sha256').notNull(),
+  publisher: text('publisher').notNull(),
+  licence: text('licence').notNull(),
+  /** The user chose to stay on this version. */
+  pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+  status: text('status').$type<'active' | 'update_available' | 'revoked'>().notNull(),
+  /** The newest version its index had when last read. */
+  latest: text('latest'),
+  /** Why its index took it down. */
+  notice: text('notice'),
+  data: text('data', { mode: 'json' }).$type<PackageData>(),
+  installedAt: integer('installed_at', { mode: 'timestamp_ms' }).notNull(),
 });

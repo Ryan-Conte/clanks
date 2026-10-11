@@ -2,11 +2,12 @@ import type { ConversationSummary, ProjectSummary } from '@clanks/core';
 import type { ReactNode } from 'react';
 import { useConversations, useCrew } from '../lib/crew';
 import { formatAgo } from '../lib/format';
+import { useMarketplace } from '../lib/integrations';
 import { useModels } from '../lib/models';
 import { useNav } from '../lib/nav';
 import { useProjects } from '../lib/projects';
 import { Avatar } from './Avatar';
-import { ChipIcon, Dot, Eyebrow, IconButton, Logo, PlusIcon, SlidersIcon } from './ui';
+import { ChipIcon, Dot, Eyebrow, IconButton, Logo, PlusIcon, ShelfIcon, SlidersIcon } from './ui';
 
 /** Projects, the crew and recent chats, as on clanks.si; models and settings at the foot. */
 export function Sidebar() {
@@ -15,6 +16,9 @@ export function Sidebar() {
   const conversations = useConversations();
   const projects = useProjects();
   const snapshot = useModels();
+  const packages = useMarketplace()?.installed ?? [];
+  // An update to look at, or something its marketplace took down.
+  const packageNews = packages.some((p) => p.status !== 'active');
   const working = snapshot?.runtime.loaded.some((l) => l.inUse > 0) ?? false;
   const loaded = (snapshot?.runtime.loaded.length ?? 0) > 0;
   const pulling = snapshot?.pulls.some((p) => p.state === 'downloading' || p.state === 'verifying');
@@ -142,6 +146,18 @@ export function Sidebar() {
           {(loaded || pulling) && (
             <span className="ml-auto">
               <Dot tone={pulling ? 'lavender' : 'mint'} live={working || pulling} />
+            </span>
+          )}
+        </NavItem>
+        <NavItem
+          active={route.page === 'marketplace'}
+          onClick={() => go({ page: 'marketplace' })}
+          icon={<ShelfIcon />}
+        >
+          Marketplace
+          {packageNews && (
+            <span className="ml-auto">
+              <Dot tone={packages.some((p) => p.status === 'revoked') ? 'rose' : 'lavender'} />
             </span>
           )}
         </NavItem>

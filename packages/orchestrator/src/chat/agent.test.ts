@@ -1,13 +1,15 @@
-import type { ChatEvent, MessageRecord, ModelRecord, ToolPart } from '@clanks/core';
-import { createFakeProvider } from '@clanks/providers';
+import type { ChatEvent, ChatRequest, MessageRecord, ModelRecord, ToolPart } from '@clanks/core';
+import { ProviderError, createFakeProvider } from '@clanks/providers';
 import { git } from '@clanks/workspace';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { fakeBrowserHost } from '../browser/fake-host';
 import { sqliteModelRepository } from '../store/models';
 import { startTestOrchestrator, tempDir } from '../test-helpers';
-import { formatNotes, toTurns } from './service';
+import { formatNotes, isCircling, sendable, toTurns, writtenCall } from './service';
 
 const MODEL = 'tiny:1b';
 
@@ -69,7 +71,7 @@ const call = (
 const say = (text: string): ChatEvent[] => [{ type: 'text', text }];
 
 function setup(
-  replies: ChatEvent[][],
+  replies: ChatEvent[][] | ((request: ChatRequest) => ChatEvent[]),
   options: { tools?: boolean; vision?: boolean; browser?: ReturnType<typeof fakeBrowserHost> } = {},
 ) {
   const orchestrator = startTestOrchestrator(
@@ -311,21 +313,356 @@ describe('a clank with tools', () => {
     );
   });
 
-  it('returns a malformed call to the model once, then stops', async () => {
+  it('returns a malformed call to the model, and stops after three in a row', async () => {
     const root = await repository({ 'a.txt': 'a\n' });
     const { chat } = setup([
       [{ type: 'tool_call', call: { id: 'm1', name: 'fs_read', arguments: '{"path":' } }],
       [call('fs_frobnicate', {}, 'm2')],
+      [call('fs_read', { path: 7 }, 'm3')],
     ]);
     const { conversation } = chat.start('forge', 'Read', root);
     const messages = await settled(chat, conversation.id);
-    expect(tools(messages[1]!).map((p) => p.status)).toEqual(['failed', 'failed']);
+    expect(tools(messages[1]!).map((p) => p.status)).toEqual(['failed', 'failed', 'failed']);
     expect(tools(messages[1]!)[0]!.result).toMatch(/aren't valid JSON/);
     expect(tools(messages[1]!)[1]!.result).toMatch(/There's no tool called fs_frobnicate here/);
     expect(messages[1]).toMatchObject({
       status: 'failed',
-      error: expect.stringContaining("don't fit their tools twice") as string,
+      error: expect.stringContaining("3 tool calls in a row that don't fit their tools") as string,
     });
+  });
+
+  it('lets a long run slip now and then, and says when a call was cut off for want of room', async () => {
+    const root = await repository({ 'a.txt': 'a\n' });
+    const bad = (id: string): ChatEvent[] => [
+      { type: 'tool_call', call: { id, name: 'fs_read', arguments: '{"path":' } },
+    ];
+    const { chat } = setup([
+      bad('m1'),
+      [call('fs_read', { path: 'a.txt' }, 'ok1')],
+      bad('m2'),
+      // The model ran out of room part way through writing a file.
+      [
+        {
+          type: 'tool_call',
+          call: { id: 'cut', name: 'fs_write', arguments: '{"path":"b.txt","content":"b' },
+        },
+        { type: 'done', finishReason: 'length' },
+      ],
+      [call('fs_write', { path: 'b.txt', content: 'b\n' }, 'ok2')],
+      say('Wrote b.txt.'),
+    ]);
+    const { conversation } = chat.start('forge', 'Write b.txt', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    // Four slips in all, never three running: the reply went on to finish.
+    expect(tools(reply).map((p) => p.status)).toEqual([
+      'failed',
+      'done',
+      'failed',
+      'failed',
+      'done',
+    ]);
+    expect(reply).toMatchObject({ status: 'done', content: 'Wrote b.txt.' });
+    expect(tools(reply)[3]!.result).toMatch(
+      /^Your call to fs_write was cut off before its end: it was longer than the room left in this reply/,
+    );
+  });
+
+  it('notices the same call made over and over, then stops running it', async () => {
+    const root = await repository({ 'a.txt': 'a\n' });
+    const again = () => [call('fs_list', { path: '.' })];
+    const { chat, fake } = setup([
+      again(),
+      again(),
+      again(),
+      again(),
+      again(),
+      say('It only has a.txt.'),
+    ]);
+    const { conversation } = chat.start('forge', 'What is here?', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    expect(tools(reply).map((p) => p.status)).toEqual([
+      'done',
+      'done',
+      'done',
+      'done',
+      'cancelled',
+    ]);
+    // The third time, the model is told it's going nowhere. The user sees a line saying so.
+    const results = fake.requests.at(-1)!.messages.filter((m) => m.role === 'tool');
+    expect(results.map((m) => /made this exact call several times/.test(m.content))).toEqual([
+      false,
+      false,
+      true,
+      false,
+      false,
+    ]);
+    expect(tools(reply)[2]!.result).not.toMatch(/exact call/);
+    expect(results[4]!.content).toMatch(
+      /^This didn't run: you've made this exact call 4 times and it gave the same result every time/,
+    );
+    expect(reply.parts.filter((p) => p.type === 'note').map((p) => p.text)).toEqual([
+      'Forge made the same call 3 times with the same result, so it was told to try something else.',
+    ]);
+    expect(reply).toMatchObject({ status: 'done', content: 'It only has a.txt.' });
+  });
+
+  it("doesn't count a call made again after the files changed", async () => {
+    const root = await repository({ 'a.txt': 'a\n' });
+    const read = () => [call('fs_read', { path: 'a.txt' })];
+    const { chat } = setup([
+      read(),
+      read(),
+      [call('fs_write', { path: 'b.txt', content: 'b\n' })],
+      read(),
+      read(),
+      say('Done.'),
+    ]);
+    const { conversation } = chat.start('forge', 'Add b.txt', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    expect(tools(reply).every((p) => p.status === 'done')).toBe(true);
+    expect(reply.parts.some((p) => p.type === 'note')).toBe(false);
+  });
+
+  it('lets a clank read again what was cut from the conversation to make room', async () => {
+    // Long reads, so the older ones are cut down as the conversation fills.
+    const lines = Array.from({ length: 60 }, (_, i) => `${i} ${'a'.repeat(400)}`).join('\n');
+    const root = await repository({ 'a.txt': `${lines}\n`, 'b.txt': `${lines}\n` });
+    // Five reads of one file, each after six others have pushed the last one out.
+    let other = 0;
+    const script = Array.from({ length: 5 }, () => [
+      [call('fs_read', { path: 'a.txt' })],
+      ...Array.from({ length: 6 }, () => [call('fs_read', { path: 'b.txt', offset: ++other })]),
+    ]).flat();
+    const { chat } = setup([...script, say('Both are the letter a.')]);
+    const { conversation } = chat.start('forge', 'Compare the two files', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    expect(reply).toMatchObject({ status: 'done', content: 'Both are the letter a.' });
+    const reads = tools(reply).filter((p) => p.arguments === '{"path":"a.txt"}');
+    expect(reads.map((p) => p.status)).toEqual(Array.from({ length: 5 }, () => 'done'));
+    expect(reply.parts.some((p) => p.type === 'note')).toBe(false);
+  }, 30_000);
+
+  it('refuses a repeat and lets the reply get on with something else', async () => {
+    const root = await repository({ 'a.txt': 'a\n', 'b.txt': 'b\n' });
+    const again = () => [call('fs_list', { path: '.' })];
+    const { chat } = setup([
+      again(),
+      again(),
+      again(),
+      again(),
+      // Refused from here on, each time with other work in between: it isn't stuck.
+      again(),
+      [call('fs_read', { path: 'a.txt' })],
+      again(),
+      [call('fs_read', { path: 'b.txt' })],
+      again(),
+      [call('fs_write', { path: 'c.txt', content: 'c\n' })],
+      // The folder has changed, so listing it again is a new question.
+      again(),
+      say('Three files now.'),
+    ]);
+    const { conversation } = chat.start('forge', 'Add c.txt', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    expect(reply).toMatchObject({ status: 'done', content: 'Three files now.' });
+    expect(
+      tools(reply)
+        .filter((p) => p.name === 'fs_list')
+        .map((p) => p.status),
+    ).toEqual(['done', 'done', 'done', 'done', 'cancelled', 'cancelled', 'cancelled', 'done']);
+  });
+
+  it('stops a reply that keeps asking for a call it was refused', async () => {
+    const root = await repository({ 'a.txt': 'a\n' });
+    const { chat, fake } = setup(Array.from({ length: 9 }, () => [call('fs_list', { path: '.' })]));
+    const { conversation } = chat.start('forge', 'What is here?', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    // Four ran, three were refused one after another with nothing done in between.
+    expect(fake.requests).toHaveLength(7);
+    expect(tools(reply).map((p) => p.status)).toEqual([
+      ...Array.from({ length: 4 }, () => 'done'),
+      ...Array.from({ length: 3 }, () => 'cancelled'),
+    ]);
+    expect(reply).toMatchObject({ status: 'done', finishReason: 'length' });
+    expect(reply.parts.at(-1)).toMatchObject({
+      type: 'note',
+      text: 'Stopped: Forge kept asking for the same call, which gives the same result every time.',
+    });
+  });
+
+  it('cuts off a model thinking in circles, and asks a chat for its answer', async () => {
+    const thought = "I'll try to search for it on another site.\n\n";
+    const { chat, fake } = setup([
+      Array.from({ length: 200 }, () => ({ type: 'reasoning', text: thought }) as const),
+      say("I couldn't find how it looks. Scout can open it in the browser."),
+    ]);
+    const { conversation } = chat.start('atlas', 'What does the site look like?');
+    const reply = (await settled(chat, conversation.id))[1]!;
+    // It was stopped long before it filled its reply, and asked to answer from what it had.
+    expect(reply.reasoning.length).toBeLessThan(thought.length * 60);
+    expect(fake.requests).toHaveLength(2);
+    expect(fake.requests[1]!.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('You ran out of room while thinking') as string,
+    });
+    expect(reply).toMatchObject({
+      status: 'done',
+      finishReason: 'stop',
+      content: "I couldn't find how it looks. Scout can open it in the browser.",
+    });
+    expect(reply.parts.find((p) => p.type === 'note')?.text).toBe(
+      'Atlas ran out of room before answering, so it was asked to answer now.',
+    );
+  });
+
+  it('tells words going round in circles from words that only repeat a little', () => {
+    const step = 'Next I will check the pricing page for the plan names. ';
+    expect(isCircling(step.repeat(20))).toBe(true);
+    expect(isCircling(`Some thinking first. ${step.repeat(14)}`)).toBe(true);
+    expect(isCircling(step.repeat(5))).toBe(false);
+    const prose = Array.from({ length: 60 }, (_, i) => `Board ${i} is ${i * 3} cm long.`).join(' ');
+    expect(isCircling(prose)).toBe(false);
+    // A ruled line or a run of blank lines is padding, not a thought.
+    expect(isCircling(`${'-'.repeat(900)}`)).toBe(false);
+    expect(isCircling(`A table\n${'| --- | --- |\n'.repeat(80)}`)).toBe(false);
+  });
+
+  it('makes a call the model wrote out as words', async () => {
+    const root = await repository({ 'a.txt': 'a\n' });
+    // Gemma's own call syntax, as it comes through when its server can't read it.
+    const { chat, fake } = setup([
+      say('I will look first.\n\ncall:fs_list{path:<|"|>.<|"|>}<tool_call|>'),
+      say('It only has a.txt.'),
+    ]);
+    const { conversation } = chat.start('forge', 'What is here?', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    expect(tools(reply).map((p) => [p.name, p.status, p.arguments])).toEqual([
+      ['fs_list', 'done', '{"path":"."}'],
+    ]);
+    // The call's own words aren't left in the reply, or sent back as something it said.
+    expect(reply.content).toBe('I will look first.\n\nIt only has a.txt.');
+    expect(fake.requests[1]!.messages.at(-2)).toMatchObject({
+      role: 'assistant',
+      content: 'I will look first.',
+      toolCalls: [{ name: 'fs_list', arguments: '{"path":"."}' }],
+    });
+  });
+
+  it('reads a written call however the model spells it, and only a whole one at the end', () => {
+    const names = new Set(['review_pass', 'fs_read']);
+    // As a sign-off came through: one string closed with a plain quote, which is what broke it.
+    const gemma =
+      'review_pass{criteria:[{evidence:<|"|>`npm run build` passed.<|"|>,status:<|"|>met",text:<|"|>It builds<|"|>}],summary:<|"|>Set up, and\nit runs.<|"|>}<tool_call|>';
+    expect(writtenCall(gemma, names)).toEqual({
+      name: 'review_pass',
+      arguments: JSON.stringify({
+        criteria: [{ evidence: '`npm run build` passed.', status: 'met', text: 'It builds' }],
+        summary: 'Set up, and\nit runs.',
+      }),
+      before: '',
+    });
+    expect(
+      writtenCall(
+        'Done.\n<tool_call>{"name": "fs_read", "arguments": {"path": "a.txt", "limit": 5}}</tool_call>',
+        names,
+      ),
+    ).toEqual({ name: 'fs_read', arguments: '{"path":"a.txt","limit":5}', before: 'Done.' });
+    // Talking about a call isn't making one, and neither is a tool that isn't on offer.
+    expect(writtenCall('I would call review_pass{summary:"ok"} once it builds.', names)).toBeNull();
+    expect(writtenCall('shell_exec{command:"rm -rf ."}', names)).toBeNull();
+    expect(writtenCall('review_pass{summary:"never closed', names)).toBeNull();
+    expect(writtenCall('Use an object such as {a: 1}.', names)).toBeNull();
+  });
+
+  it("keeps a call it couldn't read from spoiling the rest of the conversation", async () => {
+    const root = await repository({ 'a.txt': 'a\n' });
+    const { chat, fake } = setup([
+      [{ type: 'tool_call', call: { id: 'm1', name: 'fs_read', arguments: '{"path":"a.t' } }],
+      [call('fs_read', { path: 'a.txt' }, 'r1')],
+      say('It says a.'),
+    ]);
+    const { conversation } = chat.start('forge', 'Read a.txt', root);
+    const messages = await settled(chat, conversation.id);
+    expect(tools(messages[1]!).map((p) => p.status)).toEqual(['failed', 'done']);
+    // A server that lays the conversation out reads every call's arguments: they must be JSON.
+    const sent = fake.requests
+      .flatMap((r) => r.messages)
+      .flatMap((m) => (m.role === 'assistant' ? (m.toolCalls ?? []) : []));
+    expect(sent.length).toBeGreaterThan(0);
+    for (const one of sent) expect(() => JSON.parse(one.arguments) as unknown).not.toThrow();
+    expect(sent[0]!.arguments).toBe('{"unreadable":"{\\"path\\":\\"a.t"}');
+    // And the same when the chat is picked up again later, from what was saved.
+    const again = toTurns(chat.get(conversation.id).messages);
+    const saved = again.flatMap((m) => (m.role === 'assistant' ? (m.toolCalls ?? []) : []));
+    expect(saved.map((c) => c.arguments)).toEqual([
+      '{"unreadable":"{\\"path\\":\\"a.t"}',
+      '{"path":"a.txt"}',
+    ]);
+    expect(sendable({ id: 'x', name: 'fs_read', arguments: '' }).arguments).toBe('');
+    expect(sendable({ id: 'x', name: 'fs_read', arguments: '[1]' }).arguments).toBe(
+      '{"unreadable":"[1]"}',
+    );
+  });
+
+  it("asks again when the model's server couldn't read the call it wrote", async () => {
+    const unreadable = new ProviderError(
+      'The model answered HTTP 500: Failed to parse tool call arguments as JSON: parse error at line 1, column 292',
+    );
+    let asked = 0;
+    const { chat, fake } = setup(() => {
+      if (++asked <= 2) throw unreadable;
+      return say('Here you go.');
+    });
+    const { conversation } = chat.start('atlas', 'Hello');
+    const reply = (await settled(chat, conversation.id))[1]!;
+    expect(fake.requests).toHaveLength(3);
+    expect(reply).toMatchObject({ status: 'done', content: 'Here you go.' });
+    expect(reply.parts.filter((p) => p.type === 'note').map((p) => p.text)).toEqual([
+      "tiny:1b wrote a tool call that couldn't be read, so it was asked again.",
+      "tiny:1b wrote a tool call that couldn't be read, so it was asked again.",
+    ]);
+
+    // A third time it gives up and says why; anything else that goes wrong isn't asked for again.
+    const stuck = setup(() => {
+      throw unreadable;
+    });
+    const second = stuck.chat.start('atlas', 'Hello');
+    const failed = (await settled(stuck.chat, second.conversation.id))[1]!;
+    expect(stuck.fake.requests).toHaveLength(3);
+    expect(failed).toMatchObject({ status: 'failed', error: unreadable.message });
+    const down = setup(() => {
+      throw new ProviderError('The model answered HTTP 500: out of memory');
+    });
+    const third = down.chat.start('atlas', 'Hello');
+    await settled(down.chat, third.conversation.id);
+    expect(down.fake.requests).toHaveLength(1);
+  });
+
+  it('cuts a conversation down and asks again when it was too big for the model', async () => {
+    const lines = Array.from({ length: 15 }, () => 'a'.repeat(1000)).join('\n');
+    const root = await repository({ 'a.txt': `${lines}\n` });
+    let asked = 0;
+    const sizes: number[] = [];
+    const { chat } = setup((request) => {
+      asked++;
+      sizes.push(JSON.stringify(request.messages).length);
+      // Four reads in, the model's server says the conversation no longer fits.
+      if (asked <= 4) return [call('fs_read', { path: 'a.txt', offset: asked }, `r${asked}`)];
+      if (asked === 5) {
+        throw new ProviderError(
+          'The model answered HTTP 400: request (99000 tokens) exceeds the available context size (32768 tokens), try increasing it',
+        );
+      }
+      return say('It is a file of the letter a.');
+    });
+    const { conversation } = chat.start('forge', 'What is in a.txt?', root);
+    const reply = (await settled(chat, conversation.id))[1]!;
+    expect(reply).toMatchObject({ status: 'done', content: 'It is a file of the letter a.' });
+    expect(reply.parts.filter((p) => p.type === 'note').map((p) => p.text)).toEqual([
+      'The conversation had grown past what tiny:1b can hold, so its oldest steps were cut down.',
+    ]);
+    // It was asked again with less: the old reads were cut down, the two newest kept whole.
+    expect(asked).toBe(6);
+    expect(sizes[5]).toBeLessThan(sizes[4]! * 0.75);
   });
 
   it("offers no tools when the model can't call them, and says so", async () => {
@@ -652,6 +989,140 @@ describe('a clank with a browser', () => {
     expect(secondShot!.images).toEqual([
       { mediaType: 'image/jpeg', data: Buffer.from([0xff, 0xd8, 0xff]).toString('base64') },
     ]);
+  });
+
+  it('reads a page its scripts draw, for a clank with no browser tools of its own', async () => {
+    const shell =
+      '<html><head><title>Boards</title><meta name="description" content="Boards for every wave"><script src="/app.js"></script></head><body><div id="root"></div></body></html>';
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(shell);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    const browser = fakeBrowserHost({
+      [url]: {
+        title: 'Boards',
+        text: ['Soft tops are the easiest boards to learn on.'],
+        elements: [{ role: 'link' as const, name: 'Prices', href: '/prices' }],
+      },
+    });
+    const { chat, fake } = setup([[call('web_fetch', { url }, 'f1')], say('It sells boards.')], {
+      browser,
+    });
+    const { conversation } = chat.start('atlas', 'What does this site sell?');
+    const messages = await settled(chat, conversation.id);
+    // Atlas has no browser tools, and still got the page as its visitors see it, without refs.
+    expect((fake.requests[0]!.tools ?? []).map((t) => t.name)).not.toContain('browser_open');
+    expect(tools(messages.at(-1)!)[0]!.result).toBe(
+      `URL: ${url}\nStatus: 200\nTitle: Boards\nDescription: Boards for every wave\nIts scripts draw the page, so it was read in the browser.\n\nSoft tops are the easiest boards to learn on.\nlink "Prices" (/prices)`,
+    );
+    expect(browser.tabs).toHaveLength(1);
+  });
+
+  it("reads a site's look, and saves its logo into the project's design", async () => {
+    const logo =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path fill="#01cc8e" d="M0 0h8v8H0z"/></svg>';
+    const browser = fakeBrowserHost({
+      ...pages,
+      'https://boards.test/': {
+        ...pages['https://boards.test/'],
+        look: {
+          url: 'https://boards.test/',
+          title: 'Boards',
+          name: 'Boards',
+          description: 'Boards for every wave.',
+          dark: true,
+          background: '#0a0a0b',
+          text: '#f5f5f5',
+          backgrounds: [{ hex: '#0a0a0b', share: 0.8 }],
+          texts: [{ hex: '#f5f5f5', share: 1 }],
+          accents: [{ hex: '#01cc8e', share: 30, uses: ['logo', 'buttons'] }],
+          borders: [],
+          gradients: [],
+          fonts: [{ family: 'Space Grotesk', web: true, roles: ['headings'] }],
+          type: [
+            {
+              tag: 'h1',
+              family: 'Space Grotesk',
+              size: 60,
+              weight: 700,
+              lineHeight: 1,
+              colour: '#f5f5f5',
+              sample: 'Boards',
+            },
+          ],
+          buttons: [],
+          cards: null,
+          images: [
+            {
+              kind: 'logo',
+              note: 'in the header, drawn in the page',
+              url: null,
+              svg: logo,
+              width: 8,
+              height: 8,
+            },
+          ],
+        },
+      },
+    });
+    const root = await repository({ 'README.md': '# Boards\n' });
+    const { chat, context } = setup(
+      [
+        [call('browser_save_image', { image: 1 }, 'early')],
+        [call('browser_open', { url: 'https://boards.test/' }, 'o1')],
+        [call('browser_styles', {}, 's1')],
+        [call('browser_save_image', { image: 1, name: 'logo' }, 'i1')],
+        [call('browser_save_image', { image: 2 }, 'i2')],
+        say('The brand is dark with a green accent.'),
+      ],
+      { browser },
+    );
+    const { conversation } = chat.start('prism', 'Match boards.test', root);
+    const parts = tools((await settled(chat, conversation.id)).at(-1)!);
+    expect(parts.map((p) => [p.name, p.status])).toEqual([
+      ['browser_save_image', 'failed'],
+      ['browser_open', 'done'],
+      ['browser_styles', 'done'],
+      ['browser_save_image', 'done'],
+      ['browser_save_image', 'failed'],
+    ]);
+    expect(parts[0]!.result).toMatch(/Call browser_styles on this page first/);
+    expect(parts[2]!.result).toContain('Theme: dark. Page background #0a0a0b, main text #f5f5f5.');
+    expect(parts[2]!.result).toContain(
+      '- Space Grotesk (a web font the page loads): headings. h1 60px/700',
+    );
+    expect(parts[2]!.result).toContain('- Accents: #01cc8e (logo, buttons)');
+    expect(parts[2]!.result).toContain('[1] logo in the header, drawn in the page, 8×8: an SVG');
+    expect(parts[4]!.result).toMatch(/no picture 2: browser_styles listed 1/);
+    // The logo is in the clank's copy of the project, where a design can show it.
+    const worktree = context.workspace.run(conversation.id)!.worktree;
+    expect(readFileSync(join(worktree, 'design/assets/logo.svg'), 'utf8')).toBe(logo);
+    expect(parts[3]!.checkpointId).not.toBeNull();
+  });
+
+  it("says when pictures on a page didn't load, which its text alone would hide", async () => {
+    const browser = fakeBrowserHost({
+      'http://localhost:4000/': {
+        title: 'Shop',
+        text: ['Our boards'],
+        broken: [{ alt: 'Fish 6', src: '/fish.jpg' }],
+      },
+    });
+    const { chat } = setup(
+      [
+        [call('browser_open', { url: 'http://localhost:4000/' }, 'o1')],
+        say('The picture is broken.'),
+      ],
+      { browser },
+    );
+    const { conversation } = chat.start('gauge', 'Check the shop page');
+    const messages = await settled(chat, conversation.id);
+    expect(tools(messages.at(-1)!)[0]!.result).toBe(
+      'Opened t1, now the current tab.\n\nShop\nhttp://localhost:4000/\nA picture on this page didn\'t load: "Fish 6" (/fish.jpg).\n\nOur boards',
+    );
   });
 
   it('searches in the browser when no search backend is set up', async () => {

@@ -23,6 +23,8 @@ export interface AppDataLayout {
   artifacts: string;
   /** The clank library: edited and custom priming docs. */
   crew: string;
+  /** Integrations installed from a marketplace or added from a folder, one folder each. */
+  integrations: string;
   /** Persistent browser sessions. Created only when a clank is given one. */
   browser: string;
   logs: string;
@@ -39,6 +41,7 @@ export function appDataLayout(root: string): AppDataLayout {
     checkpoints: join(root, 'checkpoints'),
     artifacts: join(root, 'artifacts'),
     crew: join(root, 'crew'),
+    integrations: join(root, 'integrations'),
     browser: join(root, 'browser'),
     logs: join(root, 'logs'),
   };
@@ -54,6 +57,7 @@ export function ensureAppDataLayout(layout: AppDataLayout): void {
     layout.checkpoints,
     layout.artifacts,
     layout.crew,
+    layout.integrations,
     layout.logs,
   ]) {
     mkdirSync(dir, { recursive: true });

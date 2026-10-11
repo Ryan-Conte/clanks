@@ -1,5 +1,4 @@
 import {
-  ALWAYS_AVAILABLE_TOOLS,
   type Avatar,
   type ClankDocText,
   type ClankId,
@@ -16,9 +15,7 @@ import {
   customClankSchema,
   defaultClankBrowser,
   estimateTokens,
-  looksSecret,
   toolOverridesSchema,
-  toolsMatching,
 } from '@clanks/core';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
@@ -32,8 +29,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { clank as clankTable } from '../store/schema';
+import { clank as clankTable, pkg } from '../store/schema';
 import type { Db } from '../store/store';
+import { checkCustomDoc } from './check';
 import {
   CREW_RULES_FILE,
   type ClankDoc,
@@ -53,12 +51,13 @@ export interface Clank extends ClankDoc {
   docError: string | null;
   /** The user made it: its doc is in the library, with none shipped to go back to. */
   custom: boolean;
+  /** It was installed from a marketplace, so its doc can't give it more than ask above read. */
+  marketplace: boolean;
+  /** Why its marketplace took it down, which stops it working. Null when it hasn't. */
+  revoked: string | null;
 }
 
-/** The most a custom clank's prompt may come to with the crew rules, in tokens. */
-const MAX_CUSTOM_TOKENS = 6000;
-/** What the shipped docs stay under, so they fit small local models. */
-export const DOC_TOKEN_BUDGET = 2500;
+export { DOC_TOKEN_BUDGET } from './check';
 
 /** A custom clank's doc in the library that can't be used, and why. */
 export interface BrokenClank {
@@ -188,6 +187,56 @@ export class CrewService extends EventEmitter<{ change: [] }> {
     return this.changed(id);
   }
 
+  /**
+   * Checks a doc as one joining the library is: its frontmatter, real tools, a finishing call, no
+   * secrets, a prompt that fits. Throws a `CrewDocError` saying what's wrong.
+   */
+  checkDoc(text: string): ClankDoc {
+    const doc = parseClankDoc(text);
+    if (RESERVED_CLANK_IDS.includes(doc.frontmatter.id)) {
+      throw new CrewDocError(
+        `"${doc.frontmatter.id}" means something else in the workflow, so a clank can't be called that.`,
+      );
+    }
+    this.checkCustom(doc);
+    return doc;
+  }
+
+  /** About how many tokens a prompt takes with the crew rules. */
+  tokensOf(body: string): number {
+    return estimateTokens(this.rulesText) + estimateTokens(body);
+  }
+
+  /** Whether a clank ships with the app. */
+  isPremade(id: string): boolean {
+    return this.bundled.has(id);
+  }
+
+  /**
+   * Puts a clank from a marketplace in the library, or a newer version over the one that's there.
+   * It never replaces a clank that ships with the app, or one the user made.
+   */
+  installPackage(text: string): ClankSummary {
+    const doc = this.checkDoc(text);
+    const id = doc.frontmatter.id;
+    if (this.bundled.has(id)) {
+      throw new CrewDocError(`${id} is a clank that ships with the app, which nothing replaces.`);
+    }
+    if (existsSync(this.editedPath(id)) && !this.fromMarketplace().has(id)) {
+      throw new CrewDocError(
+        `You already have a clank of your own with the id ${id}. Delete or rename it first.`,
+      );
+    }
+    this.write(id, text);
+    return this.changed(id);
+  }
+
+  /** Reads the library again, after a marketplace changed what's installed or revoked. */
+  refresh(): void {
+    this.cache = null;
+    this.emit('change');
+  }
+
   /** Takes a custom clank out of the library, with what the user set on its profile. */
   deleteCustom(id: ClankId): void {
     if (this.bundled.has(id)) {
@@ -238,42 +287,7 @@ export class CrewService extends EventEmitter<{ change: [] }> {
 
   /** What a custom clank's doc must get right before it joins the library. */
   private checkCustom(doc: ClankDoc): void {
-    const { tools, workflow } = doc.frontmatter;
-    const listed = [...tools.allow, ...tools.ask, ...tools.deny];
-    const unknown = listed.filter(
-      (entry) => toolsMatching(entry).length === 0 && !/^mcp_[a-z0-9_]+\*?$/.test(entry),
-    );
-    if (unknown.length > 0) {
-      throw new CrewDocError(
-        `${unknown.join(', ')} ${unknown.length === 1 ? "isn't a tool" : "aren't tools"}. Use names from the tool list, or a group such as browser_*.`,
-      );
-    }
-    const given = new Set<string>([
-      ...ALWAYS_AVAILABLE_TOOLS,
-      ...[...tools.allow, ...tools.ask].flatMap(toolsMatching),
-    ]);
-    const finish = workflow.kind === 'maker' ? 'submit_output' : 'review_pass';
-    if (!given.has(finish)) {
-      throw new CrewDocError(
-        'A checker passes tickets with review_pass, so its tools must allow it. Add review_pass to its tools.',
-      );
-    }
-    if (!doc.body.includes(finish)) {
-      throw new CrewDocError(
-        `The prompt never says how to finish. Tell it to call \`${finish}\` when ${workflow.kind === 'maker' ? 'its work is done, and what to put in it' : 'the ticket passes, and `ticket_bounce` when it does not'}.`,
-      );
-    }
-    if (looksSecret(doc.body)) {
-      throw new CrewDocError(
-        'The prompt has something that looks like a password or key in it. Take it out: prompts go to the model, and to anyone you share the clank with.',
-      );
-    }
-    const tokens = estimateTokens(this.rulesText) + estimateTokens(doc.body);
-    if (tokens > MAX_CUSTOM_TOKENS) {
-      throw new CrewDocError(
-        `With the crew rules the prompt comes to about ${tokens} tokens. Keep it under ${MAX_CUSTOM_TOKENS}; under ${DOC_TOKEN_BUDGET} fits small local models.`,
-      );
-    }
+    checkCustomDoc(doc, this.rulesText);
   }
 
   /** About how many tokens a doc's prompt takes with the crew rules, which every clank gets. */
@@ -367,7 +381,24 @@ export class CrewService extends EventEmitter<{ change: [] }> {
       doc: source,
       docError,
       custom: false,
+      marketplace: false,
+      revoked: null,
     };
+  }
+
+  /** The clanks installed from a marketplace, each with why it was taken down, if it was. */
+  private fromMarketplace(): Map<string, string | null> {
+    const rows = this.options.db.select().from(pkg).all();
+    return new Map(
+      rows
+        .filter((row) => row.kind === 'clank')
+        .map((row) => [
+          row.packageId,
+          row.status === 'revoked'
+            ? `It was taken down from its marketplace${row.notice ? `: ${row.notice}` : '.'}`
+            : null,
+        ]),
+    );
   }
 
   /** The library's docs that aren't edited copies of a premade clank's. */
@@ -390,6 +421,7 @@ export class CrewService extends EventEmitter<{ change: [] }> {
       throw new CrewDocError(`${id}.md says its id is ${doc.frontmatter.id}`);
     }
     const overrides = this.readOverrides(id);
+    const installed = this.fromMarketplace();
     return {
       ...doc,
       id,
@@ -399,6 +431,8 @@ export class CrewService extends EventEmitter<{ change: [] }> {
       doc: 'edited',
       docError: null,
       custom: true,
+      marketplace: installed.has(id),
+      revoked: installed.get(id) ?? null,
     };
   }
 
@@ -448,6 +482,7 @@ function summarize(clank: Clank): ClankSummary {
     doc: clank.doc,
     docError: clank.docError,
     custom: clank.custom,
+    marketplace: clank.marketplace,
     minContext: frontmatter.model.min_context,
     needs: frontmatter.model.needs,
     browser: clank.overrides.browser,

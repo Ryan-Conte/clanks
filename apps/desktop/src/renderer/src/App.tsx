@@ -11,6 +11,7 @@ import { useTRPC } from './lib/trpc';
 import { DraftChat, LiveChat } from './pages/ChatPage';
 import { ClankPage, CrewPage } from './pages/CrewPage';
 import { HomePage } from './pages/HomePage';
+import { MarketplacePage } from './pages/MarketplacePage';
 import { ModelsPage } from './pages/ModelsPage';
 import { NewClankPage } from './pages/NewClankPage';
 import { NewProjectPage } from './pages/NewProjectPage';
@@ -84,6 +85,8 @@ function Page({ route }: { route: Route }) {
       return <NewProjectPage />;
     case 'models':
       return <ModelsPage />;
+    case 'marketplace':
+      return <MarketplacePage open={route.open ?? null} />;
     case 'settings':
       return <SettingsPage />;
   }
@@ -121,6 +124,7 @@ function TitleBar({ route, welcome }: { route: Route; welcome: boolean }) {
       'new-clank': 'New clank',
       'new-project': 'New project',
       models: 'Models',
+      marketplace: 'Marketplace',
       settings: 'Settings',
     }[route.page];
   }

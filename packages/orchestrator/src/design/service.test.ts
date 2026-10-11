@@ -325,6 +325,7 @@ describe('lint and hand-in', () => {
     expect(await service.check(dir)).toEqual({
       file: 'design/site.design',
       frames: ['Home / Desktop'],
+      layers: ['Home / Desktop'],
       lint: 'no problems',
     });
     // The user deletes a token the design uses: it's broken until that's fixed.

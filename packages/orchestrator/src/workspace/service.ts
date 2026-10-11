@@ -66,8 +66,12 @@ export interface WorkBase {
   from: string;
   /** The commit the run's changes are measured against, when it isn't where it started. */
   base?: string;
-  /** Keep the worktree at `from`'s tip: a checker checks exactly what the maker handed in. */
-  follow?: boolean;
+  /**
+   * Keep the worktree at `from`'s tip: a checker checks exactly what the maker handed in. With
+   * `unchanged`, only while the run has made nothing of its own: a chat in a project keeps up
+   * with the project as tickets merge, until it changes a file itself.
+   */
+  follow?: boolean | 'unchanged';
 }
 
 export interface WorkspaceServiceOptions {
@@ -160,7 +164,9 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
     const info = (await repoInfo(folder))!;
     const id = randomUUID();
     const name = this.options.workName?.(conversationId) ?? `chat-${conversationId.slice(0, 8)}`;
-    const worktree = join(this.options.worktreesDir, repoKey(info.root), name);
+    // The folder is lower case: tools that name a project after its folder, as npm's starters
+    // do, refuse capitals. The branch keeps the ticket's key as it's written.
+    const worktree = join(this.options.worktreesDir, repoKey(info.root), name.toLowerCase());
     const branch = `clanks/${name}`;
     try {
       const start = await this.options.workBase?.(conversationId);
@@ -169,12 +175,14 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
       const existed = await resolveCommit(info.root, `refs/heads/${branch}`);
       await addWorktree({ repoRoot: info.root, path: worktree, branch, base: from });
       // A checker's copy is the maker's work as it was handed in, whatever its branch had before.
-      if (start?.follow && existed && existed !== from) await resetWorktree(worktree, from);
+      if (start?.follow === true && existed && existed !== from) {
+        await resetWorktree(worktree, from);
+      }
       const head = await git(['rev-parse', 'HEAD'], { cwd: worktree });
       // A branch an earlier run left is picked up where it was; its changes count from its base.
       const baseCommit =
         (start?.base ? await resolveCommit(info.root, start.base) : null) ??
-        (existed && !start?.follow ? await mergeBase(info.root, head, from) : null) ??
+        (existed && start?.follow !== true ? await mergeBase(info.root, head, from) : null) ??
         from;
       const row: RunRow = {
         id,
@@ -246,7 +254,9 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
 
   /**
    * Brings a checker's copy up to the maker's latest hand-in, when it's moved on since. The checker
-   * never commits, so nothing of its own is lost; what it changed shows as a checkpoint.
+   * never commits, so nothing of its own is lost; what it changed shows as a checkpoint. A chat's
+   * copy is brought up to its project the same way, while it has no commits or changes of its own,
+   * and its changes count from there on.
    */
   private async follow(row: RunRow): Promise<void> {
     const start = await this.options.workBase?.(row.conversationId);
@@ -256,7 +266,21 @@ export class WorkspaceService extends EventEmitter<{ change: [conversationId: st
     const moved = await this.lock(row.id, async () => {
       const head = await git(['rev-parse', 'HEAD'], { cwd: row.worktree }).catch(() => null);
       if (head === tip) return false;
+      if (start.follow === 'unchanged') {
+        if (head !== row.baseCommit) return false;
+        const changed = await git(['status', '--porcelain'], { cwd: row.worktree }).catch(
+          () => 'unknown',
+        );
+        if (changed.trim() !== '') return false;
+      }
       await resetWorktree(row.worktree, tip);
+      if (start.follow === 'unchanged') {
+        this.options.db
+          .update(runTable)
+          .set({ baseCommit: tip })
+          .where(eq(runTable.id, row.id))
+          .run();
+      }
       await this.snapshot(row, { author: 'user', label: `Caught up with ${start.from}` });
       return true;
     });

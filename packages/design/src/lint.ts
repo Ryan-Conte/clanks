@@ -59,6 +59,10 @@ const AA_LARGE = 3;
 const TAP_PX = 44;
 /** Frames this narrow are for phones. */
 const MOBILE_PX = 600;
+/** The sizes social graphics are made at: square, portrait, story, landscape and link preview. */
+const GRAPHIC_SIZES = ['1080x1080', '1080x1350', '1080x1920', '1600x900', '1200x630'];
+/** A graphic is seen at a third of its size in a feed, so its headline is at least this big. */
+const GRAPHIC_HEADLINE_PX = 56;
 
 const INTERACTIVE =
   /\b(button|btn|link|input|field|checkbox|radio|switch|toggle|tab|chip|select|cta)\b/i;
@@ -88,6 +92,24 @@ export function lint(design: Design, tokens: TokenSet, options: LintOptions = {}
     }
   }
   if (!only) {
+    // A frame is found by its name: by the posts that show it and the tickets that build it.
+    const named = new Map<string, Node[]>();
+    for (const page of design.pages) {
+      for (const top of page.children) {
+        if (top.type === 'frame') named.set(top.name, [...(named.get(top.name) ?? []), top]);
+      }
+    }
+    for (const [name, frames] of named) {
+      if (frames.length < 2) continue;
+      issues.push({
+        level: 'error',
+        rule: 'duplicate-frame',
+        id: frames.at(-1)!.id,
+        name,
+        where: name,
+        message: `is the name of ${frames.length} frames (${frames.map((f) => f.id).join(', ')}). A frame is found by its name: delete the ones this one replaced with design_delete, or rename them.`,
+      });
+    }
     for (const component of design.components) {
       for (const variant of component.variants) {
         const where = `${component.name} (${variant.name})`;
@@ -390,6 +412,30 @@ function contrastRule(
     node.children.forEach(sizes);
   };
   sizes(drawn);
+  // A graphic for a feed needs a headline that reads when the graphic is shown small.
+  const top = drawn.node;
+  if (top.type === 'frame' && GRAPHIC_SIZES.includes(`${String(top.w)}x${String(top.h)}`)) {
+    let biggest = 0;
+    const measure = (node: RenderNode) => {
+      if (node.node.type === 'text') {
+        const text = node.node;
+        const style = text.style ? resolveTypography(tokens, text.style, modes[0]!) : null;
+        const size = resolveNumber(tokens, text.size, modes[0]!) ?? style?.fontSize ?? 16;
+        biggest = Math.max(biggest, size);
+      }
+      node.children.forEach(measure);
+    };
+    measure(drawn);
+    if (biggest > 0 && biggest < GRAPHIC_HEADLINE_PX) {
+      add({
+        id: top.id,
+        name: top.name,
+        level: 'warning',
+        rule: 'graphic-type',
+        message: `is a graphic people see small in a feed, and its biggest text is ${biggest}px. Make the headline at least ${GRAPHIC_HEADLINE_PX}px.`,
+      });
+    }
+  }
 }
 
 function describe(colour: Rgba): string {
