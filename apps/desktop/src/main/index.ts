@@ -1,24 +1,31 @@
 import { type Orchestrator, startOrchestrator } from '@clanks/orchestrator';
-import { type BrowserWindow, type Tray, app, dialog, nativeTheme, shell } from 'electron';
+import { BACKGROUND_SWITCH } from '@clanks/routines';
+import { type BrowserWindow, app, dialog, nativeTheme, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createBrowserHost } from './browser';
+import { attachCrashReports, startCrashReports } from './crash';
 import { createDesignHost } from './design';
 import { attachIpcHandler } from './ipc/electron';
 import { createIpcHandler } from './ipc/server';
 import { keychainCipher } from './keychain';
 import { dataDir, resourcePath } from './paths';
+import { type RoutineShell, attachRoutines } from './routines';
 import { runSmokeTest } from './smoke-test';
-import { createTray } from './tray';
+import { type AppTray, createTray } from './tray';
+import { type Updater, attachUpdater } from './updater';
 import { createMainWindow } from './window';
 
 const smokeTest = app.commandLine.hasSwitch('smoke-test');
+// Started by the OS for a routine, or with the computer: it stays in the tray until it's opened.
+const background = app.commandLine.hasSwitch(BACKGROUND_SWITCH.replace(/^--/, ''));
 
 // Before anything reads them: the lock and the orchestrator live in the data folder, and
 // Chromium's caches and storage for the app window go in a folder of their own inside it.
 app.setPath('userData', dataDir());
 app.setPath('sessionData', join(app.getPath('userData'), 'chromium'));
 if (process.platform === 'win32') app.setAppUserModelId('si.clanks.app');
+if (!smokeTest) startCrashReports();
 
 if (!app.requestSingleInstanceLock()) {
   // Another clanks owns this data folder. It shows its window when we try to start.
@@ -26,7 +33,9 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   let orchestrator: Orchestrator | undefined;
   let mainWindow: BrowserWindow | undefined;
-  let tray: Tray | undefined;
+  let tray: AppTray | undefined;
+  let routineShell: RoutineShell | undefined;
+  let updater: Updater | undefined;
   let designHost: ReturnType<typeof createDesignHost> | undefined;
   let quitting = false;
 
@@ -61,6 +70,8 @@ if (!app.requestSingleInstanceLock()) {
   // The window frames are drawn in is never shown, so it doesn't count as an open one.
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => {
+    routineShell?.dispose();
+    updater?.dispose();
     tray?.destroy();
     designHost?.close();
     orchestrator?.close();
@@ -86,7 +97,10 @@ if (!app.requestSingleInstanceLock()) {
         browserHost,
         designHost,
         // Signing in to GitHub with a code needs an OAuth app; without one, users paste a token.
-        githubClientId: process.env.CLANKS_GITHUB_CLIENT_ID || null,
+        githubClientId:
+          process.env.CLANKS_GITHUB_CLIENT_ID ||
+          import.meta.env.MAIN_VITE_CLANKS_GITHUB_CLIENT_ID ||
+          null,
         host: {
           pickFolder: async ({ title, defaultPath }) => {
             const options: Electron.OpenDialogOptions = {
@@ -123,6 +137,12 @@ if (!app.requestSingleInstanceLock()) {
             if (!/^https:\/\//i.test(url)) throw new Error(`${url} isn't an https address`);
             await shell.openExternal(url);
           },
+          checkForUpdates: async () => updater?.check(),
+          downloadUpdate: async () => updater?.download(),
+          installUpdate: () => {
+            quitting = true;
+            updater?.install();
+          },
         },
         appInfo: {
           name: app.getName(),
@@ -151,8 +171,21 @@ if (!app.requestSingleInstanceLock()) {
 
       // The app is dark, like clanks.si, so native menus and dialogs should be too.
       nativeTheme.themeSource = 'dark';
-      tray = createTray({ open: openWindow, quit: () => app.quit() });
-      const window = openWindow();
+      tray = createTray({
+        open: openWindow,
+        quit: () => app.quit(),
+        routines: () => routineShell,
+      });
+      if (!smokeTest) {
+        routineShell = attachRoutines({
+          orchestrator: started,
+          open: openWindow,
+          onChange: () => tray?.refresh(),
+        });
+        updater = attachUpdater(started);
+        attachCrashReports(started);
+      }
+      const window = background && !smokeTest ? undefined : openWindow();
 
       if (smokeTest && window) {
         const info = await runSmokeTest(

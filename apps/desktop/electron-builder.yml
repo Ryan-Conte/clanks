@@ -26,17 +26,31 @@ asarUnpack:
 # better-sqlite3 ships N-API prebuilds that work in Electron as they are.
 npmRebuild: false
 
+# The licence and its notices go with every install, in the app's resources folder.
+extraResources:
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: ../../NOTICE
+    to: NOTICE.txt
+
 mac:
   target: [dmg, zip]
   category: public.app-category.developer-tools
-  # Unsigned until signing and notarisation land (Milestone 11).
-  identity: null
+  # Signed with the Developer ID in the keychain or in CSC_LINK, and notarised when APPLE_ID,
+  # APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID (or an App Store Connect API key) are set. With
+  # CSC_IDENTITY_AUTO_DISCOVERY=false it's left unsigned, which is how CI checks a build.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   files:
     - '!node_modules/better-sqlite3/prebuilds/{linux,linuxmusl,win32}-*'
 
 win:
   target: [nsis]
   executableName: clanks
+  # Signed when WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD (or CSC_LINK and CSC_KEY_PASSWORD) hold a
+  # code-signing certificate. Without one the installer is unsigned and SmartScreen says so.
   files:
     - '!node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*'
 
@@ -44,7 +58,8 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  artifactName: ${productName}-${version}-setup-${arch}.${ext}
+  # No version in the names, so clanks.si links straight to the latest release's files.
+  artifactName: ${productName}-setup-${arch}.${ext}
 
 linux:
   target: [AppImage, deb]
@@ -56,9 +71,19 @@ linux:
     - '!node_modules/better-sqlite3/prebuilds/{darwin,linuxmusl,win32}-*'
 
 dmg:
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: ${productName}-${arch}.${ext}
 
 appImage:
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: ${productName}-${arch}.${ext}
 
-publish: null
+deb:
+  artifactName: ${productName}-${arch}.${ext}
+
+# Where a release goes and where the app looks for a newer one: this repository's releases. A
+# build is only ever uploaded by the release workflow (`--publish always`); `pnpm package` never
+# uploads. Linux updates itself from the AppImage; the .deb is updated by installing a newer one.
+publish:
+  provider: github
+  owner: Ryan-Conte
+  repo: clanks
+  releaseType: draft

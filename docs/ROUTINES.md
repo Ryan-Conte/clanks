@@ -2,7 +2,7 @@
 
 Routines are clanks' scheduler: work that starts at a time, on a repeating schedule or when something happens, and actions that go out at an exact time once you have approved them. "Have Prism make a promo banner on Friday afternoon and Buzz post it on X at 5pm" is one routine. So is "every Monday at 9, Scout summarises last week's competitor pricing", and "when a release tag is pushed, Quill writes the release notes and Buzz drafts the announcement".
 
-This is the full spec. The summary is in the [buildout plan](PLAN.md#routines) and the milestone is in the [roadmap](ROADMAP.md).
+This is the full spec. The summary is in the [buildout plan](PLAN.md#routines), with what was built and where it differs under [In Milestone 10](PLAN.md#in-milestone-10), and the milestone is in the [roadmap](ROADMAP.md).
 
 ## Goals
 
@@ -70,13 +70,13 @@ steps:
   - id: publish
     depends_on: [banner, copy]
     action:
-      integration: x
-      operation: create_post
+      integration: xcom
+      operation: create_post_with_image
       connection: "@surfshop"
       at: "17:00"                    # on the run's date, in the routine's time zone
       payload:
         text: "{{steps.copy.output.posts[0].text}}"
-        media: ["{{steps.banner.output.frames['Promo / X'].png}}"]
+        image: "{{steps.banner.output.frames['Promo / X'].png}}"
 approval:
   remind_before: 30m
 timing:
@@ -109,8 +109,8 @@ Routines are stored in SQLite and edited in the app. They export to and import f
   | Event | Fires when | Filters |
   | --- | --- | --- |
   | `spec.approved` | You approve a spec version | |
-  | `ticket.done` | A ticket reaches Done | type, clank, label |
-  | `pr.merged` | A clanks pull request is merged | label, base branch |
+  | `ticket.done` | A ticket reaches Done | type, clank |
+  | `pr.merged` | A clanks pull request is merged | base branch |
   | `git.tag` | A new tag appears in the project's repo | pattern, such as `v*` |
   | `routine.finished` | Another routine's run finishes | routine, status |
 
@@ -144,9 +144,10 @@ All of a run's tickets are created when the run starts, with their dependencies,
 
 ### Templates
 
-Ticket fields and payloads can use `{{inputs.*}}`, `{{run.date}}`, `{{run.started_at}}`, `{{routine.name}}`, `{{event.*}}` and `{{steps.<id>.output.*}}`. Design outputs expose frames by name with their exports, such as `{{steps.banner.output.frames['Promo / X'].png}}`.
+Ticket fields and payloads can use `{{inputs.*}}`, `{{run.date}}`, `{{run.started_at}}`, `{{routine.name}}` and `{{event.*}}`; an action's payload can also use `{{steps.<id>.output.*}}`. Design outputs expose frames by name with their exports, such as `{{steps.banner.output.frames['Promo / X'].png}}`, and the first frame as `{{steps.banner.output.image}}`. A campaign's first post is `{{steps.copy.output.text}}`.
 
-- Values come only from approved outputs, and only from steps listed in `depends_on`. The editor rejects anything else.
+- Values come only from approved outputs, and only from steps listed in `depends_on`. The editor rejects anything else, and a field that a step's kind of ticket doesn't hand in.
+- A ticket is made when its run starts, before any step has handed anything in, so its own fields can't use `{{steps.*}}`. It's told what the tickets it depends on handed in, as any ticket is.
 - Templates are substitution only. There are no expressions or code.
 
 ### Timing
@@ -269,6 +270,6 @@ No clank can activate, edit, run or delete a routine, and no clank can approve o
 ## Open questions
 
 - **Posting without per-item approval.** Whether a routine should ever post without each item being approved, such as "post the weekly tip every Monday, approved once". The current rule says no.
-- **X API access.** Posting needs your own X developer app and is subject to X's API tiers and rate limits. Decide whether an X integration ships bundled or only on the marketplace, and whether a social scheduler integration is a better default for hand-off.
+- **X API access.** Posting needs your own X developer app and is subject to X's API tiers and rate limits. An X integration ships with the app (`integrations/xcom`), written from X's API description and run only against a stand-in so far. Whether a social scheduler integration is a better default for hand-off is still open.
 - **Third-party triggers.** Polling services for events (a new order, a new review) to start routines, and how often.
 - **Waking from sleep** on macOS and Linux without admin rights.

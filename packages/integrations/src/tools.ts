@@ -153,6 +153,19 @@ export interface OperationResult {
   body?: unknown;
   /** For a call the service turned down: its own words for why, without the advice for a clank. */
   reason?: string;
+  /** For a call the service turned down: the status it answered with. */
+  status?: number;
+}
+
+/**
+ * A call that got no answer: the service couldn't be reached, or the connection dropped. One that
+ * changes things may or may not have gone through.
+ */
+export class OperationUnanswered extends ToolFailure {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OperationUnanswered';
+  }
 }
 
 /**
@@ -220,7 +233,8 @@ export async function runOperation(
         risk !== 'read' && error.status === null && /Couldn't reach/.test(error.message)
           ? ` It may or may not have gone through: ${operation.verify ? `check with int_${manifest.id}_${operation.verify}` : 'check'} before you try again.`
           : '';
-      throw new ToolFailure(clean(`${error.message}.${unsure}${alreadyDone(done)}`));
+      const message = clean(`${error.message}.${unsure}${alreadyDone(done)}`);
+      throw error.status === null ? new OperationUnanswered(message) : new ToolFailure(message);
     }
     const body = parseJson(reply);
     const failed =
@@ -243,6 +257,7 @@ export async function runOperation(
         error: true,
         output: clean(reply.text),
         reason: clean(why),
+        status: reply.status,
       };
     }
     for (const [name, path] of Object.entries(step.save)) {

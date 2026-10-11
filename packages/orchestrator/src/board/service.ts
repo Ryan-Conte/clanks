@@ -17,6 +17,7 @@ import {
   type ProjectIntegration,
   type ProjectSummary,
   REPO_HOST_NAMES,
+  type RoutineEvent,
   type RunRole,
   type Settings,
   type SourceShot,
@@ -30,6 +31,7 @@ import {
   type TicketDelivery,
   type TicketLive,
   type TicketPatch,
+  type TicketRoutine,
   type TicketRun,
   type Usage,
   type WorkflowMember,
@@ -286,9 +288,13 @@ interface Load {
  * moves tickets through their routes. Tickets move only through here. A scheduler starts what's
  * ready within the project's limits, its budgets and the free slots on each model; makers hand in,
  * checkers pass or bounce, Atlas signs off and the user approves, which merges the work. Emits
- * `change` with a project's id whenever its board changes.
+ * `change` with a project's id whenever its board changes, and `happened` with what routines can
+ * start on: a spec approved, a ticket done, a pull request merged.
  */
-export class BoardService extends EventEmitter<{ change: [projectId: string] }> {
+export class BoardService extends EventEmitter<{
+  change: [projectId: string];
+  happened: [projectId: string, event: RoutineEvent];
+}> {
   private readonly store: BoardStore;
   private host: RunHost | null = null;
   /** Which project each conversation is in, so live events find their board cheaply. */
@@ -297,6 +303,8 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
   private pumpAgain = false;
   /** How often each problem with a plan was raised with its planner, by planning run. */
   private readonly planChecks = new Map<string, Map<string, number>>();
+  /** Why a routine's ticket may not be worked now, such as its run's budget being spent. */
+  private routineGate: ((ticket: Ticket) => string | null) | null = null;
 
   constructor(private readonly options: BoardServiceOptions) {
     super();
@@ -309,6 +317,26 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
   /** Chats start runs and say how they went; the orchestrator wires the two together. */
   attach(host: RunHost): void {
     this.host = host;
+  }
+
+  /** Routines say when a run's ticket has to stop: its budget is spent, or it was cancelled. */
+  gateRoutines(gate: (ticket: Ticket) => string | null): void {
+    this.routineGate = gate;
+  }
+
+  /** What each ticket in a project has spent. */
+  ticketUsage(projectId: string): Map<string, Usage> {
+    const rows = this.store.usage(projectId);
+    const usage = new Map<string, Usage>();
+    for (const id of new Set(rows.map((r) => r.ticketId))) {
+      if (id) usage.set(id, this.sum(rows.filter((r) => r.ticketId === id)));
+    }
+    return usage;
+  }
+
+  /** Starts whatever can start in a project, after something outside the board changed. */
+  pumpProject(projectId: string): void {
+    this.pump(projectId);
   }
 
   // Reading
@@ -530,6 +558,107 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     return this.ticket(ticket.id);
   }
 
+  /**
+   * The tickets a routine's run starts with, made together so the whole run shows on the board at
+   * once. Each waits on the tickets of the steps it depends on, and goes through its normal route.
+   * If one can't be made, none is.
+   */
+  addForRoutine(
+    projectId: string,
+    steps: {
+      stepId: string;
+      title: string;
+      type: string;
+      description: string;
+      criteria: string[];
+      clank: string;
+      /** The steps it waits on, by id. */
+      dependsOn: string[];
+      routine: TicketRoutine;
+    }[],
+  ): Map<string, Ticket> {
+    const project = this.options.projects.get(projectId);
+    const made = new Map<string, Ticket>();
+    const pending = [...steps];
+    try {
+      while (pending.length > 0) {
+        // What a ticket waits on is made before it.
+        const at = pending.findIndex((step) =>
+          step.dependsOn.every((d) => made.has(d) || !steps.some((s) => s.stepId === d)),
+        );
+        if (at === -1) throw new BoardError("The routine's steps wait on each other");
+        const [step] = pending.splice(at, 1) as [(typeof steps)[number]];
+        const { ticket } = this.create(project, {
+          title: step.title,
+          type: step.type,
+          description: step.description,
+          stories: [],
+          criteria: step.criteria,
+          assignee: step.clank,
+          dependsOn: step.dependsOn.flatMap((d) => made.get(d)?.key ?? []),
+          skipChecks: [],
+          actor: 'app',
+          origin: 'routine',
+          conversationId: null,
+          specVersion: null,
+          proposed: false,
+          routine: step.routine,
+        });
+        made.set(step.stepId, ticket);
+      }
+    } catch (error) {
+      for (const ticket of made.values()) this.store.deleteTicket(ticket.id);
+      throw error;
+    }
+    this.pump(projectId);
+    return made;
+  }
+
+  /**
+   * Tickets a project template starts with, made together. Each waits on the ones it names by
+   * their place in the list. One that can't be made as written is left out, with why.
+   */
+  addMany(
+    projectId: string,
+    tickets: {
+      title: string;
+      type: string;
+      description: string;
+      criteria: string[];
+      /** Who makes it. Null leaves it open. */
+      clank: string | null;
+      dependsOn: number[];
+    }[],
+  ): { tickets: Ticket[]; notes: string[] } {
+    const project = this.options.projects.get(projectId);
+    const made = new Map<number, Ticket>();
+    const notes: string[] = [];
+    tickets.forEach((ticket, index) => {
+      const draft = {
+        title: ticket.title,
+        type: ticket.type,
+        description: ticket.description,
+        stories: [],
+        criteria: ticket.criteria,
+        dependsOn: ticket.dependsOn.flatMap((i) => made.get(i)?.key ?? []),
+        skipChecks: [],
+        actor: 'user',
+        origin: 'board' as const,
+        conversationId: null,
+        specVersion: null,
+        proposed: false,
+      };
+      try {
+        made.set(index, this.create(project, { ...draft, assignee: ticket.clank }).ticket);
+      } catch (error) {
+        if (!(error instanceof BoardError)) throw error;
+        notes.push(`"${ticket.title}" wasn't added: ${error.message}`);
+      }
+    });
+    this.pump(projectId);
+    return { tickets: [...made.values()].map((t) => this.ticket(t.id)), notes };
+  }
+
   editTicket(id: string, patch: TicketPatch): Ticket {
     const ticket = this.ticket(id);
     this.applyPatch(ticket, patch, 'user');
@@ -644,6 +773,10 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       const now = this.now();
       this.store.updateSpec(draft.id, { status: 'approved', approvedAt: now, updatedAt: now });
       this.finish(ticket, 'approved', `approved spec v${draft.version} (${ticket.key})`);
+      this.emit('happened', project.id, {
+        name: 'spec.approved',
+        detail: { version: String(draft.version), ticket: ticket.key },
+      });
       this.plan(ticket, { ...draft, status: 'approved', approvedAt: now });
       this.pump(ticket.projectId);
       return this.ticket(id);
@@ -680,6 +813,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
         },
       });
       this.event(project.id, id, 'user', 'merged', `${merged.how} (${ticket.key})`);
+      this.merged(project, current);
     }
     this.finish(current, 'approved', `approved ${ticket.key}`);
     this.pump(ticket.projectId);
@@ -1032,6 +1166,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
               'merged',
               `merged ${pullRequestName(project.repo.host, pr.number)} on ${REPO_HOST_NAMES[project.repo.host]} (${ticket.key})`,
             );
+            this.merged(project, this.ticket(ticket.id));
             this.finish(this.ticket(ticket.id), 'approved', `approved ${ticket.key}`);
             this.pump(project.id);
           } else {
@@ -1395,6 +1530,8 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     if (clank.reached) {
       return `${this.names().clank(conversation.clankId)}'s budget of ${clank.reached} in this project is spent`;
     }
+    const ticket = conversation.ticketId ? this.store.ticket(conversation.ticketId) : undefined;
+    if (ticket?.routine) return this.routineGate?.(ticket) ?? null;
     return null;
   }
 
@@ -1469,6 +1606,8 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       conversationId: string | null;
       specVersion: number | null;
       proposed: boolean;
+      /** For a ticket a routine's run makes. */
+      routine?: TicketRoutine;
     },
   ): { ticket: Ticket; notes: string[] } {
     const type = outputTypeSchema.safeParse(input.type);
@@ -1567,6 +1706,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       delivery: null,
       sent: null,
       outcome: null,
+      routine: input.routine ?? null,
       createdAt: now,
       updatedAt: now,
       doneAt: null,
@@ -1875,6 +2015,11 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       if (ticket.doneAt || ticket.step < 0 || ticket.state !== 'waiting') continue;
       const clank = currentClank(ticket);
       if (!clank) continue;
+      const stopped = ticket.routine ? this.routineGate?.(ticket) : null;
+      if (stopped) {
+        hold(ticket, `Paused: ${stopped}.`);
+        continue;
+      }
       const verdict = this.canRun(project, clank, load, rows);
       if (!verdict.ok) {
         hold(ticket, verdict.reason);
@@ -1891,7 +2036,12 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
           t.step < 0 &&
           !t.proposed &&
           (t.state === 'idle' || t.state === 'waiting') &&
-          t.dependsOn.every((id) => tickets.find((d) => d.id === id)?.doneAt),
+          t.dependsOn.every((id) =>
+            dependencyMet(
+              t,
+              tickets.find((d) => d.id === id),
+            ),
+          ),
       )
       .sort((a, b) => Number(b.type === 'spec') - Number(a.type === 'spec'));
     // Tickets that can't start yet, but whose dependencies are done, say why.
@@ -1919,6 +2069,11 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
       }
       if (project.held) {
         hold(ticket, `${cap(this.options.userName())} is holding new work on this project.`);
+        continue;
+      }
+      const stopped = ticket.routine ? this.routineGate?.(ticket) : null;
+      if (stopped) {
+        hold(ticket, `Paused: ${stopped}.`);
         continue;
       }
       const makers = ticket.assignee
@@ -2019,7 +2174,7 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     const tickets = this.store.tickets(ticket.projectId);
     const waiting = ticket.dependsOn
       .map((id) => tickets.find((t) => t.id === id))
-      .filter((t): t is Ticket => t !== undefined && !t.doneAt);
+      .filter((t): t is Ticket => t !== undefined && !dependencyMet(ticket, t));
     if (waiting.length > 0) {
       throw new BoardError(`${ticket.key} waits on ${waiting.map((t) => t.key).join(', ')}`);
     }
@@ -2336,6 +2491,33 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
     if (outcome === 'approved') this.options.context.activateForTicket(ticket.projectId, ticket.id);
     else this.options.context.dropForTicket(ticket.projectId, ticket.id);
     this.event(ticket.projectId, ticket.id, 'user', outcome, text);
+    if (outcome === 'approved') {
+      this.emit('happened', ticket.projectId, {
+        name: 'ticket.done',
+        detail: {
+          key: ticket.key,
+          title: ticket.title,
+          type: ticket.type,
+          clank: ticket.route[0]?.clankId ?? '',
+        },
+      });
+    }
+  }
+
+  /** A ticket's work was merged, here or on its host: routines can start on that. */
+  private merged(project: Project, ticket: Ticket): void {
+    if (!ticket.delivery) return;
+    this.emit('happened', project.id, {
+      name: 'pr.merged',
+      detail: {
+        key: ticket.key,
+        title: ticket.title,
+        base: ticket.delivery.base,
+        branch: ticket.delivery.branch,
+        number: ticket.delivery.pr ? String(ticket.delivery.pr.number) : '',
+        url: ticket.delivery.pr?.url ?? '',
+      },
+    });
   }
 
   /** Pushes a ticket's branch and opens its pull request, in the background of handing in. */
@@ -3336,6 +3518,23 @@ export class BoardService extends EventEmitter<{ change: [projectId: string] }> 
 }
 
 /** What a run answering another clank's quick question is told. */
+/**
+ * Whether what a ticket waits on is there for it. A dependency is met when it's done. Within one
+ * run of a routine it's met once it's signed off, so the run's tickets follow one another without
+ * waiting for the user between them, who approves the run's work together. Code is the exception:
+ * it builds on what's merged.
+ */
+export function dependencyMet(ticket: Ticket, dependency: Ticket | undefined): boolean {
+  if (!dependency) return true;
+  if (dependency.doneAt) return true;
+  return (
+    ticket.type !== 'pr' &&
+    ticket.routine !== null &&
+    ticket.routine.runId === dependency.routine?.runId &&
+    dependency.step >= dependency.route.length
+  );
+}
+
 export function consultBrief(ticket: Ticket | null, names: Names): string {
   return [
     `Mode: consult. Another clank in the crew has put a quick question to you, in the message below${ticket ? `, while working ${ticket.key}: ${ticket.title}` : ''}. Answer it in your reply: briefly, with where you found each fact, and say so plainly when you don't know.`,

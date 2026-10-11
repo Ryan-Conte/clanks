@@ -23,6 +23,7 @@ import { useCrew } from '../../lib/crew';
 import { formatAgo, formatBytes } from '../../lib/format';
 import { useTRPC } from '../../lib/trpc';
 import { CopyButton, Markdown } from '../chat/Markdown';
+import { CampaignSchedule } from '../routines/CampaignSchedule';
 import { Badge, Button, ErrorText, IconButton, XIcon, inputClass } from '../ui';
 
 const EXPORT_LABELS: Record<DocumentExport, string> = {
@@ -49,6 +50,7 @@ function useArtifacts(card: TicketCard): Artifact[] {
  */
 export function WrittenOutput({ card, snapshot }: { card: TicketCard; snapshot: BoardSnapshot }) {
   const [reading, setReading] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
   const output = card.output;
   const artifacts = useArtifacts(card);
   if (!output || !isWrittenOutput(card.type)) return null;
@@ -105,6 +107,17 @@ export function WrittenOutput({ card, snapshot }: { card: TicketCard; snapshot: 
         </p>
       )}
       <ExportButtons card={card} />
+      {card.type === 'campaign' && posts.length > 0 && card.outcome === 'approved' && (
+        <span className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="primary" onClick={() => setScheduling(true)}>
+            Schedule the posts
+          </Button>
+          <span className="text-[12px] text-dim">
+            Each post with a time and an account goes out then, once you've approved it as shown.
+          </span>
+        </span>
+      )}
+      {scheduling && <CampaignSchedule card={card} onClose={() => setScheduling(false)} />}
       {others.length > 0 && <Files artifacts={others} />}
       {reading && (
         <Reader card={card} snapshot={snapshot} versions={main} onClose={() => setReading(false)} />
@@ -604,8 +617,8 @@ function Posts({ posts, projectId }: { posts: CampaignPost[]; projectId: string 
         })}
       </ol>
       <p className="text-[12px] text-dim">
-        Nothing here is posted. Approving accepts the plan and the drafts; posting at a set time
-        arrives with routines.
+        Nothing here is posted by approving the campaign, which accepts the plan and the drafts.
+        Once it's approved, Schedule the posts sends the ones you pick at their times.
       </p>
     </section>
   );

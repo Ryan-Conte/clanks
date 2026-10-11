@@ -6,6 +6,7 @@ import {
   type RepoHost,
   type SpecVersion,
   type Ticket,
+  type TicketRoutine,
   columnOf,
   criterionText,
   itemText,
@@ -214,8 +215,10 @@ export function ticketDetail(
     spec: `from spec v${ticket.specVersion ?? '?'}`,
     board: 'on the board',
     proposal: 'as a proposal',
+    routine: `by the routine "${ticket.routine?.name ?? '?'}"`,
   }[ticket.origin];
-  lines.push(`- Created by ${by}, ${from}`);
+  lines.push(ticket.origin === 'routine' ? `- Created ${from}` : `- Created by ${by}, ${from}`);
+  if (ticket.routine) lines.push(...routineLines(ticket.routine));
   if (ticket.stories.length > 0) lines.push(`- Stories: ${ticket.stories.join(', ')}`);
   for (const skip of ticket.skipped) {
     const who = skip.by === 'user' ? names.user : names.clank(skip.by);
@@ -266,6 +269,37 @@ export function ticketDetail(
 }
 
 /** What a clank handed in, as readable lines rather than JSON. */
+/** What a routine's ticket says of the run that made it: its date, its inputs and when it's due. */
+export function routineLines(routine: TicketRoutine): string[] {
+  const lines = [`- Run of ${routine.date} (${routine.zone})`];
+  const inputs = Object.entries(routine.inputs);
+  if (inputs.length > 0) {
+    lines.push(`- Inputs: ${inputs.map(([name, value]) => `${name} = ${value}`).join('; ')}`);
+  }
+  const due = dueText(routine);
+  if (due) lines.push(`- ${due}`);
+  return lines;
+}
+
+/** "Due 16:00, so it can be reviewed before the 17:00 post". Null for a ticket with no due time. */
+export function dueText(routine: TicketRoutine): string | null {
+  if (!routine.dueAt) return null;
+  const at = new Date(routine.dueAt);
+  const day = new Intl.DateTimeFormat('en-GB', {
+    timeZone: routine.zone,
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(at);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: routine.zone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(at);
+  return `Due ${time} on ${day.replace(',', '')}${routine.dueWhy ? `, ${routine.dueWhy}` : ''}`;
+}
+
 export function fieldsText(fields: Record<string, unknown>): string {
   return Object.entries(fields)
     .filter(([, value]) => value !== undefined && value !== null && value !== '')

@@ -2,7 +2,7 @@ import type { PackageKind } from '@clanks/core';
 import { createContext, useContext } from 'react';
 
 /** A project's views. */
-export type ProjectTab = 'board' | 'spec' | 'design' | 'context' | 'settings';
+export type ProjectTab = 'board' | 'spec' | 'design' | 'routines' | 'context' | 'settings';
 
 /** A package in a marketplace, by where it's listed. */
 export interface PackageRef {
@@ -20,8 +20,18 @@ export type Route =
   | { page: 'crew'; clankId: string | null }
   /** The form for a custom clank. */
   | { page: 'new-clank' }
-  /** A project, with a ticket's drawer open on the board, or a run's design open in Studio. */
-  | { page: 'project'; id: string; tab: ProjectTab; ticket?: string | null; run?: string | null }
+  /**
+   * A project, with a ticket's drawer open on the board, a run's design open in Studio, or a
+   * routine, a run or an action brought into view on its Routines tab.
+   */
+  | {
+      page: 'project';
+      id: string;
+      tab: ProjectTab;
+      ticket?: string | null;
+      run?: string | null;
+      focus?: string | null;
+    }
   | { page: 'new-project' }
   | { page: 'models' }
   /** The marketplace, or one package in it. */

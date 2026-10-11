@@ -2,8 +2,11 @@ import { z } from 'zod';
 import type { IntegrationOperationInfo, OperationRisk } from './integrations';
 import type { ToolPolicyLevel } from './tools';
 
-/** What a marketplace holds. Routine templates are listed, and install once routines arrive. */
-export const packageKindSchema = z.enum(['clank', 'integration', 'crew', 'routine']);
+/**
+ * What a marketplace holds: clanks, integrations, crews, routines to start from, and project
+ * templates.
+ */
+export const packageKindSchema = z.enum(['clank', 'integration', 'crew', 'routine', 'template']);
 
 export type PackageKind = z.infer<typeof packageKindSchema>;
 
@@ -12,6 +15,7 @@ export const PACKAGE_KIND_NAMES: Record<PackageKind, string> = {
   integration: 'Integration',
   crew: 'Crew',
   routine: 'Routine',
+  template: 'Template',
 };
 
 /** The open licences a package can be published under. */
@@ -178,6 +182,35 @@ export interface CrewPreview {
   missing: string[];
 }
 
+/** A routine template: what it would schedule, once the user fills it in and turns it on. */
+export interface RoutinePreview {
+  name: string;
+  /** What starts it, in words. */
+  trigger: string;
+  /** Each step in a line: who makes what, and what goes out when. */
+  steps: string[];
+  /** The clanks its ticket steps are for. */
+  clanks: string[];
+  /** The integrations its actions call. */
+  integrations: string[];
+  /** The routine as written. */
+  yaml: string;
+}
+
+/** A project template: the crew it wants and what it has the crew do first. */
+export interface TemplatePreview {
+  crew: string[];
+  /** Clanks it names that aren't in the library. */
+  missing: string[];
+  ask: string;
+  /** What Atlas is told when a project is made from it. */
+  kickoff: string;
+  /** Tickets it puts on the board straight away, each in a line. */
+  tickets: string[];
+  /** The template as written. */
+  yaml: string;
+}
+
 /** What an update changes that the user should look at before accepting it. */
 export interface UpdateChanges {
   from: string;
@@ -205,6 +238,8 @@ export interface PackagePreview {
   clank: ClankPreview | null;
   integration: IntegrationPreview | null;
   crew: CrewPreview | null;
+  routine: RoutinePreview | null;
+  template: TemplatePreview | null;
   /** Why it can't be installed as it is. */
   problems: string[];
   /** Set when a version is already installed. */

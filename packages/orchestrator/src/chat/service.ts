@@ -26,6 +26,7 @@ import type { GuideEntry } from '@clanks/integrations';
 import { BUILTIN_PROVIDER, ProviderError, type ProviderRegistry } from '@clanks/providers';
 import {
   type CrewAccess,
+  type RoutineAccess,
   type ToolContext,
   ToolArgumentsError,
   ToolFailure,
@@ -127,6 +128,10 @@ export interface ChatServiceOptions {
   artifactsDir: string;
   /** What clanks save with a ticket or a chat. Without it, they have no artifact tools. */
   artifacts?: ArtifactService;
+  /** Projects' routines, for the clanks that may read them and draft one. */
+  routines?: {
+    access(projectId: string, clankId: string, conversationId: string): RoutineAccess;
+  };
   now?: () => Date;
   platform?: NodeJS.Platform;
   /** How often a reply being written is saved, so a crash keeps most of it. */
@@ -1734,6 +1739,10 @@ export class ChatService extends EventEmitter<{
         conversation.role === 'consult'
           ? null
           : (input.scope?.crewAccess ?? (input.scope ? null : this.anyoneAccess(conversation))),
+      routines:
+        conversation.projectId && this.options.routines
+          ? this.options.routines.access(conversation.projectId, input.clank.id, conversation.id)
+          : null,
       signal,
       clank: input.clank,
       maxChars: input.maxChars,

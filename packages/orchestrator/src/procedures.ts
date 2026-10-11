@@ -16,6 +16,7 @@ import { IntegrationError } from './integrations/service';
 import { MarketplaceError } from './marketplace/service';
 import { McpError } from './mcp/service';
 import { ProjectError } from './projects/service';
+import { RoutineError } from './routines/service';
 import { SecretsUnavailableError } from './secrets';
 import { publicProcedure } from './trpc';
 import { WorkspaceError } from './workspace/service';
@@ -41,7 +42,8 @@ export function isUserError(error: unknown): error is Error {
     error instanceof ArtifactError ||
     error instanceof EmailError ||
     error instanceof IntegrationError ||
-    error instanceof MarketplaceError
+    error instanceof MarketplaceError ||
+    error instanceof RoutineError
   );
 }
 

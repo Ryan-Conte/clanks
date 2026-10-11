@@ -7,6 +7,7 @@ import { PullRow } from '../components/models/PullPanel';
 import { Button, Dot, ErrorText, Panel } from '../components/ui';
 import { formatBytes, formatTokens } from '../lib/format';
 import { type CatalogItem, useModels } from '../lib/models';
+import { useNav } from '../lib/nav';
 import { useTRPC } from '../lib/trpc';
 
 /**
@@ -179,5 +180,75 @@ function Choice(props: {
         <Capabilities capabilities={item.capabilities} />
       </span>
     </button>
+  );
+}
+
+/**
+ * First run's second step, once the crew has a model: a small sample project to watch the crew
+ * work, from two tickets to something to approve. It's offered once, and can be passed over.
+ */
+export function SampleOffer() {
+  const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const { go } = useNav();
+  const keep = (settings: Settings) =>
+    queryClient.setQueryData(trpc.settings.get.queryKey(), settings);
+  const skip = useMutation(trpc.settings.update.mutationOptions({ onSuccess: keep }));
+  const start = useMutation(
+    trpc.projects.createSample.mutationOptions({
+      onSuccess: (started) => {
+        void queryClient.invalidateQueries({ queryKey: trpc.settings.get.queryKey() });
+        go({ page: 'project', id: started.project.id, tab: 'board' });
+      },
+    }),
+  );
+
+  return (
+    <div className="relative mx-auto flex max-w-3xl flex-col gap-8 px-10 py-12">
+      <header className="flex flex-col gap-2">
+        <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase">First run</p>
+        <h1 className="text-3xl font-semibold tracking-[-0.03em]">Watch the crew work</h1>
+        <p className="text-dim">
+          The crew has its model. A sample project shows how a board runs before you bring your own
+          work: a one-page site for a coffee cart, in a new folder of its own.
+        </p>
+      </header>
+
+      <Panel
+        title="What happens"
+        description="It runs on the model you just picked, on this machine. A few minutes on a fast one, longer on a small one."
+      >
+        <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-white/85">
+          <li>
+            Two tickets go on the board: Quill writes the page's copy, and Forge builds the page.
+          </li>
+          <li>
+            Atlas signs the copy off and it waits in{' '}
+            <span className="text-white">Ready for you</span>. Open it, read it, and approve it.
+          </li>
+          <li>
+            Forge builds the page from that copy, in a copy of the folder, while you watch its files
+            change. Gauge opens it in the browser and checks it, and sends it back if it's wrong.
+          </li>
+          <li>
+            You approve the page, which merges it into the folder. Nothing leaves this computer.
+          </li>
+        </ol>
+      </Panel>
+
+      <div className="flex items-center gap-3">
+        <Button variant="primary" disabled={start.isPending} onClick={() => start.mutate()}>
+          {start.isPending ? 'Setting it up…' : 'Run the sample project'}
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={skip.isPending}
+          onClick={() => skip.mutate({ sampleOffered: true })}
+        >
+          Not now
+        </Button>
+      </div>
+      {(start.error ?? skip.error) && <ErrorText>{(start.error ?? skip.error)!.message}</ErrorText>}
+    </div>
   );
 }

@@ -65,7 +65,7 @@ describe('browsing and installing', () => {
     await context.marketplace.refresh();
     const snapshot = context.marketplace.snapshot();
     expect(snapshot.indexes).toMatchObject([
-      { name: 'Test market', builtin: true, repo: 'clanks/market', packages: 7, error: null },
+      { name: 'Test market', builtin: true, repo: 'clanks/market', packages: 11, error: null },
     ]);
     expect(snapshot.entries.map((e) => `${e.kind}/${e.id}`)).toEqual([
       'clank/sentinel',
@@ -75,6 +75,10 @@ describe('browsing and installing', () => {
       'integration/slack',
       'integration/stripe',
       'integration/vercel',
+      'integration/xcom',
+      'routine/release-notes',
+      'routine/weekly-digest',
+      'template/write-the-docs',
     ]);
     expect(snapshot.entries.find((e) => e.id === 'stripe')).toMatchObject({
       builtin: true,
@@ -338,6 +342,85 @@ describe('browsing and installing', () => {
     // Removing the crew leaves what it brought.
     await context.marketplace.uninstall('crew', 'storefront');
     expect(context.crew.has('sentinel')).toBe(true);
+  });
+
+  it('installs a routine as a template, which schedules nothing until a draft is made from it', async () => {
+    const market = marketplace();
+    const { context, project } = await setup(
+      {},
+      { crew: ['quill', 'buzz'], orchestrator: { marketplaceIndex: market.dir } },
+    );
+    await context.marketplace.refresh();
+    const target = { index: market.dir, kind: 'routine', id: 'release-notes' } as const;
+    const preview = await context.marketplace.preview(target);
+    expect(preview.problems).toEqual([]);
+    expect(preview.routine).toMatchObject({
+      name: 'Release notes and announcement',
+      trigger: "When a new tag appears in the project's repository (pattern v*)",
+      clanks: ['quill', 'buzz'],
+      integrations: [],
+    });
+    expect(preview.routine!.steps[0]).toBe(
+      'notes: a doc ticket for quill, "Release notes for {{event.tag}}"',
+    );
+    await context.marketplace.install({ ...target, version: '1.0.0', sha256: preview.sha256 });
+    expect(context.routines.snapshot(project.id)).toMatchObject({
+      routines: [],
+      templates: [{ id: 'release-notes', name: 'Release notes and announcement' }],
+    });
+    const draft = context.routines.fromTemplate(project.id, 'release-notes');
+    expect(draft).toMatchObject({ status: 'draft', template: 'release-notes', nextRunAt: null });
+    expect(context.routines.snapshot(project.id).routines[0]!.problems).toEqual([]);
+    // Gone from the list once it's uninstalled; the draft made from it stays.
+    await context.marketplace.uninstall('routine', 'release-notes');
+    expect(context.routines.snapshot(project.id)).toMatchObject({
+      templates: [],
+      routines: [{ id: draft.id }],
+    });
+  });
+
+  it('installs a project template, with the crew it wants and what it asks first', async () => {
+    const market = marketplace();
+    const context = start(market);
+    await context.marketplace.refresh();
+    const target = { index: market.dir, kind: 'template', id: 'write-the-docs' } as const;
+    const preview = await context.marketplace.preview(target);
+    expect(preview.problems).toEqual([]);
+    expect(preview.template).toMatchObject({
+      crew: ['atlas', 'scout', 'quill'],
+      missing: [],
+      ask: 'Who are the docs for, and what should they be able to do after reading them?',
+    });
+    expect(preview.template!.kickoff).toContain('Write the docs for this project: {{brief}}');
+    await context.marketplace.install({ ...target, version: '1.0.0', sha256: preview.sha256 });
+    expect(context.marketplace.projectTemplates()).toMatchObject([
+      {
+        id: 'write-the-docs',
+        name: 'Write the docs',
+        source: 'marketplace',
+        crew: ['atlas', 'scout', 'quill'],
+        code: true,
+      },
+    ]);
+  });
+
+  it('turns back a routine or a template that does not read as one', () => {
+    const market = marketplace();
+    market.write(
+      'packages/routine/broken/1.0.0/package.yaml',
+      packageYaml({
+        kind: 'routine',
+        id: 'broken',
+        name: 'Broken',
+        summary: 'Not a routine.',
+        version: '1.0.0',
+        publisher: 'sam',
+        licence: 'MIT',
+      }),
+    );
+    market.write('packages/routine/broken/1.0.0/routine.yaml', 'name: Broken\nsteps: []\n');
+    const { problems } = buildIndex(market.dir, { check: packageChecker(crewFolder) });
+    expect(problems.join('\n')).toMatch(/routine\/broken[\s\S]*steps/);
   });
 });
 

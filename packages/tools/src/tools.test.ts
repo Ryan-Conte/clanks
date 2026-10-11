@@ -587,6 +587,7 @@ describe('labels', () => {
         tokens: 'color.brand',
         remove: 'color.old',
         question: 'Which provider is cheaper?',
+        routine: 'Weekend promo',
       });
       expect(label.length, tool.name).toBeGreaterThan(3);
     }

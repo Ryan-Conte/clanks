@@ -1,4 +1,9 @@
-import { OPEN_LICENCES, RESERVED_CLANK_IDS, looksSecret } from '@clanks/core';
+import {
+  OPEN_LICENCES,
+  RESERVED_CLANK_IDS,
+  looksSecret,
+  projectTemplateFileSchema,
+} from '@clanks/core';
 import { GUIDE_FILE, MANIFEST_FILE, OPENAPI_FILE, loadIntegration } from '@clanks/integrations';
 import {
   type BuildOptions,
@@ -6,9 +11,12 @@ import {
   CREW_FILE,
   MarketplaceError,
   type PackageMeta,
+  ROUTINE_FILE,
+  TEMPLATE_FILE,
   crewFileSchema,
   packageYaml,
 } from '@clanks/marketplace';
+import { routineFromYaml } from '@clanks/routines';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -52,6 +60,13 @@ export function packageChecker(crewDir: string): BuildOptions['check'] {
     if (meta.kind === 'crew') {
       crewFileSchema.parse(parseYaml(files.get(CREW_FILE) ?? ''));
     }
+    if (meta.kind === 'routine') {
+      // It reads as a routine. Whether it fits a project is checked when someone starts one from it.
+      routineFromYaml(files.get(ROUTINE_FILE) ?? '', { now: new Date(), zone: 'UTC' });
+    }
+    if (meta.kind === 'template') {
+      projectTemplateFileSchema.parse(parseYaml(files.get(TEMPLATE_FILE) ?? ''));
+    }
     return {};
   };
 }
@@ -64,7 +79,7 @@ function marketplaceReadme(name: string): string {
   return [
     `# ${name}`,
     '',
-    "Clanks, integrations and crews for [clanks](https://clanks.si), free to install and free to publish. There's no account: the app reads `index.json` from this repository as a plain file, and nothing counts who installs what.",
+    "Clanks, integrations, crews, routines and project templates for [clanks](https://clanks.si), free to install and free to publish. There's no account: the app reads `index.json` from this repository as a plain file, and nothing counts who installs what.",
     '',
     "## What's here",
     '',
@@ -78,6 +93,8 @@ function marketplaceReadme(name: string): string {
     '  openapi.yaml                      the calls it makes,',
     '  guide.md                          and what clanks are told about it',
     '  crew.yaml                       a crew: the clanks and integrations a kind of project wants',
+    '  routine.yaml                    a routine to start from: a trigger and steps, installed as a template',
+    '  template.yaml                   a project template: a crew, and what it is asked to do first',
     fence,
     '',
     "A version never changes once it's merged: a fix is a new version. The app checks every file against the sha256 the index gives for it, and uses nothing that doesn't match.",
@@ -155,6 +172,9 @@ export function seedMarketplace(
       '  - clank/sentinel',
       ...readdirSync(source.integrationsDir).map((id) => `  - integration/${id}`),
       '  - crew/storefront',
+      '  - routine/weekly-digest',
+      '  - routine/release-notes',
+      '  - template/write-the-docs',
       '# Packages taken down, as kind/id, each with why. Installed copies are turned off.',
       'revoked: {}',
     ].join('\n'),
@@ -220,6 +240,106 @@ export function seedMarketplace(
       [CREW_FILE]: [
         'clanks: [atlas, scribe, prism, forge, gauge, sentinel]',
         `integrations: [${integrations.includes('stripe') ? 'stripe' : ''}]`,
+      ].join('\n'),
+    },
+  );
+
+  pack(
+    {
+      kind: 'routine',
+      id: 'weekly-digest',
+      name: 'Weekly competitor digest',
+      summary:
+        'Every Monday morning Scout looks at what your competitors changed last week and writes it up, with sources.',
+      version: '1.0.0',
+    },
+    {
+      [ROUTINE_FILE]: [
+        'name: Weekly competitor digest',
+        'description: What the competitors changed last week, with sources.',
+        'trigger:',
+        '  kind: cron',
+        '  cron: "0 9 * * 1"',
+        'inputs:',
+        '  competitors: "Name the competitors to watch, each with its site"',
+        'steps:',
+        '  - id: digest',
+        '    ticket:',
+        '      clank: scout',
+        '      type: research',
+        '      title: "Competitor digest for the week to {{run.date}}"',
+        '      description: >',
+        '        Look at each of these and say what changed in the last seven days: prices, products,',
+        '        pages and announcements. {{inputs.competitors}}',
+        '      criteria:',
+        '        - "Each competitor has its own section, or a line saying nothing changed"',
+        '        - "Every claim cites a source in the Sources list"',
+      ].join('\n'),
+    },
+  );
+
+  pack(
+    {
+      kind: 'routine',
+      id: 'release-notes',
+      name: 'Release notes and announcement',
+      summary:
+        'When a release is tagged, Quill writes its release notes and Buzz drafts the posts that announce it.',
+      version: '1.0.0',
+    },
+    {
+      [ROUTINE_FILE]: [
+        'name: Release notes and announcement',
+        'description: Notes for each tagged release, and posts to announce it.',
+        'trigger:',
+        '  kind: event',
+        '  event: git.tag',
+        '  match: "v*"',
+        'steps:',
+        '  - id: notes',
+        '    ticket:',
+        '      clank: quill',
+        '      type: doc',
+        '      title: "Release notes for {{event.tag}}"',
+        '      description: >',
+        '        Write the release notes for {{event.tag}} from what was merged since the tag before',
+        '        it: read the git log and the tickets that are done. Group the changes as new, changed',
+        '        and fixed, in words a user would use.',
+        '      criteria:',
+        '        - "Every change a user would notice is listed once"',
+        '        - "Nothing is listed that the log does not show"',
+        '  - id: announce',
+        '    depends_on: [notes]',
+        '    ticket:',
+        '      clank: buzz',
+        '      type: campaign',
+        '      title: "Announce {{event.tag}}"',
+        '      description: Draft the posts that announce this release, from its release notes.',
+      ].join('\n'),
+    },
+  );
+
+  pack(
+    {
+      kind: 'template',
+      id: 'write-the-docs',
+      name: 'Write the docs',
+      summary:
+        'A README and a getting-started guide for a project that has code and no docs, written from what the code does.',
+      version: '1.0.0',
+    },
+    {
+      [TEMPLATE_FILE]: [
+        'crew: [atlas, scout, quill]',
+        'ask: Who are the docs for, and what should they be able to do after reading them?',
+        'example: Developers who want to run the shop locally and add a payment provider.',
+        'kickoff: >',
+        '  Write the docs for this project: {{brief}}',
+        '',
+        '  It needs no spec. Read the code first. Then create the tickets now: Scout notes how the',
+        '  project is set up and run, with the commands, and Quill writes a README and a',
+        '  getting-started guide from those notes, each as a doc ticket with a path in the project.',
+        'code: true',
       ].join('\n'),
     },
   );

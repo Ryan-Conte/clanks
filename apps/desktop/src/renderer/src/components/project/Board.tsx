@@ -20,6 +20,7 @@ import {
 import { TYPE_LABELS, actorName, cardStatus, ciText, namer, progressText } from '../../lib/board';
 import { useCrew } from '../../lib/crew';
 import { useNav } from '../../lib/nav';
+import { timeIn, useNow } from '../../lib/routines';
 import { useTRPC } from '../../lib/trpc';
 import { Avatar } from '../Avatar';
 import { Badge, Button, ErrorText, IconButton, PlusIcon, XIcon, inputClass } from '../ui';
@@ -377,6 +378,7 @@ function Card(props: {
   onDragEnd: () => void;
 }) {
   const { card } = props;
+  const now = useNow();
   const status = cardStatus(card, props.snapshot, props.name);
   // The clank it's with, or in the backlog, the one it's for.
   const who = status.clankId ?? (card.column === 'backlog' ? card.assignee : null);
@@ -439,6 +441,21 @@ function Card(props: {
       {card.live && !card.live.asking && (
         <span className="truncate font-mono text-[11px] text-white/60 group-hover:pr-14">
           <LiveLabel text={card.live.label} />
+        </span>
+      )}
+      {card.routine && (
+        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-dim">
+          <span className="truncate" title={`Made by the routine ${card.routine.name}`}>
+            ↻ {card.routine.name}
+          </span>
+          {card.routine.dueAt && card.column !== 'done' && (
+            <span
+              className={`ml-auto shrink-0 font-mono ${card.column !== 'ready' && +new Date(card.routine.dueAt) < +now ? 'text-amber-200' : ''}`}
+              title={card.routine.dueWhy ?? undefined}
+            >
+              due {timeIn(new Date(card.routine.dueAt), card.routine.zone)}
+            </span>
+          )}
         </span>
       )}
       {(card.stories.length > 0 ||

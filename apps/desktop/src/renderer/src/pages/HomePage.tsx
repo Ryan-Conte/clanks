@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSubscription } from '@trpc/tanstack-react-query';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Avatar } from '../components/Avatar';
+import { RoutinesHome } from '../components/routines/RoutinesHome';
 import { Dot, PlusIcon } from '../components/ui';
 import { usageText } from '../lib/board';
 import { useClankModel, useCrew, useProviders, whereItRuns } from '../lib/crew';
@@ -32,6 +33,7 @@ export function HomePage() {
           <WorkingNow home={home} />
         </div>
       )}
+      <RoutinesHome />
       {home && (home.upNext.length > 0 || home.today.length > 0 || busy) && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <UpNext home={home} />

@@ -6,6 +6,7 @@ import {
   type IntegrationsSnapshot,
   MODE_NAMES,
   type OAuthPending,
+  type OperationRisk,
   type ProjectIntegration,
   connectInputSchema,
   estimateTokens,
@@ -22,6 +23,7 @@ import {
   MANIFEST_FILE,
   type McpIntegration,
   OPENAPI_FILE,
+  OperationUnanswered,
   RequestFailure,
   type ToolConnection,
   authorizeUrl,
@@ -32,13 +34,14 @@ import {
   loadIntegration,
   mcpCommand,
   mcpPinned,
+  parseArgs,
   pick,
   pkcePair,
   refreshTokens,
   riskOn,
   runOperation,
 } from '@clanks/integrations';
-import { ToolFailure, type ToolSpec } from '@clanks/tools';
+import { ToolArgumentsError, ToolFailure, type ToolSpec } from '@clanks/tools';
 import { removeTree } from '@clanks/workspace';
 import { and, asc, eq } from 'drizzle-orm';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -110,6 +113,16 @@ export interface IntegrationServiceOptions {
   lookup?: (host: string) => Promise<string[]>;
   now?: () => Date;
 }
+
+/** How a call made for a scheduled action came out. */
+export type IntegrationCall =
+  | { kind: 'answered'; body: unknown; text: string }
+  /** The service turned it down, with the status it answered. */
+  | { kind: 'refused'; status: number; message: string }
+  /** No answer at all: it may or may not have gone through. */
+  | { kind: 'unanswered'; message: string }
+  /** It couldn't be made: the account or the integration is gone, or its credential is. */
+  | { kind: 'unavailable'; message: string };
 
 /** The tools and guides a clank gets from a project's integrations. */
 export interface IntegrationTools {
@@ -227,10 +240,18 @@ export class IntegrationService extends EventEmitter<{ change: [] }> {
     const pair = pkcePair();
     const controller = new AbortController();
     const server = createServer();
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', resolve);
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(auth.redirect_port ?? 0, '127.0.0.1', resolve);
+      });
+    } catch (error) {
+      throw new IntegrationError(
+        auth.redirect_port
+          ? `${integration.manifest.name} hands its sign-in back on port ${auth.redirect_port}, which something else on this computer is using. Close that and try again.`
+          : `The sign-in couldn't start: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     const address = server.address();
     const port = typeof address === 'object' && address ? address.port : 0;
     const redirectUri = `http://127.0.0.1:${port}/callback`;
@@ -563,6 +584,196 @@ export class IntegrationService extends EventEmitter<{ change: [] }> {
         (p) =>
           `${p.name}, ${p.mode} mode (account "${p.label}"), for ${p.clanks.map(name).join(', ')}`,
       );
+  }
+
+  // Routines
+
+  /** Every declarative integration, with the account a project uses for each, for routines. */
+  forRoutines(projectId: string): {
+    id: string;
+    name: string;
+    connection: string | null;
+    operations: { id: string; parameters: string[]; required: string[]; schedule: string | null }[];
+  }[] {
+    const enabled = this.forProject(projectId);
+    const out = [];
+    for (const loaded of this.loaded().values()) {
+      const { integration } = loaded;
+      if (integration.kind !== 'declarative' || this.disabledWhy(loaded) !== null) continue;
+      out.push({
+        id: integration.manifest.id,
+        name: integration.manifest.name,
+        connection: enabled.find((e) => e.integrationId === integration.manifest.id)?.label ?? null,
+        operations: integration.operations.map((operation) => ({
+          id: operation.id,
+          parameters: Object.keys(operation.parameters.properties ?? {}),
+          required: Array.isArray(operation.parameters.required)
+            ? (operation.parameters.required as string[])
+            : [],
+          schedule: operation.schedule,
+        })),
+      });
+    }
+    return out;
+  }
+
+  /** The account a project uses for an integration, if it has one turned on. */
+  connectionFor(projectId: string, integrationId: string): ProjectIntegration | null {
+    return this.forProject(projectId).find((e) => e.integrationId === integrationId) ?? null;
+  }
+
+  /**
+   * An operation as a scheduled action shows it: what it does, on which account, and at what
+   * risk. Null when the integration or the operation is gone.
+   */
+  operationInfo(
+    integrationId: string,
+    operationId: string,
+    connectionId: string | null,
+  ): {
+    integrationName: string;
+    summary: string;
+    connectionLabel: string | null;
+    mode: ConnectionMode | null;
+    risk: OperationRisk | null;
+    schedule: string | null;
+    verify: string | null;
+    cancel: string | null;
+    /** Why it can't be called now. */
+    problem: string | null;
+  } | null {
+    const loaded = this.loaded().get(integrationId);
+    if (!loaded || loaded.integration.kind !== 'declarative') return null;
+    const operation = loaded.integration.operations.find((o) => o.id === operationId);
+    if (!operation) return null;
+    const row = connectionId ? this.connectionRow(connectionId) : undefined;
+    const { name } = loaded.integration.manifest;
+    return {
+      integrationName: name,
+      summary: operation.summary,
+      connectionLabel: row?.label ?? null,
+      mode: row?.mode ?? null,
+      risk: row ? riskOn(operation, row.mode) : null,
+      schedule: operation.schedule,
+      verify: operation.verify,
+      cancel: operation.cancel,
+      problem:
+        this.disabledWhy(loaded) ??
+        (row
+          ? null
+          : connectionId
+            ? `The ${name} account it was set up with was disconnected. Connect one again.`
+            : `No ${name} account is turned on in this project.`),
+    };
+  }
+
+  /**
+   * Checks a payload against an operation's arguments, reading them the forgiving way tools do.
+   * Throws an `IntegrationError` saying what doesn't fit.
+   */
+  fitArguments(
+    integrationId: string,
+    operationId: string,
+    payload: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const integration = this.declarative(integrationId);
+    const operation = integration.operations.find((o) => o.id === operationId);
+    if (!operation) {
+      throw new IntegrationError(`${integration.manifest.name} has no ${operationId}`);
+    }
+    try {
+      return parseArgs(operation.parameters, payload);
+    } catch (error) {
+      if (error instanceof ToolArgumentsError) throw new IntegrationError(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Makes an operation's calls as a connection, with no model anywhere near: how an approved
+   * action goes out at its time. The outcome says whether the service answered, turned it down,
+   * or never answered, in which case it may or may not have gone through.
+   */
+  async call(
+    connectionId: string,
+    operationId: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<IntegrationCall> {
+    const row = this.connectionRow(connectionId);
+    if (!row) {
+      return { kind: 'unavailable', message: 'Its account was disconnected. Connect it again.' };
+    }
+    let integration: DeclarativeIntegration;
+    try {
+      integration = this.declarative(row.integration);
+    } catch (error) {
+      return {
+        kind: 'unavailable',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const operation = integration.operations.find((o) => o.id === operationId);
+    if (!operation) {
+      return {
+        kind: 'unavailable',
+        message: `${integration.manifest.name} no longer has ${operationId}.`,
+      };
+    }
+    try {
+      const result = await runOperation(
+        integration,
+        operation,
+        this.toolConnection(integration, row),
+        args,
+        { fetch: this.fetch(), lookup: this.lookup(), signal, maxChars: 4000 },
+      );
+      if (result.error) {
+        return {
+          kind: 'refused',
+          status: result.status ?? 0,
+          message: result.reason ?? result.content,
+        };
+      }
+      return { kind: 'answered', body: result.body, text: result.content };
+    } catch (error) {
+      if (error instanceof OperationUnanswered)
+        return { kind: 'unanswered', message: error.message };
+      if (error instanceof ToolFailure || error instanceof RequestFailure) {
+        // A credential that's gone or revoked, or a request that couldn't be built.
+        return { kind: 'unavailable', message: error.message };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Where what an operation made can be seen, from the `link` its integration gives for it and
+   * what the service answered. Null when it gives none, or the link would lead anywhere but a
+   * host the integration declares.
+   */
+  linkFor(integrationId: string, operationId: string, body: unknown): string | null {
+    const loaded = this.loaded().get(integrationId);
+    if (!loaded || loaded.integration.kind !== 'declarative') return null;
+    const template = loaded.integration.operations.find((o) => o.id === operationId)?.link;
+    if (!template) return null;
+    let missing = false;
+    const filled = template.replace(/\{([^{}]+)\}/g, (_match, path: string) => {
+      const value = pick(body, path);
+      if (typeof value !== 'string' && typeof value !== 'number') {
+        missing = true;
+        return '';
+      }
+      return encodeURIComponent(String(value));
+    });
+    if (missing) return null;
+    try {
+      const url = new URL(filled);
+      const hosts = [...loaded.integration.hosts, ...(loaded.integration.manifest.links ?? [])];
+      return url.protocol === 'https:' && hosts.includes(url.host) ? url.toString() : null;
+    } catch {
+      return null;
+    }
   }
 
   // Installing

@@ -1,0 +1,7 @@
+clanks
+Copyright 2026 Ryan Conte
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+The installers bundle llama.cpp (https://github.com/ggml-org/llama.cpp), which is under the MIT
+License, and a set of open-licence fonts, each under its own licence.

@@ -1,0 +1,71 @@
+# A trimmed description of the X API v2: only the calls the manifest lists.
+openapi: 3.0.3
+info:
+  title: X API v2 (trimmed for clanks)
+  version: '2'
+servers:
+  - url: https://api.x.com
+paths:
+  /2/users/me:
+    get:
+      summary: The account this connection posts as.
+  /2/users/{id}/tweets:
+    get:
+      summary: A user's latest posts, newest first.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The user's id, as /2/users/me gives it.
+          schema: { type: string }
+        - name: max_results
+          in: query
+          description: How many to return, from 5 to 100.
+          schema: { type: integer, minimum: 5, maximum: 100 }
+  /2/tweets:
+    post:
+      summary: Post to X. A link counts as 23 characters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, description: 'The post, at most 280 characters.' }
+                media:
+                  type: object
+                  description: Pictures to attach, by the ids uploading them gave.
+                  properties:
+                    media_ids:
+                      type: array
+                      items: { type: string }
+                reply:
+                  type: object
+                  description: To reply to a post.
+                  properties:
+                    in_reply_to_tweet_id: { type: string }
+  /2/tweets/{id}:
+    delete:
+      summary: Delete one of your posts.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The post's id.
+          schema: { type: string }
+  /2/media/upload:
+    post:
+      summary: Upload a picture, to attach to a post.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media, media_category]
+              properties:
+                media: { type: string, description: 'The file, in base64.' }
+                media_category: { type: string, enum: [tweet_image, tweet_gif, tweet_video] }
+                media_type: { type: string, description: 'Such as image/png.' }

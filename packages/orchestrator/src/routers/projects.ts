@@ -17,6 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { ProjectError } from '../projects/service';
+import { createFromTemplate, createSample, projectTemplates } from '../projects/templates';
 import { userProcedure } from '../procedures';
 import { publicProcedure, router } from '../trpc';
 import { snapshots } from './live';
@@ -74,6 +75,21 @@ export const projectsRouter = router({
   create: userProcedure
     .input(newProjectSchema)
     .mutation(({ ctx, input }) => ctx.projects.create(input)),
+
+  /** The kinds of project to start from: the app's own, and those installed from a marketplace. */
+  templates: publicProcedure.query(({ ctx }) => projectTemplates(ctx)),
+
+  /** Makes a project from a template: its tickets go on the board, and Atlas is told what it asks. */
+  createFromTemplate: userProcedure
+    .input(z.object({ project: newProjectSchema, templateId: z.string().max(64) }))
+    .mutation(({ ctx, input }) => createFromTemplate(ctx, input.project, input.templateId)),
+
+  /** The first-run tour's sample project, in a folder of its own. It's only ever offered once. */
+  createSample: userProcedure.mutation(async ({ ctx }) => {
+    const started = await createSample(ctx);
+    ctx.settings.update({ sampleOffered: true });
+    return started;
+  }),
 
   update: userProcedure
     .input(z.object({ id: projectIdSchema, patch: projectPatchSchema }))

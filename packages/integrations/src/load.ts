@@ -52,6 +52,8 @@ export interface ResolvedOperation {
   steps: ResolvedStep[];
   verify: string | null;
   schedule: string | null;
+  cancel: string | null;
+  link: string | null;
 }
 
 export interface DeclarativeIntegration {
@@ -111,6 +113,8 @@ export function loadIntegration(
       testRisk: effectiveRisk(operation, 'test'),
       verify: operation.verify ?? null,
       schedule: operation.schedule ?? null,
+      cancel: operation.cancel ?? null,
+      link: operation.link ?? null,
     };
     if (operation.op) {
       const call = findCall(doc, operation.op);

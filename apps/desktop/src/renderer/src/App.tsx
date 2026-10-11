@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useSubscription } from '@trpc/tanstack-react-query';
 import { useState } from 'react';
 import { ConversationsProvider } from './components/ConversationsProvider';
 import { ModelsProvider } from './components/ModelsProvider';
@@ -15,7 +16,7 @@ import { MarketplacePage } from './pages/MarketplacePage';
 import { ModelsPage } from './pages/ModelsPage';
 import { NewClankPage } from './pages/NewClankPage';
 import { NewProjectPage } from './pages/NewProjectPage';
-import { Onboarding } from './pages/Onboarding';
+import { Onboarding, SampleOffer } from './pages/Onboarding';
 import { ProjectPage } from './pages/ProjectPage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -25,7 +26,29 @@ export function App() {
   // Null until the user goes somewhere. Until then first run shows, if it isn't done yet.
   const [route, setRoute] = useState<Route | null>(null);
   const welcome = route === null && settings.data !== undefined && !settings.data.onboarded;
+  // Once the crew has a model, the sample project is offered, once.
+  const sample =
+    route === null &&
+    settings.data !== undefined &&
+    settings.data.onboarded &&
+    !settings.data.sampleOffered &&
+    settings.data.crewModel !== null;
   const shown: Route = route ?? { page: 'home' };
+  // The shell sends the window somewhere, such as to the routine a notification was about.
+  useSubscription(
+    trpc.app.opened.subscriptionOptions(undefined, {
+      onData: (to) => {
+        if (to.page === 'routines') {
+          setRoute({
+            page: 'project',
+            id: to.projectId,
+            tab: 'routines',
+            focus: to.actionId ?? to.runId,
+          });
+        } else setRoute({ page: to.page });
+      },
+    }),
+  );
 
   return (
     <ModelsProvider>
@@ -33,12 +56,18 @@ export function App() {
         <ProjectsProvider>
           <NavContext value={{ route: shown, go: setRoute }}>
             <div className="flex h-screen flex-col overflow-hidden">
-              <TitleBar route={shown} welcome={welcome} />
+              <TitleBar route={shown} welcome={welcome || sample} />
               <div className="flex min-h-0 flex-1">
                 <Sidebar />
                 <main className="relative min-w-0 flex-1 overflow-y-auto">
                   <div className="pointer-events-none absolute top-[-260px] left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(185,167,255,0.13),transparent)] blur-2xl" />
-                  {!settings.data ? null : welcome ? <Onboarding /> : <Page route={shown} />}
+                  {!settings.data ? null : welcome ? (
+                    <Onboarding />
+                  ) : sample ? (
+                    <SampleOffer />
+                  ) : (
+                    <Page route={shown} />
+                  )}
                 </main>
               </div>
             </div>
@@ -77,6 +106,7 @@ function Page({ route }: { route: Route }) {
           tab={route.tab}
           ticket={route.ticket ?? null}
           run={route.run ?? null}
+          focus={route.focus ?? null}
         />
       );
     case 'new-clank':
@@ -115,6 +145,7 @@ function TitleBar({ route, welcome }: { route: Route; welcome: boolean }) {
       board: 'Board',
       spec: 'Spec',
       design: 'Studio',
+      routines: 'Routines',
       context: 'Context',
       settings: 'Settings',
     }[route.tab];

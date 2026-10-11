@@ -11,14 +11,19 @@ import {
   type PackageKind,
   type PackagePreview,
   type PreviewTool,
+  type ProjectTemplate,
   type PublishInput,
   type PublishPreview,
   type PublishResult,
+  type RoutinePreview,
+  type RoutineTemplate,
+  type TemplatePreview,
   type ToolPolicyLevel,
   type UpdateChanges,
   compareVersions,
   indexUrlSchema,
   nextVersion,
+  projectTemplateFileSchema,
   publishInputSchema,
   toolsMatching,
 } from '@clanks/core';
@@ -39,6 +44,8 @@ import {
   MarketplaceError,
   PACKAGE_FILE,
   type PackageMeta,
+  ROUTINE_FILE,
+  TEMPLATE_FILE,
   type VerifiedPackage,
   crewFileSchema,
   fetchIndex,
@@ -49,6 +56,7 @@ import {
   parsePackageMeta,
   scanForPublishing,
 } from '@clanks/marketplace';
+import { localZone, routineFromYaml, triggerWords } from '@clanks/routines';
 import { docLevel, policyFor } from '@clanks/tools';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
@@ -274,6 +282,34 @@ export class MarketplaceService extends EventEmitter<{ change: [] }> {
         name: row.name,
         clanks: (row.data?.clanks ?? []).filter((id) => this.options.crew.has(id)),
         integrations: row.data?.integrations ?? [],
+      }));
+  }
+
+  /** The routine templates installed, each a routine to start one from. */
+  routineTemplates(): RoutineTemplate[] {
+    return this.rows()
+      .filter((row) => row.kind === 'routine' && row.status !== 'revoked' && row.data?.routine)
+      .map((row) => ({
+        id: row.packageId,
+        name: row.name,
+        summary: row.data?.summary ?? '',
+        version: row.version,
+        definition: row.data!.routine!,
+      }));
+  }
+
+  /** The project templates installed, beside the ones that ship with the app. */
+  projectTemplates(): ProjectTemplate[] {
+    return this.rows()
+      .filter((row) => row.kind === 'template' && row.status !== 'revoked' && row.data?.template)
+      .map((row) => ({
+        id: row.packageId,
+        name: row.name,
+        summary: row.data?.summary ?? '',
+        source: 'marketplace' as const,
+        ...row.data!.template!,
+        // A clank that was deleted since is left out rather than stopping the project being made.
+        crew: row.data!.template!.crew.filter((id) => this.options.crew.has(id)),
       }));
   }
 
@@ -549,6 +585,8 @@ export class MarketplaceService extends EventEmitter<{ change: [] }> {
     let clank: ClankPreview | null = null;
     let integration: IntegrationPreview | null = null;
     let crew: CrewPreview | null = null;
+    let routine: RoutinePreview | null = null;
+    let template: TemplatePreview | null = null;
     let changes: UpdateChanges | null = null;
 
     if (entry.kind === 'clank') {
@@ -565,10 +603,14 @@ export class MarketplaceService extends EventEmitter<{ change: [] }> {
       const result = await this.crewPreview(read);
       crew = result.preview;
       problems.push(...result.problems);
+    } else if (entry.kind === 'routine') {
+      const result = this.routinePreview(verified.files.get(ROUTINE_FILE) ?? '');
+      routine = result.preview;
+      problems.push(...result.problems);
     } else {
-      problems.push(
-        'Routine templates install once routines arrive, in a later version of clanks.',
-      );
+      const result = this.templatePreview(verified.files.get(TEMPLATE_FILE) ?? '');
+      template = result.preview;
+      problems.push(...result.problems);
     }
     const snapshot = this.snapshot().entries.find(
       (e) => e.index === state.url && e.kind === entry.kind && e.id === entry.id,
@@ -580,8 +622,64 @@ export class MarketplaceService extends EventEmitter<{ change: [] }> {
       clank,
       integration,
       crew,
+      routine,
+      template,
       problems,
       changes,
+    };
+  }
+
+  /** A routine template as it reads, before it's installed. It schedules nothing by being there. */
+  private routinePreview(text: string): { preview: RoutinePreview | null; problems: string[] } {
+    try {
+      const zone = this.options.settings.get().profile.timeZone || localZone();
+      const definition = routineFromYaml(text, { now: this.now(), zone });
+      const steps = definition.steps.map((step) =>
+        step.ticket
+          ? `${step.id}: a ${step.ticket.type} ticket for ${step.ticket.clank}, "${step.ticket.title}"`
+          : `${step.id}: ${step.action!.integration} ${step.action!.operation} at ${step.action!.at}, once you approve it`,
+      );
+      return {
+        preview: {
+          name: definition.name,
+          trigger: triggerWords(definition.trigger, definition.timeZone || zone, this.now()),
+          steps,
+          clanks: [...new Set(definition.steps.flatMap((s) => s.ticket?.clank ?? []))],
+          integrations: [...new Set(definition.steps.flatMap((s) => s.action?.integration ?? []))],
+          yaml: text,
+        },
+        problems: [],
+      };
+    } catch (error) {
+      return {
+        preview: null,
+        problems: [
+          `Its routine can't be read: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+      };
+    }
+  }
+
+  /** A project template as it reads: the crew it wants and what it has the crew do first. */
+  private templatePreview(text: string): { preview: TemplatePreview | null; problems: string[] } {
+    const parsed = projectTemplateFileSchema.safeParse(safeYaml(text));
+    if (!parsed.success) {
+      return { preview: null, problems: ["Its template can't be read, so it wasn't used."] };
+    }
+    const file = parsed.data;
+    const missing = file.crew.filter((id) => !this.options.crew.has(id));
+    return {
+      preview: {
+        crew: file.crew,
+        missing,
+        ask: file.ask,
+        kickoff: file.kickoff,
+        tickets: file.tickets.map(
+          (t) => `${t.type}${t.clank ? ` for ${t.clank}` : ''}: ${t.title}`,
+        ),
+        yaml: text,
+      },
+      problems: [],
     };
   }
 
@@ -802,6 +900,19 @@ export class MarketplaceService extends EventEmitter<{ change: [] }> {
         }
       }
       data = { clanks: file.clanks, integrations: file.integrations };
+    } else if (entry.kind === 'routine') {
+      const zone = this.options.settings.get().profile.timeZone || localZone();
+      data = {
+        summary: entry.summary,
+        routine: routineFromYaml(verified.files.get(ROUTINE_FILE) ?? '', { now: this.now(), zone }),
+      };
+    } else if (entry.kind === 'template') {
+      data = {
+        summary: entry.summary,
+        template: projectTemplateFileSchema.parse(
+          safeYaml(verified.files.get(TEMPLATE_FILE) ?? ''),
+        ),
+      };
     }
     return this.upsert(read, data);
   }
@@ -985,4 +1096,13 @@ function riskRank(risk: OperationRisk): number {
 /** Text as it's published: LF line endings, one newline at the end. */
 function normalize(text: string): string {
   return `${text.replace(/\r\n?/g, '\n').replace(/\s+$/, '')}\n`;
+}
+
+/** YAML as data, or null when it isn't YAML: what reads it says what's wrong. */
+function safeYaml(text: string): unknown {
+  try {
+    return parseYaml(text);
+  } catch {
+    return null;
+  }
 }

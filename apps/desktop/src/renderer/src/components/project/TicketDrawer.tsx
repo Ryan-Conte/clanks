@@ -26,6 +26,7 @@ import {
 import { useCrew } from '../../lib/crew';
 import { formatAgo } from '../../lib/format';
 import { useNav } from '../../lib/nav';
+import { useNow, whenText } from '../../lib/routines';
 import { useTRPC } from '../../lib/trpc';
 import { Avatar } from '../Avatar';
 import { Markdown } from '../chat/Markdown';
@@ -43,6 +44,7 @@ export function TicketDrawer(props: {
   const { snapshot, card } = props;
   const trpc = useTRPC();
   const { go } = useNav();
+  const now = useNow();
   const crew = useCrew();
   const name = namer(crew);
   const status = cardStatus(card, snapshot, name);
@@ -119,6 +121,31 @@ export function TicketDrawer(props: {
           draftVersion={draft?.version ?? null}
           onClose={props.onClose}
         />
+
+        {card.routine && (
+          <Section title="Routine">
+            <button
+              type="button"
+              onClick={() =>
+                go({
+                  page: 'project',
+                  id: card.projectId,
+                  tab: 'routines',
+                  focus: card.routine!.runId,
+                })
+              }
+              className="text-left text-[13px] text-accent hover:underline"
+            >
+              {card.routine.name}, the run of {card.routine.date}
+            </button>
+            {card.routine.dueAt && (
+              <p className="text-[13px] text-white/80">
+                Due {whenText(new Date(card.routine.dueAt), card.routine.zone, now)}
+                {card.routine.dueWhy ? `, ${card.routine.dueWhy}` : ''}.
+              </p>
+            )}
+          </Section>
+        )}
 
         <Section title="Route">
           <Route card={card} name={name} />

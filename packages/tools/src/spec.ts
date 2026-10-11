@@ -261,6 +261,18 @@ export interface ArtifactAccess {
   }): string;
 }
 
+/**
+ * The project's routines, for a clank that may read them and draft one. Each method returns what
+ * the clank reads, or throws saying what's wrong. Nothing here turns a routine on, changes one
+ * that's on, or sends anything: only the user does those, in the app.
+ */
+export interface RoutineAccess {
+  list(): string;
+  get(routine: string): string;
+  /** A routine as the clank wrote it, saved as a draft for the user to look over. */
+  propose(draft: unknown): string;
+}
+
 /** The rest of the crew, for a quick question to one of them. */
 export interface CrewAccess {
   /** Resolves with the other clank's answer, or throws a `ToolFailure` saying why there's none. */
@@ -283,6 +295,8 @@ export interface ToolContext {
   artifacts?: ArtifactAccess | null;
   /** The crew, to ask one of them a question. Missing where there's nobody to ask. */
   crew?: CrewAccess | null;
+  /** The project's routines, to read and to draft. Missing outside a project. */
+  routines?: RoutineAccess | null;
   signal: AbortSignal;
   clank: { id: string; name: string };
   /** The most a result may hold, in characters, so it doesn't crowd out the conversation. */

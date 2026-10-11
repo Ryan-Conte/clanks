@@ -1,10 +1,12 @@
 import type { ClankSummary, ToolPart } from '@clanks/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { memo, useState } from 'react';
+import { useConversations } from '../../lib/crew';
 import { formatSeconds } from '../../lib/format';
 import { useTRPC } from '../../lib/trpc';
 import { useWorkbench } from '../../lib/workbench';
 import { ModeBadge } from '../integrations/shared';
+import { ProposedRoutine } from '../routines/RoutineCard';
 import { Button, Dot, ErrorText, inputClass } from '../ui';
 
 const SETTLED = new Set<ToolPart['status']>(['done', 'failed', 'denied', 'cancelled']);
@@ -21,8 +23,23 @@ export const ToolCard = memo(function ToolCard(props: {
   const { part } = props;
   if (part.status === 'asking' && part.approval) return <ApprovalCard {...props} />;
   if (part.name === 'ask_user' && part.status === 'done') return <QuestionCard {...props} />;
+  if (part.name === 'routine_propose' && part.status === 'done') {
+    return <RoutineDraft part={part} conversationId={props.conversationId} />;
+  }
   return <ToolRow part={part} />;
 });
+
+/** A routine a clank drafted, as a card the user edits and activates right where it was proposed. */
+function RoutineDraft({ part, conversationId }: { part: ToolPart; conversationId: string }) {
+  const projectId = useConversations()?.find((c) => c.id === conversationId)?.projectId;
+  const routineId = /\[routine ([0-9a-f-]{36})\]/.exec(part.result ?? '')?.[1];
+  if (!projectId || !routineId) return <ToolRow part={part} />;
+  return (
+    <div id={`tool-${part.id}`}>
+      <ProposedRoutine projectId={projectId} routineId={routineId} />
+    </div>
+  );
+}
 
 /** A clank's question on a ticket, with its options as answers to send. */
 function QuestionCard({ part, clank, answerable, onAnswer }: Parameters<typeof ToolCard>[0]) {

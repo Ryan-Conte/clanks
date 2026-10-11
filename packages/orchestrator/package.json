@@ -21,6 +21,7 @@
     "@clanks/marketplace": "workspace:*",
     "@clanks/models": "workspace:*",
     "@clanks/providers": "workspace:*",
+    "@clanks/routines": "workspace:*",
     "@clanks/tools": "workspace:*",
     "@clanks/workspace": "workspace:*",
     "@trpc/server": "^11.19.0",

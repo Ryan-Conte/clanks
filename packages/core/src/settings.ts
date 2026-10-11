@@ -132,6 +132,22 @@ export const settingsSchema = z.object({
    * `index.json`, or a folder that holds one.
    */
   marketplaceIndexes: z.array(indexUrlSchema).max(20),
+  /** Every routine is paused: nothing starts and nothing goes out until it's turned back on. */
+  routinesPaused: z.boolean(),
+  /** OS notifications for what needs the user: a run to approve, a missed post, a paused routine. */
+  notifications: z.boolean(),
+  /** Keep the computer awake while a run is working or an action is about to go out. */
+  keepAwake: z.boolean(),
+  /** Start clanks, in the tray, when the user signs in to the computer. */
+  launchAtLogin: z.boolean(),
+  /** Have the OS start clanks a few minutes before the next run or action, if it isn't running. */
+  launchForRuns: z.boolean(),
+  /** Look for a newer clanks when it starts, and offer it. Nothing installs without the user. */
+  autoUpdate: z.boolean(),
+  /** Send a report when clanks crashes. Off unless the user turns it on. */
+  crashReports: z.boolean(),
+  /** The first-run tour's sample project was made, or the user said no to it. */
+  sampleOffered: z.boolean(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -157,6 +173,14 @@ export const defaultSettings: Settings = {
   cloudPrices: {},
   email: { kind: 'none', host: '', port: 587, secure: false, user: '', from: '', name: '' },
   marketplaceIndexes: [],
+  routinesPaused: false,
+  notifications: true,
+  keepAwake: true,
+  launchAtLogin: false,
+  launchForRuns: false,
+  autoUpdate: true,
+  crashReports: false,
+  sampleOffered: false,
 };
 
 export const settingsPatchSchema = settingsSchema.partial().strict();

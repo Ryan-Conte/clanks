@@ -98,6 +98,11 @@ const authSchema = z.discriminatedUnion('type', [
       scopes: z.array(z.string().min(1).max(200)).max(40).default([]),
       /** A public client the service lets anyone use. Without one, the user brings their own. */
       client_id: z.string().min(1).max(300).optional(),
+      /**
+       * The port sign-in hands its code back on, for a service that takes only an address it has
+       * on file, port and all: `http://127.0.0.1:<port>/callback`. Without one, any free port.
+       */
+      redirect_port: z.number().int().min(1024).max(65535).optional(),
       /** Extra parameters for the sign-in page, such as `access_type: offline`. */
       extra: z.record(z.string().regex(/^[a-z_]{1,40}$/), z.string().max(200)).default({}),
       header: headerName.default('Authorization'),
@@ -159,6 +164,13 @@ const operationSchema = z
       .string()
       .regex(/^[a-z][\w.]{0,40}$/)
       .optional(),
+    /** The operation that takes back one the service is holding to send later, by its `id`. */
+    cancel: operationIdSchema.optional(),
+    /**
+     * Where what it made can be seen, with `{path}` filled in from its response, such as
+     * `https://x.com/i/web/status/{data.id}`. Its host must be one the integration declares.
+     */
+    link: z.string().max(300).optional(),
   })
   .strict()
   .superRefine((operation, ctx) => {
@@ -220,6 +232,11 @@ const declarativeSchema = z
       })
       .strict()
       .default({}),
+    /**
+     * Hosts its operations' `link`s may lead to besides the ones it calls, such as the site a
+     * post is read on. Nothing is ever sent to them.
+     */
+    links: z.array(z.string().toLowerCase().max(253)).max(5).optional(),
     /** A read operation that proves a credential works, called when connecting. */
     check: operationIdSchema.optional(),
     /** Where the check's response names the account, such as `email`. */
@@ -325,6 +342,11 @@ function checkDeclarative(manifest: DeclarativeManifest): void {
   }
   const byId = new Map(manifest.operations.map((o) => [o.id, o]));
   for (const operation of manifest.operations) {
+    if (operation.cancel && (!byId.has(operation.cancel) || !operation.schedule)) {
+      throw new IntegrationError(
+        `${operation.id} is cancelled by ${operation.cancel}, which must be one of its operations, and only an operation with \`schedule\` has anything to cancel`,
+      );
+    }
     if (!operation.verify) continue;
     const verify = byId.get(operation.verify);
     if (!verify || verify.risk !== 'read') {

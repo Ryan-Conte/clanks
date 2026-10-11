@@ -6,6 +6,7 @@ import {
   orderStages,
   outputTypeSchema,
 } from './crew';
+import type { TicketRoutine } from './routines';
 import type { Criterion, SpecStatus } from './spec';
 
 /** The board's columns, in order. A ticket's column follows from where it is on its route. */
@@ -44,8 +45,11 @@ export interface TicketReview extends Record<string, unknown> {
   at: string;
 }
 
-/** Where a ticket came from: a chat, a spec's planning, the board, or a clank's proposal. */
-export type TicketOrigin = 'chat' | 'spec' | 'board' | 'proposal';
+/**
+ * Where a ticket came from: a chat, a spec's planning, the board, a clank's proposal, or a
+ * routine's run.
+ */
+export type TicketOrigin = 'chat' | 'spec' | 'board' | 'proposal' | 'routine';
 
 /** An optional check dropped from one ticket, and why. */
 export interface SkippedCheck {
@@ -168,6 +172,8 @@ export interface Ticket {
   sent: TicketSend | null;
   /** How it ended. Null until it's done. */
   outcome: TicketOutcome | null;
+  /** The routine run that made it, with when it's due. Null for any other ticket. */
+  routine: TicketRoutine | null;
   createdAt: Date;
   updatedAt: Date;
   doneAt: Date | null;

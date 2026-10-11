@@ -3,6 +3,8 @@ import {
   type GitHubRepo,
   LEAD_CLANK,
   type ModelChoice,
+  type NewProject,
+  SAMPLE_TEMPLATE,
   suggestKey,
 } from '@clanks/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -47,6 +49,13 @@ export function NewProjectPage() {
   const [model, setModel] = useState<ModelChoice | null>(null);
   const [perClank, setPerClank] = useState(false);
   const [models, setModels] = useState<Record<string, ModelChoice>>({});
+  // A kind of project to start from: it suggests the crew and words what Atlas is asked first.
+  const templates = (useQuery(trpc.projects.templates.queryOptions()).data ?? []).filter(
+    (t) => t.id !== SAMPLE_TEMPLATE,
+  );
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const template = templates.find((t) => t.id === templateId) ?? null;
+  const [notes, setNotes] = useState<{ projectId: string; notes: string[] } | null>(null);
 
   const check = useQuery(
     trpc.projects.checkFolder.queryOptions(folder ?? '', { enabled: folder !== null }),
@@ -62,11 +71,23 @@ export function NewProjectPage() {
       onSuccess: (path) => path && repo && setInto(joinPath(path, repo.name)),
     }),
   );
-  const create = useMutation(
+  const createBlank = useMutation(
     trpc.projects.create.mutationOptions({
       onSuccess: (project) => go({ page: 'project', id: project.id, tab: 'board' }),
     }),
   );
+  const createFromTemplate = useMutation(
+    trpc.projects.createFromTemplate.mutationOptions({
+      onSuccess: (started) => {
+        // Something couldn't be started: say so before moving on, since the project is there.
+        if (started.notes.length > 0) {
+          setNotes({ projectId: started.project.id, notes: started.notes });
+        } else if (started.conversationId) go({ page: 'chat', id: started.conversationId });
+        else go({ page: 'project', id: started.project.id, tab: 'board' });
+      },
+    }),
+  );
+  const create = template ? createFromTemplate : createBlank;
 
   const clonePath = into ?? cloneFolder.data ?? null;
   const keyValid = /^[A-Z][A-Z0-9]{1,5}$/.test(shownKey);
@@ -79,8 +100,8 @@ export function NewProjectPage() {
   const ready = name.trim() !== '' && keyValid && workspaceReady && !create.isPending;
   const chosen = crew.filter((c) => c.id === LEAD_CLANK || members.has(c.id));
 
-  const submit = () =>
-    create.mutate({
+  const submit = () => {
+    const project: NewProject = {
       name: name.trim(),
       brief: brief.trim(),
       key: shownKey,
@@ -95,7 +116,35 @@ export function NewProjectPage() {
             Object.entries(models).filter(([id]) => chosen.some((c) => c.id === id)),
           )
         : {},
-    });
+    };
+    if (template) createFromTemplate.mutate({ project, templateId: template.id });
+    else createBlank.mutate(project);
+  };
+
+  if (notes) {
+    return (
+      <div className="relative mx-auto flex max-w-3xl flex-col gap-6 px-10 py-12">
+        <header className="flex flex-col gap-2">
+          <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase">New project</p>
+          <h1 className="text-3xl font-semibold tracking-[-0.03em]">The project is made</h1>
+          <p className="text-dim">Not everything the template starts with could be done:</p>
+        </header>
+        <ul className="flex list-disc flex-col gap-2 pl-5 text-sm text-amber-100">
+          {notes.notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+        <div>
+          <Button
+            variant="primary"
+            onClick={() => go({ page: 'project', id: notes.projectId, tab: 'board' })}
+          >
+            Open the project
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative mx-auto flex max-w-3xl flex-col gap-6 px-10 py-12">
@@ -109,6 +158,46 @@ export function NewProjectPage() {
           through with you before anything is built.
         </p>
       </header>
+
+      {templates.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <p className="text-[11px] font-medium tracking-[0.15em] text-dim uppercase">Start from</p>
+          <div className="grid grid-cols-3 gap-2">
+            <Choice
+              active={template === null}
+              onClick={() => setTemplateId(null)}
+              title="A blank project"
+            >
+              Talk the idea through with Atlas, and go from there.
+            </Choice>
+            {templates.map((t) => (
+              <Choice
+                key={t.id}
+                active={template?.id === t.id}
+                onClick={() => {
+                  setTemplateId(t.id);
+                  // The crew it wants, which can still be changed below.
+                  setMembers(new Set(t.crew));
+                }}
+                title={t.name}
+              >
+                {t.summary}
+              </Choice>
+            ))}
+          </div>
+          {template && (
+            <p className="text-[12px] text-dim">
+              {template.tickets.length > 0
+                ? `It puts ${template.tickets.length} ${template.tickets.length === 1 ? 'ticket' : 'tickets'} on the board straight away. `
+                : ''}
+              {template.kickoff
+                ? 'Atlas is told what you want, from what you write below, and takes it from there in a chat you can read and steer.'
+                : ''}
+              {template.source === 'marketplace' ? ' From the marketplace.' : ''}
+            </p>
+          )}
+        </section>
+      )}
 
       <Step number={1} title="Name it">
         <div className="grid grid-cols-[1fr_8rem] gap-3">
@@ -137,7 +226,11 @@ export function NewProjectPage() {
         </div>
         <input
           aria-label="What you're making"
-          placeholder="A line about what you're making: a website that sells surf boards"
+          placeholder={
+            template?.ask
+              ? `${template.ask}${template.example ? ` Such as: ${template.example}` : ''}`
+              : "A line about what you're making: a website that sells surf boards"
+          }
           className={inputClass}
           value={brief}
           onChange={(e) => setBrief(e.target.value)}

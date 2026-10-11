@@ -8,17 +8,20 @@ import { ContextView } from '../components/project/ContextView';
 import { ProjectSettings } from '../components/project/ProjectSettings';
 import { ProjectStudio } from '../components/project/ProjectStudio';
 import { SpecView } from '../components/project/SpecView';
+import { RoutinesView } from '../components/routines/RoutinesView';
 import { Button, Dot, ErrorText, FolderIcon, IconButton } from '../components/ui';
 import { usageText } from '../lib/board';
 import { useCrew } from '../lib/crew';
 import { type ProjectTab, useNav } from '../lib/nav';
 import { folderName } from '../lib/projects';
+import { useRoutines } from '../lib/routines';
 import { useTRPC } from '../lib/trpc';
 
 const TABS: [ProjectTab, string][] = [
   ['board', 'Board'],
   ['spec', 'Spec'],
   ['design', 'Studio'],
+  ['routines', 'Routines'],
   ['context', 'Context'],
   ['settings', 'Settings'],
 ];
@@ -29,12 +32,15 @@ export function ProjectPage({
   tab,
   ticket,
   run,
+  focus,
 }: {
   id: string;
   tab: ProjectTab;
   ticket: string | null;
   /** A run whose design to open in Studio. */
   run: string | null;
+  /** What to bring into view on the Routines tab. */
+  focus: string | null;
 }) {
   const trpc = useTRPC();
   const [live, setLive] = useState<BoardSnapshot | null>(null);
@@ -55,6 +61,7 @@ export function ProjectPage({
       {tab === 'board' && <Board snapshot={snapshot} ticket={ticket} />}
       {tab === 'spec' && <SpecView snapshot={snapshot} />}
       {tab === 'design' && <ProjectStudio snapshot={snapshot} run={run} />}
+      {tab === 'routines' && <RoutinesView snapshot={snapshot} focus={focus} />}
       {tab === 'context' && <ContextView snapshot={snapshot} />}
       {tab === 'settings' && <ProjectSettings snapshot={snapshot} />}
     </div>
@@ -67,6 +74,7 @@ function ProjectHeader({ snapshot, tab }: { snapshot: BoardSnapshot; tab: Projec
   const crew = useCrew();
   const { project } = snapshot;
   const [chatting, setChatting] = useState(false);
+  const routineNeeds = useRoutines(project.id)?.needs.length ?? 0;
   const openFolder = useMutation(trpc.projects.openFolder.mutationOptions());
   const update = useMutation(trpc.projects.update.mutationOptions());
   const members = crew.filter((c) => project.crew.some((m) => m.clankId === c.id));
@@ -160,6 +168,11 @@ function ProjectHeader({ snapshot, tab }: { snapshot: BoardSnapshot; tab: Projec
             {label}
             {id === 'spec' && snapshot.specs.some((s) => s.status === 'signed_off') && (
               <span className="ml-1.5 inline-block">
+                <Dot tone="amber" live />
+              </span>
+            )}
+            {id === 'routines' && routineNeeds > 0 && (
+              <span className="ml-1.5 inline-block" title={`${routineNeeds} need you`}>
                 <Dot tone="amber" live />
               </span>
             )}

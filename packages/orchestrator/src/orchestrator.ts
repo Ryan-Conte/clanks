@@ -1,8 +1,9 @@
 import type { BrowserHost } from '@clanks/browser';
+import { LEAD_CLANK } from '@clanks/core';
 import { ModelManager, type ModelManagerOptions, parseModelRef } from '@clanks/models';
 import { BUILTIN_PROVIDER, ProviderRegistry, createBuiltinProvider } from '@clanks/providers';
 import { McpManager } from '@clanks/tools';
-import { PathError, resolveInside } from '@clanks/workspace';
+import { PathError, git, resolveInside } from '@clanks/workspace';
 import { ActivityService } from './activity/service';
 import { ArtifactService } from './artifacts/service';
 import { BoardError, BoardService } from './board/service';
@@ -22,6 +23,8 @@ import { LocalApi } from './local-api/server';
 import { DEFAULT_MARKETPLACE_INDEX, MarketplaceService } from './marketplace/service';
 import { McpService } from './mcp/service';
 import { ProjectService } from './projects/service';
+import { readScheduleWithModel } from './routines/schedule';
+import { RoutineService, type RoutineServiceOptions } from './routines/service';
 import { SandboxService } from './sandbox/service';
 import { TerminalService } from './terminal/service';
 import { ToolService } from './tools/service';
@@ -31,6 +34,7 @@ import { ProviderService, type ProviderServiceOptions } from './providers';
 import { type AppRouter, appRouter } from './router';
 import { type SecretCipher, SecretStore } from './secrets';
 import { SettingsService } from './settings';
+import { ShellService } from './shell';
 import { sqliteModelRepository } from './store/models';
 import { openStore } from './store/store';
 import type { AppInfo, Host, OrchestratorContext } from './trpc';
@@ -77,6 +81,11 @@ export interface OrchestratorOptions {
   gitlabFetch?: typeof fetch;
   /** Tests stand in for the mail server approved emails go out through. */
   mailTransport?: (config: SmtpConfig) => MailTransport;
+  /** Tests set the routines' clock, draw their frames and list their tags, and tick by hand. */
+  routines?: Partial<Pick<RoutineServiceOptions, 'now' | 'framePng' | 'tags' | 'readSchedule'>> & {
+    /** False leaves the scheduler's timers off, for a test that ticks itself. */
+    start?: boolean;
+  };
 }
 
 export interface Orchestrator {
@@ -317,6 +326,10 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     board,
     artifactsDir: paths.artifacts,
     artifacts,
+    routines: {
+      access: (projectId, clankId, conversationId) =>
+        routines.access(projectId, clankId, conversationId),
+    },
   });
   board.attach({
     createRun: (input) => chat.createRun(input),
@@ -364,6 +377,59 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
   packagesSoon.unref();
   const packagesTimer = setInterval(checkPackages, 6 * 60 * 60_000);
   packagesTimer.unref();
+  const routines: RoutineService = new RoutineService({
+    db: store.db,
+    projects,
+    crew,
+    board,
+    integrations,
+    context: contextNotes,
+    settings,
+    artifactsDir: paths.artifacts,
+    // A frame as it will be sent, at its own size: from the design its ticket's maker handed in,
+    // then the project's own, then whatever else the crew is designing.
+    framePng: async (projectId, frame, ticket) => {
+      const project = projects.find(projectId);
+      if (!project) return null;
+      const tickets = board.tickets(projectId);
+      const runs = chatStore
+        .inProject(projectId)
+        .filter((c) => c.role === 'maker')
+        .filter((c) => tickets.find((t) => t.id === c.ticketId)?.type === 'design')
+        .sort((a, b) => +b.updatedAt - +a.updatedAt);
+      const dirs = [
+        ...runs
+          .filter((c) => c.ticketId === ticket?.id)
+          .flatMap((c) => workspace.run(c.id)?.cwd ?? []),
+        project.folder,
+        ...runs.flatMap((c) => workspace.run(c.id)?.cwd ?? []),
+      ];
+      for (const dir of new Set(dirs)) {
+        const found = await design.framePicture(dir, frame).catch(() => null);
+        if (!found) continue;
+        const exported = await design
+          .exportFrame(dir, { file: found.file, frame, format: 'png' })
+          .catch(() => null);
+        return exported?.data ?? found.png;
+      }
+      return null;
+    },
+    tags: async (folder) =>
+      (await git(['tag', '--list'], { cwd: folder }))
+        .split(/\r?\n/)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    // Async, so having no model to ask is a rejection rather than a throw.
+    readSchedule: async (words, zone, now) =>
+      readScheduleWithModel(
+        providers,
+        chat.modelFor(LEAD_CLANK),
+        { words, zone, now },
+        AbortSignal.timeout(90_000),
+      ),
+    templates: () => marketplace.routineTemplates(),
+    ...options.routines,
+  });
   chat.recover();
   board.recover();
   // Models loading, unloading and freeing up may let waiting runs start; so may a crew model.
@@ -426,9 +492,12 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     email,
     integrations,
     marketplace,
+    routines,
     localApi,
+    shell: new ShellService(),
     host: options.host ?? null,
   };
+  if (options.routines?.start !== false) routines.start();
   const ready = models.start();
   // Callers that don't wait still shouldn't see an unhandled rejection; the UI shows the problem.
   ready.catch((error: unknown) => console.error('The model manager failed to start', error));
@@ -442,6 +511,7 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
       clearInterval(prTimer);
       clearTimeout(packagesSoon);
       clearInterval(packagesTimer);
+      routines.close();
       integrations.close();
       if (pumpTimer) clearTimeout(pumpTimer);
       for (const timer of designTimers.values()) clearTimeout(timer);

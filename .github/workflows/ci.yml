@@ -92,7 +92,8 @@ jobs:
       # Fetches the llama.cpp builds to bundle (unless cached), then builds the installers.
       - run: pnpm package
         env:
-          # Never pick up a signing identity from the runner; builds are unsigned until Milestone 11.
+          # Never pick up a signing identity from the runner: this job only checks that it packages.
+          # The release workflow signs.
           CSC_IDENTITY_AUTO_DISCOVERY: false
       - name: Smoke test the packaged app
         working-directory: apps/desktop

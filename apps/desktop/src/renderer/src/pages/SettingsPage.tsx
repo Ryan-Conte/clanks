@@ -9,6 +9,7 @@ import { LocalApiPanel } from '../components/settings/LocalApiPanel';
 import { MarketplacePanel } from '../components/settings/MarketplacePanel';
 import { ProfilePanel } from '../components/settings/ProfilePanel';
 import { CloudPanel, ServersPanel } from '../components/settings/ProvidersPanels';
+import { CrashReportsPanel, RoutinesPanel, UpdatesPanel } from '../components/settings/ShellPanels';
 import {
   ApprovalsPanel,
   McpPanel,
@@ -45,7 +46,10 @@ export function SettingsPage() {
       <GitLabPanel />
       <MarketplacePanel />
       <HuggingFacePanel />
+      <RoutinesPanel />
       <BackgroundPanel />
+      <UpdatesPanel />
+      <CrashReportsPanel />
       <AppPanel />
     </div>
   );
@@ -106,6 +110,7 @@ function AppPanel() {
             {info.data.version}
             {info.data.packaged ? '' : <span className="text-dim"> (from source)</span>}
           </Row>
+          <Row label="Licence">Apache-2.0. The source is at github.com/Ryan-Conte/clanks.</Row>
           <Row label="Platform">
             {info.data.platform} {info.data.arch}
           </Row>

@@ -15,7 +15,13 @@ type TicketRow = typeof ticketTable.$inferSelect;
 export type TicketChanges = Partial<Omit<TicketRow, 'id' | 'projectId' | 'number' | 'key'>>;
 
 function toTicket(row: TicketRow, dependsOn: string[]): Ticket {
-  return { ...row, reviews: row.reviews ?? [], skipped: row.skipped ?? [], dependsOn };
+  return {
+    ...row,
+    reviews: row.reviews ?? [],
+    skipped: row.skipped ?? [],
+    routine: row.routine ?? null,
+    dependsOn,
+  };
 }
 
 /** Model use in a project, added up per ticket, clank and provider. */

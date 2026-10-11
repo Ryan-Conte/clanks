@@ -1,4 +1,7 @@
 import type {
+  ActionDelivery,
+  ActionMedia,
+  ActionResult,
   ActivityEvent,
   ArtifactKind,
   Avatar,
@@ -22,13 +25,19 @@ import type {
   NoteStatus,
   OutputType,
   PackageKind,
+  ProjectTemplateFile,
   ProjectRepo,
   RepoHost,
   NoteAnchor,
   ReviewNoteKind,
   RouteStep,
+  RoutineDefinition,
+  RoutineRunStatus,
+  RoutineStatus,
   RunRole,
+  RunTrigger,
   Sandbox,
+  ScheduledActionStatus,
   SkippedCheck,
   SpecStatus,
   TicketDelivery,
@@ -37,6 +46,7 @@ import type {
   TicketOutcome,
   TicketProgress,
   TicketReview,
+  TicketRoutine,
   TicketSend,
   TicketState,
   ToolOverrides,
@@ -213,6 +223,8 @@ export const ticket = sqliteTable(
     /** For an email: how sending it went, once the user approved it. */
     sent: text('sent', { mode: 'json' }).$type<TicketSend>(),
     outcome: text('outcome').$type<TicketOutcome>(),
+    /** The routine run that made it, and when it's due. */
+    routine: text('routine', { mode: 'json' }).$type<TicketRoutine>(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
     doneAt: integer('done_at', { mode: 'timestamp_ms' }),
@@ -581,10 +593,16 @@ export const projectIntegration = sqliteTable(
 
 /** What a package brought with it besides files: a crew's members, or an integration's server. */
 export interface PackageData {
+  /** What it says it's for, kept so it can be listed without its index. */
+  summary?: string;
   /** A crew: the clanks it's made of, premade ones and installed ones alike. */
   clanks?: string[];
   /** A crew: the integrations it expects. */
   integrations?: string[];
+  /** A routine template: the routine it starts, as it was written. */
+  routine?: RoutineDefinition;
+  /** A project template: what a new project starts with. */
+  template?: ProjectTemplateFile;
 }
 
 /** Something installed from a marketplace: a clank, an integration or a crew. */
@@ -610,3 +628,109 @@ export const pkg = sqliteTable('package', {
   data: text('data', { mode: 'json' }).$type<PackageData>(),
   installedAt: integer('installed_at', { mode: 'timestamp_ms' }).notNull(),
 });
+
+/** A routine: a trigger, steps, and rules for approval, timing and missed runs. */
+export const routine = sqliteTable(
+  'routine',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    definition: text('definition', { mode: 'json' }).$type<RoutineDefinition>().notNull(),
+    status: text('status').$type<RoutineStatus>().notNull(),
+    /** `user`, or the clank that drafted it. */
+    createdBy: text('created_by').notNull(),
+    /** The chat it was proposed in. Not a foreign key: deleting the chat keeps the routine. */
+    conversationId: text('conversation_id'),
+    pausedReason: text('paused_reason'),
+    /** Runs that failed in a row. */
+    failures: integer('failures').notNull().default(0),
+    /** The marketplace template it was made from. */
+    template: text('template'),
+    /** A clank's proposed change to another routine, which takes its place when activated. */
+    replaces: text('replaces'),
+    nextRunAt: integer('next_run_at', { mode: 'timestamp_ms' }),
+    lastRunAt: integer('last_run_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('routine_project').on(t.projectId)],
+);
+
+/** One execution of a routine, for one scheduled time or one event. */
+export const routineRun = sqliteTable(
+  'routine_run',
+  {
+    id: text('id').primaryKey(),
+    routineId: text('routine_id')
+      .notNull()
+      .references(() => routine.id, { onDelete: 'cascade' }),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    scheduledFor: integer('scheduled_for', { mode: 'timestamp_ms' }).notNull(),
+    trigger: text('trigger', { mode: 'json' }).$type<RunTrigger>().notNull(),
+    inputs: text('inputs', { mode: 'json' }).$type<Record<string, string>>().notNull(),
+    status: text('status').$type<RoutineRunStatus>().notNull(),
+    reason: text('reason'),
+    /** A missed run the user is asked about. */
+    asks: integer('asks', { mode: 'boolean' }).notNull().default(false),
+    /** The ticket each ticket step made, by step. Not foreign keys: a run outlives its tickets. */
+    ticketIds: text('ticket_ids', { mode: 'json' }).$type<Record<string, string>>().notNull(),
+    /** The user was told it's ready to approve, and reminded before its first action. */
+    notified: integer('notified', { mode: 'boolean' }).notNull().default(false),
+    reminded: integer('reminded', { mode: 'boolean' }).notNull().default(false),
+    startedAt: integer('started_at', { mode: 'timestamp_ms' }),
+    endedAt: integer('ended_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    index('routine_run_routine').on(t.routineId, t.scheduledFor),
+    index('routine_run_project').on(t.projectId, t.status),
+  ],
+);
+
+/**
+ * An action waiting for its time. Approving it freezes its payload, files, account and time;
+ * the orchestrator carries it out, with no model involved.
+ */
+export const scheduledAction = sqliteTable(
+  'scheduled_action',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    runId: text('run_id').references(() => routineRun.id, { onDelete: 'cascade' }),
+    /** A campaign's post: the ticket it's from. */
+    ticketId: text('ticket_id').references(() => ticket.id, { onDelete: 'cascade' }),
+    stepId: text('step_id').notNull(),
+    integrationId: text('integration_id').notNull(),
+    operationId: text('operation_id').notNull(),
+    /** Not a foreign key: an account disconnected since fails the action, saying so. */
+    connectionId: text('connection_id'),
+    payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>(),
+    media: text('media', { mode: 'json' }).$type<ActionMedia[]>().notNull(),
+    payloadHash: text('payload_hash'),
+    executeAt: integer('execute_at', { mode: 'timestamp_ms' }).notNull(),
+    graceMs: integer('grace_ms').notNull(),
+    delivery: text('delivery').$type<ActionDelivery>().notNull(),
+    status: text('status').$type<ScheduledActionStatus>().notNull(),
+    approvedAt: integer('approved_at', { mode: 'timestamp_ms' }),
+    attempts: integer('attempts').notNull().default(0),
+    /** Set while a call is out, so a restart knows one was. */
+    attemptId: text('attempt_id'),
+    /** When to try again after a failure that may pass. */
+    retryAt: integer('retry_at', { mode: 'timestamp_ms' }),
+    result: text('result', { mode: 'json' }).$type<ActionResult>(),
+    error: text('error'),
+    madeBy: text('made_by'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    index('scheduled_action_due').on(t.status, t.executeAt),
+    index('scheduled_action_run').on(t.runId),
+  ],
+);

@@ -1,6 +1,8 @@
 import {
   type ChatEvent,
   type SettingsPatch,
+  type ShellRoute,
+  type ShellStatus,
   modelIdSchema,
   modelRefSchema,
   runtimeBackendSchema,
@@ -21,8 +23,10 @@ import { designRouter } from './routers/design';
 import { githubRouter } from './routers/github';
 import { gitlabRouter } from './routers/gitlab';
 import { integrationsRouter, marketplaceRouter } from './routers/integrations';
+import { snapshots, stream } from './routers/live';
 import { boardRouter, projectsRouter } from './routers/projects';
 import { providersRouter } from './routers/providers';
+import { routinesRouter } from './routers/routines';
 import { mcpRouter, toolsRouter } from './routers/tools';
 import { workspaceRouter } from './routers/workspace';
 import { type OrchestratorContext, createCallerFactory, publicProcedure, router } from './trpc';
@@ -81,6 +85,7 @@ export const appRouter = router({
   email: emailRouter,
   integrations: integrationsRouter,
   marketplace: marketplaceRouter,
+  routines: routinesRouter,
 
   app: router({
     info: publicProcedure.query(({ ctx }) => ({
@@ -88,6 +93,51 @@ export const appRouter = router({
       dataDir: ctx.paths.root,
       store: ctx.store.status(),
     })),
+
+    /** Updates, crash reports and what's set up with the OS, sent again when any changes. */
+    shell: publicProcedure.subscription(async function* ({
+      ctx,
+      signal,
+    }): AsyncGenerator<ShellStatus> {
+      yield* snapshots({
+        signal,
+        intervalMs: 200,
+        subscribe: (onChange) => {
+          ctx.shell.on('change', onChange);
+          return () => ctx.shell.off('change', onChange);
+        },
+        snapshot: () => ctx.shell.status(),
+      });
+    }),
+
+    /** Where the shell sends the window, such as to what a notification was about. */
+    opened: publicProcedure.subscription(async function* ({
+      ctx,
+      signal,
+    }): AsyncGenerator<ShellRoute> {
+      yield* stream<ShellRoute>({
+        signal,
+        subscribe: (push) => {
+          ctx.shell.on('open', push);
+          return () => ctx.shell.off('open', push);
+        },
+      });
+    }),
+
+    checkForUpdates: modelProcedure.mutation(async ({ ctx }) => {
+      await ctx.host?.checkForUpdates?.();
+    }),
+    downloadUpdate: modelProcedure.mutation(async ({ ctx }) => {
+      await ctx.host?.downloadUpdate?.();
+    }),
+    /** Restarts into the newer version. The window asks first: runs that are going stop. */
+    installUpdate: modelProcedure.mutation(({ ctx }) => {
+      ctx.host?.installUpdate?.();
+    }),
+    openCrashFolder: modelProcedure.mutation(async ({ ctx }) => {
+      const { folder } = ctx.shell.status().crashReports;
+      if (folder) await ctx.host?.openFolder(folder);
+    }),
   }),
 
   settings: router({

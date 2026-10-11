@@ -22,6 +22,7 @@ const KINDS: [PackageKind | 'all', string][] = [
   ['integration', 'Integrations'],
   ['crew', 'Crews'],
   ['routine', 'Routines'],
+  ['template', 'Templates'],
 ];
 
 /** The marketplace: what people have shared, what's installed from it, and each package in full. */
@@ -340,7 +341,7 @@ function PackagePage({ target, onBack }: { target: PackageRef; onBack: () => voi
                 <p className="text-dim">{entry.summary}</p>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-2">
-                {entry.kind === 'routine' ? null : same ? (
+                {same ? (
                   <Badge tone="mint">Installed</Badge>
                 ) : (
                   <Button
@@ -442,6 +443,63 @@ function PackagePage({ target, onBack }: { target: PackageRef; onBack: () => voi
                 />
               ))}
             </>
+          )}
+          {data.routine && (
+            <Panel
+              title="What this routine does"
+              description="Installing it schedules nothing. It's added to each project's Routines tab as a template: you start a draft from it, pick its clanks, accounts and times, and turn it on."
+            >
+              <p className="text-sm text-white/90">{data.routine.trigger}</p>
+              <ol className="flex list-decimal flex-col gap-1 pl-5 text-[13px] text-white/80">
+                {data.routine.steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+              {(data.routine.clanks.length > 0 || data.routine.integrations.length > 0) && (
+                <p className="text-[13px] text-dim">
+                  It expects{' '}
+                  {[
+                    ...data.routine.clanks,
+                    ...data.routine.integrations.map((id) => `an account for ${id}`),
+                  ].join(', ')}{' '}
+                  in the project it's used in.
+                </p>
+              )}
+              <pre className="max-h-96 overflow-auto rounded-xl border border-line bg-black/30 p-4 font-mono text-[12px] leading-relaxed text-white/80">
+                {data.routine.yaml}
+              </pre>
+            </Panel>
+          )}
+          {data.template && (
+            <Panel
+              title="What this template starts"
+              description="Installing it adds it to the list a new project starts from. It only picks clanks you already have and words what they're asked first."
+            >
+              <CrewNames
+                ids={data.template.crew.filter((id) => !data.template!.missing.includes(id))}
+              />
+              {data.template.missing.length > 0 && (
+                <p className="text-[13px] text-amber-200">
+                  It also names {data.template.missing.join(', ')}, which you don't have. A project
+                  made from it starts without them.
+                </p>
+              )}
+              {data.template.ask && (
+                <p className="text-[13px] text-white/80">It asks: {data.template.ask}</p>
+              )}
+              {data.template.kickoff && (
+                <pre className="rounded-xl border border-line bg-black/30 p-4 text-[13px] leading-relaxed whitespace-pre-wrap text-white/80">
+                  {data.template.kickoff}
+                </pre>
+              )}
+              {data.template.tickets.length > 0 && (
+                <ol className="flex list-decimal flex-col gap-1 pl-5 text-[13px] text-white/80">
+                  {data.template.tickets.map((ticket) => (
+                    <li key={ticket}>{ticket}</li>
+                  ))}
+                </ol>
+              )}
+            </Panel>
           )}
           {installed && (
             <Panel

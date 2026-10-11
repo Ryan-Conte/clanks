@@ -26,6 +26,8 @@ export const MARKETPLACE_FILE = 'marketplace.yaml';
 export const PACKAGE_FILE = 'package.yaml';
 export const CLANK_FILE = 'clank.md';
 export const CREW_FILE = 'crew.yaml';
+export const ROUTINE_FILE = 'routine.yaml';
+export const TEMPLATE_FILE = 'template.yaml';
 
 /** The most one of a package's files may be. They're prompts and manifests, never binaries. */
 export const MAX_FILE_BYTES = 512 * 1024;
@@ -39,7 +41,8 @@ export const PACKAGE_FILES: Record<PackageKind, readonly string[]> = {
   clank: [PACKAGE_FILE, CLANK_FILE],
   integration: [PACKAGE_FILE, 'manifest.yaml', 'openapi.yaml', 'guide.md'],
   crew: [PACKAGE_FILE, CREW_FILE],
-  routine: [PACKAGE_FILE, 'routine.yaml'],
+  routine: [PACKAGE_FILE, ROUTINE_FILE],
+  template: [PACKAGE_FILE, TEMPLATE_FILE],
 };
 
 /** A GitHub account's name, which is who a package is published by. */

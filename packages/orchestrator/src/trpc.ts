@@ -19,9 +19,11 @@ import type { McpService } from './mcp/service';
 import type { AppDataLayout } from './paths';
 import type { ProjectService } from './projects/service';
 import type { ProviderService } from './providers';
+import type { RoutineService } from './routines/service';
 import type { SandboxService } from './sandbox/service';
 import type { SecretStore } from './secrets';
 import type { SettingsService } from './settings';
+import type { ShellService } from './shell';
 import type { Store } from './store/store';
 import type { TerminalService } from './terminal/service';
 import type { ToolService } from './tools/service';
@@ -53,6 +55,12 @@ export interface Host {
   ): Promise<string | null>;
   /** Opens an https page in the user's own browser, such as a service's sign-in. */
   openUrl(url: string): Promise<void>;
+  /** Looks for a newer clanks now. Missing where the app can't update itself. */
+  checkForUpdates?(): Promise<void>;
+  /** Fetches the newer version that was found. */
+  downloadUpdate?(): Promise<void>;
+  /** Restarts into the version that was fetched. */
+  installUpdate?(): void;
 }
 
 export interface OrchestratorContext {
@@ -101,8 +109,12 @@ export interface OrchestratorContext {
   integrations: IntegrationService;
   /** What marketplaces list, what's installed from them, and publishing to one. */
   marketplace: MarketplaceService;
+  /** Routines: what's scheduled, what's running, and what's approved to go out at its time. */
+  routines: RoutineService;
   /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
   localApi: LocalApi;
+  /** What the desktop shell tells the window: updates, and where a notification leads. */
+  shell: ShellService;
   host: Host | null;
 }
 
