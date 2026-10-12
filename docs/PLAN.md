@@ -14,6 +14,104 @@ This is the technical plan for clanks: what the pieces are, how they talk to eac
 - **Free to share.** Clanks, integrations and crews people build can be published to a free marketplace and installed by anyone, with no account and nothing hidden: you see every prompt and permission before you install.
 - **One language.** TypeScript across the app, orchestrator, tools and design engine, so types are shared end to end. Native code comes only from prebuilt dependencies (llama.cpp, SQLite, node-pty).
 
+## The team
+
+The clanks below are the premade list. Each project's team is chosen when the project is created: Atlas is always on it, and every other clank is optional. More clanks can be added at any time, from the premade list or as custom clanks. Every clank is configurable per project (prompt, model, tools, permissions, place in the workflow).
+
+| Clank | Role | Inputs | Outputs | Runs |
+| --- | --- | --- | --- | --- |
+| Atlas | Lead | Your requests, the spec, PRs and QA reports | Plan, tickets, assignments, final sign-off | In-process |
+| Scribe | Business Analyst | Your request, Atlas's notes, bounce reasons | Spec: stories, acceptance criteria, non-goals, open questions | In-process |
+| Prism | Designer | Spec stories with UI | Flows, wireframes (HTML previews), design tokens and component specs | Sandbox |
+| Forge | Engineer | A ticket, its acceptance criteria, design specs | Branch, commits, tests, pull request | Sandbox |
+| Gauge | QA | A PR and its ticket's acceptance criteria | QA report with pass/fail per criterion and evidence | Sandbox |
+| Scout | Researcher (optional) | A question | Research note with sources | Sandbox |
+| Quill | Writer (optional) | A ticket | Docs, blog posts, release notes, copy, emails | Sandbox |
+| Buzz | Marketing (optional) | Your goals, the brief | Positioning, campaign plans, channel strategy, social posts, calendars | In-process |
+
+### Custom clanks and the library
+
+A custom clank is defined by a name, avatar, role prompt, model, tool allowlist, permission policy and an optional workflow slot (a stage it owns in ticket routes, and which roles it may bounce to). Premade and custom clanks live in a local **clank library**. Adding a clank to a project copies the template into the project, so editing it in one project doesn't change another; you can save changes back to the library explicitly.
+
+Atlas plans with whatever team the project has. If a ticket needs a role the team lacks (for example UI work with no Prism), Atlas either routes around it (Forge builds from the spec alone) or asks you whether to add that clank.
+
+"In-process" clanks run in the orchestrator because they only need the model and the project's data. "Sandbox" clanks need a filesystem, a shell or a browser, so each run gets its own container.
+
+## The team workflow
+
+```
+                 ┌──────────── you ────────────┐
+                 ▼                             │ approve spec / merge PR
+  Request ──► Atlas + Scribe ──► Spec ──► Atlas: tickets ──► Prism (UI only) ──► Forge ──► Gauge ──► Atlas sign-off ──► You
+                   ▲    ▲                                        ▲              ▲  │        │  │            │
+                   │    └──────── spec gap / unclear AC ─────────┴──────────────┘  │        │  │            │
+                   │                                                    bug / failed AC ◄───┘  │            │
+                   └─────────────────────────────── anything ◄─────────────────────────────────┴────────────┘
+```
+
+### Stages
+
+1. **Intake.** You talk to Atlas. Small asks are answered in chat. When the request is a project, Atlas asks clarifying questions and brings in Scribe.
+2. **Spec.** Scribe drafts the spec; Atlas reviews it for scope, order and feasibility (asking Scout if facts are needed). The spec goes to you to approve, edit or send back. Specs are versioned; nothing is built from an unapproved version.
+3. **Plan.** Atlas splits the approved spec into tickets. Each ticket links to the stories and acceptance criteria (AC) it covers, lists dependencies and gets a route: which roles it passes through (for example `design → build → qa → lead`, or `build → qa → lead` for non-UI work).
+4. **Design.** Prism takes UI tickets first and attaches flows, wireframes and component specs. Design tokens and shared components are committed to the repo so Forge builds from them.
+5. **Build.** Forge implements the ticket on its own branch with tests, runs the project's checks, and opens a PR that references the ticket and its AC.
+6. **QA.** Gauge checks out the PR in a fresh sandbox, runs the build and test suite, and validates each AC with evidence (test output, screenshots from browser checks). The result is a QA report on the ticket.
+7. **Sign-off.** Atlas reviews the PR, the QA report and the spec together, and checks the change fits the rest of the project. Approved tickets go to you with the PR ready to merge.
+8. **Done.** You merge. CI status and merge state come back from GitHub.
+
+### Non-software projects
+
+The same workflow runs without a repo. The spec becomes a **brief** (goals, audience, messages, deliverables, success measures), written by Atlas with whichever planning clank the team has (Scribe, Buzz or Scout) and approved by you. Tickets route through the clanks the project has, and Atlas's sign-off checks each deliverable against the brief instead of a PR against the spec. Outputs are files in the project folder (Markdown, images, HTML mock-ups, CSV calendars), and anything outbound (publishing, sending) waits for your approval.
+
+Example, **Scavr.io marketing** with Atlas, Quill, Prism and Buzz: Atlas and Buzz write the launch brief; tickets go to Quill (blog post, launch email), Prism (social graphics, landing page mock-ups) and Buzz (campaign calendar, posts); Atlas reviews each against the brief and bounces off-message work back with a reason.
+
+### Bounce-backs
+
+Any clank can return a ticket to an earlier owner instead of passing it on. A bounce has a target role, a category and a reason, and it is recorded on the ticket.
+
+| From | Typical bounce | To |
+| --- | --- | --- |
+| Prism, Forge | AC is ambiguous, contradictory or missing a case | Scribe (spec change, then Atlas re-checks affected tickets) |
+| Forge | Design can't be built as specified | Prism |
+| Gauge | Build broken, test failing, AC not met | Forge, with the QA report |
+| Gauge | AC itself is untestable or wrong | Scribe |
+| Atlas | Anything | Any role |
+
+Rules:
+
+- A spec change from a bounce creates a new spec version. Atlas finds every ticket linked to the changed AC and marks it for re-check.
+- Each ticket has a bounce limit (default 3 per stage pair). Hitting it escalates to you in chat with the full history, rather than letting clanks loop.
+- A bounce never discards work: the branch, reports and notes stay on the ticket for the next owner.
+
+### Talking to any clank
+
+Every clank is reachable from the project's chat sidebar. Asking "why did you choose Stripe Checkout?" or "why did this fail QA?" is answered from that clank's own project context (below), with links to the tickets, commits and reports it cites. A clank you talk to can also act: you can ask Scribe to add an AC, and that goes through the normal spec flow.
+
+## Projects and the home screen
+
+The app opens on the home screen: recent projects as cards with their status (spec in review, N tickets in progress, PRs waiting for you), plus "New project".
+
+New project wizard:
+
+1. **Basics.** Name, one-line description, optional template.
+2. **Workspace.** For software projects, sign in with GitHub, then pick an existing repo or create a new one (public or private, with a default branch); the repo is cloned locally as the workspace. For other projects (marketing, research, content), pick a local folder; it is git-initialised so every output is versioned.
+3. **Models.** A default model for the team, with per-clank overrides (for example a frontier model for Atlas and Scribe, a fast model for Forge, a local model for Gauge). Each choice is checked against the providers you configured.
+4. **Team.** Tick the clanks you need from the premade list (Atlas is always included), optionally starting from a preset ("Full team", "Solo engineer"). "New clank" creates a custom one with its own prompt. The team can be changed later from the project's team settings.
+
+After creation you land in the project's chat with Atlas.
+
+## Per-project context
+
+Each clank keeps separate context for each project, so a Forge in one project knows nothing about another.
+
+- **Conversations** between you and that clank in that project.
+- **Notes**: a small key-value and document store the clank writes to (conventions it learned, things you told it, open questions).
+- **Decision log**: structured entries (`decision`, `reason`, `alternatives`, `links`) written when a clank makes a non-obvious call. This is what answers "why".
+- **Shared project knowledge** every clank can read: the current spec, design tokens, the repo's README and conventions, and the board.
+
+When a clank starts a run, its context is assembled from: its role prompt, the shared project knowledge relevant to the ticket, its own notes and recent decisions, and the ticket with its history (including bounce reasons). Long histories are summarised and the summaries stored, so context stays small and runs can resume after a restart.
+
 ## Architecture
 
 ```
@@ -183,6 +281,8 @@ Clanks can be added to a project at any time.
 Atlas talks the idea through with you and briefs Scribe with a `spec` ticket. Scribe writes the spec: user stories (US-4), acceptance criteria (AC-4.2) and edge cases. Atlas signs it off and you approve it; nothing is built before that. Each approval is a new version (spec v2). Atlas then turns the new or changed stories into tickets, each carrying its story ids and criteria. Clarifications Scribe makes when answering a bounce are added as minor revisions; anything that changes scope comes back to you.
 
 ### Stages and routes
+
+Board columns map to stages:
 
 ```
 Spec ──► Design ──► Build ──► QA ──► [custom checks] ──► Sign-off ──► you

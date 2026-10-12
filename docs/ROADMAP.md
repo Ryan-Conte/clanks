@@ -2,6 +2,8 @@
 
 Each milestone ends with something you can actually use. Later milestones build on earlier ones; nothing is thrown away. Everything runs locally inside the desktop app. The detail on how each piece is built is in [PLAN.md](PLAN.md), and the clanks' priming docs are in [crew/](../crew/README.md).
 
+The north star is the full loop: you create a project, ask the Lead for "a surfing website that sells surf boards", and the team (Lead, BA, Designer, Engineers, QA) specs it, builds it, validates it and hands you pull requests to merge.
+
 ## Milestone 0: Foundations
 
 Get a runnable shell and the plumbing everything else sits on.

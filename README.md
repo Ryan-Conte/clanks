@@ -1,6 +1,6 @@
 # clanks
 
-**Put the clankers to work.**
+**A full software team of clankers, on your desktop.**
 
 *clank (n.): short for clanker, slang for an AI.*
 
@@ -56,7 +56,7 @@ The board is where you watch the crew work: every ticket, the clank on it, and w
 
 The full spec is in [docs/BOARD.md](docs/BOARD.md).
 
-## Meet the crew
+## Meet the team
 
 Pick from the premade clanks, or build your own. Each clank is a name, a role, a model, a set of tools and permissions, and a priming doc that tells the model how to do its job.
 
