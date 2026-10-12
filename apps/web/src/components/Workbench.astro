@@ -1,0 +1,290 @@
+---
+import Avatar from './Avatar.astro';
+import SectionHead from './SectionHead.astro';
+
+const tabs = [
+  { id: 'changes', label: 'Changes', body: 'Every edit, live. Keep or reject each one.' },
+  { id: 'terminal', label: 'Terminal', body: 'Every command and its output, with a stop button.' },
+  { id: 'browser', label: 'Browser', body: 'A real browser in the app. Take over any time.' },
+  {
+    id: 'studio',
+    label: 'Studio',
+    body: 'A design tool, built in. Prism designs while you watch.',
+  },
+  { id: 'activity', label: 'Activity', body: 'Every step on a timeline. Go back to any moment.' },
+];
+
+type Line = { n: number; kind: ' ' | '-' | '+'; code: string };
+const diff: Line[] = [
+  { n: 12, kind: ' ', code: 'export function Menu({ items }: Props) {' },
+  { n: 13, kind: ' ', code: '  return (' },
+  { n: 14, kind: '-', code: '    <ul className="grid grid-cols-2 gap-4">' },
+  { n: 14, kind: '+', code: '    <ul className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">' },
+  { n: 15, kind: ' ', code: '      {items.map((item) => (' },
+  { n: 16, kind: '+', code: '        // Prices never wrap under the name.' },
+  { n: 17, kind: ' ', code: '        <MenuItem key={item.id} {...item} />' },
+  { n: 18, kind: ' ', code: '      ))}' },
+  { n: 19, kind: ' ', code: '    </ul>' },
+];
+const lineClass = {
+  ' ': 'text-white/55',
+  '-': 'bg-rose-400/10 text-rose-300',
+  '+': 'bg-accent-2/10 text-accent-2',
+};
+
+const timeline = [
+  ['2:14', 'gauge', 'Bounced CLK-102: prices cut off under 420px'],
+  ['2:15', 'forge', 'Read the QA report and the menu component'],
+  ['2:16', 'forge', 'Edited src/Menu.tsx, +2 −1'],
+  ['2:16', 'forge', 'Added a test for narrow screens'],
+  ['2:17', 'forge', 'Ran npm test: 14 passed'],
+  ['2:17', 'forge', 'Sent CLK-102 back to Gauge'],
+] as const;
+
+const menu = [
+  ['Flat white', '$5.00'],
+  ['Iced oat latte', '$6.50'],
+  ['Cold brew', '$5.50'],
+];
+---
+
+<section id="workbench" class="relative z-10 mx-auto mt-32 max-w-6xl scroll-mt-8 px-4 sm:px-6">
+  <SectionHead eyebrow="The workbench" tone="accent-2" title="Watch every change as it happens.">
+    Open any ticket: the chat on the left, the work on the right. Step in whenever you want.
+  </SectionHead>
+
+  <div data-tabs class="mt-10">
+    <div class="overflow-hidden rounded-[22px] border border-white/10 bg-panel">
+      <div class="flex flex-col md:flex-row">
+        <div class="flex flex-col gap-3 border-b border-line p-5 md:w-80 md:shrink-0 md:border-r md:border-b-0">
+          <p class="flex items-center gap-2 text-xs text-dim">
+            <Avatar clank="forge" size="xs" live /> Forge · CLK-102
+          </p>
+          <p class="text-[13px] leading-relaxed text-white/85">
+            Gauge found the prices cut off on narrow phones. I'm switching the menu to one column
+            under 420px and adding a test for it.
+          </p>
+          <p class="rounded-xl border border-line bg-black/30 px-3 py-2 font-mono text-[11px] text-dim">
+            edit_file src/Menu.tsx <span class="text-accent-2">+2</span>
+            <span class="text-rose-300">−1</span>
+          </p>
+          <p class="rounded-xl border border-line bg-black/30 px-3 py-2 font-mono text-[11px] text-dim">
+            shell npm test <span class="text-accent-2">14 passed</span>
+          </p>
+          <p class="mt-auto rounded-2xl border border-line bg-raised px-3 py-2.5 text-[13px] text-dim">
+            Ask Forge anything…
+          </p>
+        </div>
+
+        <div class="min-w-0 flex-1">
+          <div
+            role="tablist"
+            aria-label="Workbench"
+            class="flex gap-1 overflow-x-auto border-b border-line px-3 py-2 text-[13px]"
+          >
+            {tabs.map((tab, i) => (
+              <button
+                type="button"
+                role="tab"
+                id={`tab-${tab.id}`}
+                aria-controls={`panel-${tab.id}`}
+                aria-selected={i === 0 ? 'true' : 'false'}
+                tabindex={i === 0 ? 0 : -1}
+                class="shrink-0 rounded-lg px-3 py-1 text-dim transition-colors hover:text-white aria-selected:bg-white/[0.08] aria-selected:text-white"
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div class="relative h-[340px]">
+            <div
+              id="panel-changes"
+              role="tabpanel"
+              aria-labelledby="tab-changes"
+              class="absolute inset-0 overflow-auto p-4 font-mono text-[12px] leading-6"
+            >
+              <p class="text-dim">src/Menu.tsx</p>
+              {diff.map((line) => (
+                <p class:list={['whitespace-pre', lineClass[line.kind]]}>
+                  <span class="mr-4 inline-block w-5 text-right opacity-40">{line.n}</span>
+                  {line.kind === ' ' ? '  ' : `${line.kind} `}
+                  {line.code}
+                </p>
+              ))}
+              <div class="mt-4 flex gap-2 font-sans">
+                <span class="rounded-full bg-white px-3 py-1 text-xs font-medium text-black">
+                  Keep
+                </span>
+                <span class="rounded-full border border-line px-3 py-1 text-xs text-white/80">
+                  Reject
+                </span>
+                <span class="rounded-full border border-line px-3 py-1 text-xs text-white/80">
+                  Comment on line
+                </span>
+              </div>
+            </div>
+
+            <div
+              id="panel-terminal"
+              role="tabpanel"
+              aria-labelledby="tab-terminal"
+              hidden
+              class="absolute inset-0 overflow-auto bg-black/40 p-4 font-mono text-[12px] leading-6 text-white/75"
+            >
+              <p>
+                <span class="text-accent">~/clanks/coffee-cart</span> $ npm test
+              </p>
+              <p class="text-dim">&gt; vitest run</p>
+              <p>
+                <span class="text-accent-2">✓</span> src/Menu.test.tsx (6 tests)
+              </p>
+              <p>
+                <span class="text-accent-2">✓</span> src/Hours.test.tsx (4 tests)
+              </p>
+              <p>
+                <span class="text-accent-2">✓</span> src/Order.test.tsx (4 tests)
+              </p>
+              <p class="mt-2">
+                Tests <span class="text-accent-2">14 passed</span> (14)
+              </p>
+              <p class="text-dim">Duration 1.82s</p>
+              <p class="mt-3">
+                <span class="text-accent">~/clanks/coffee-cart</span> $ npm run build
+              </p>
+              <p class="text-dim">vite v7 building for production…</p>
+              <p>
+                <span class="text-accent-2">✓</span> built in 940ms
+                <span
+                  aria-hidden="true"
+                  class="animate-caret ml-1 inline-block h-3.5 w-2 translate-y-0.5 bg-white/70"
+                ></span>
+              </p>
+            </div>
+
+            <div
+              id="panel-browser"
+              role="tabpanel"
+              aria-labelledby="tab-browser"
+              hidden
+              class="absolute inset-0 flex flex-col"
+            >
+              <div class="flex items-center gap-3 border-b border-line px-4 py-2 text-[12px]">
+                <span class="flex-1 truncate rounded-full bg-white/[0.06] px-3 py-1 font-mono text-dim">
+                  localhost:5173/menu
+                </span>
+                <span class="flex items-center gap-1.5 whitespace-nowrap text-accent-2">
+                  <Avatar clank="gauge" size="xs" live /> Gauge is driving
+                </span>
+                <span class="hidden rounded-full border border-line px-2.5 py-0.5 text-white/80 sm:inline">
+                  Take over
+                </span>
+              </div>
+              <div class="grid flex-1 place-items-center bg-black/30 p-4">
+                <div class="relative w-56 rounded-2xl bg-[#fbf6ee] p-4 text-[#2a1d12] shadow-xl">
+                  <p class="text-[11px] tracking-[0.2em] uppercase opacity-60">Blue Cart Coffee</p>
+                  <p class="mt-1 text-lg font-semibold">Menu</p>
+                  <ul class="mt-2 flex flex-col gap-1.5 text-[13px]">
+                    {menu.map(([name, price]) => (
+                      <li class="flex justify-between border-b border-black/10 pb-1.5">
+                        {name}
+                        <span class="font-medium">{price}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p class="mt-3 rounded-full bg-[#2a1d12] py-1.5 text-center text-[12px] text-white">
+                    Order for pickup
+                  </p>
+                  <span
+                    aria-hidden="true"
+                    class="absolute right-6 bottom-3 size-4 rounded-full border-2 border-lime-300 bg-lime-300/30"
+                  ></span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              id="panel-studio"
+              role="tabpanel"
+              aria-labelledby="tab-studio"
+              hidden
+              class="absolute inset-0 flex"
+            >
+              <div class="hidden w-40 shrink-0 flex-col gap-1 border-r border-line p-3 text-[12px] sm:flex">
+                <p class="mb-1 text-[11px] tracking-wider text-dim uppercase">Layers</p>
+                <p class="rounded-md bg-accent/15 px-2 py-1 text-white">Home · mobile</p>
+                <p class="px-2 py-1 pl-4 text-dim">Hero</p>
+                <p class="px-2 py-1 pl-4 text-dim">Hours card</p>
+                <p class="px-2 py-1 text-white/70">Menu · mobile</p>
+                <p class="mt-3 mb-1 text-[11px] tracking-wider text-dim uppercase">Tokens</p>
+                <div class="flex gap-1.5 px-2">
+                  <span class="size-4 rounded bg-[#2a1d12]"></span>
+                  <span class="size-4 rounded bg-[#fbf6ee]"></span>
+                  <span class="size-4 rounded bg-sky-400"></span>
+                  <span class="size-4 rounded bg-amber-300"></span>
+                </div>
+              </div>
+              <div class="relative flex flex-1 items-center justify-center gap-5 bg-[linear-gradient(var(--color-line)_1px,transparent_1px),linear-gradient(90deg,var(--color-line)_1px,transparent_1px)] bg-[size:24px_24px] p-4">
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-[11px] text-accent">Home · mobile</span>
+                  <div class="flex h-52 w-28 flex-col gap-2 rounded-lg bg-[#fbf6ee] p-2 ring-2 ring-accent">
+                    <span class="h-16 rounded bg-sky-400/80"></span>
+                    <span class="h-2 w-3/4 rounded bg-[#2a1d12]/70"></span>
+                    <span class="h-2 w-1/2 rounded bg-[#2a1d12]/30"></span>
+                    <span class="mt-auto h-10 rounded bg-amber-300/80"></span>
+                  </div>
+                </div>
+                <div class="hidden flex-col gap-1.5 min-[480px]:flex">
+                  <span class="text-[11px] text-dim">Menu · mobile</span>
+                  <div class="flex h-52 w-28 flex-col gap-2 rounded-lg bg-[#fbf6ee] p-2">
+                    <span class="h-2 w-1/2 rounded bg-[#2a1d12]/70"></span>
+                    {[1, 2, 3, 4].map(() => (
+                      <span class="h-5 rounded bg-[#2a1d12]/10" />
+                    ))}
+                    <span class="mt-auto h-6 rounded-full bg-[#2a1d12]"></span>
+                  </div>
+                </div>
+                <span class="absolute top-3 right-3 flex items-center gap-1.5 text-[12px] text-accent-2">
+                  <Avatar clank="prism" size="xs" live /> Prism is designing
+                </span>
+              </div>
+            </div>
+
+            <div
+              id="panel-activity"
+              role="tabpanel"
+              aria-labelledby="tab-activity"
+              hidden
+              class="absolute inset-0 overflow-auto p-5"
+            >
+              <ol class="relative flex flex-col gap-4 border-l border-line pl-5">
+                {timeline.map(([time, clank, text]) => (
+                  <li class="relative flex items-center gap-3 text-[13px]">
+                    <Avatar clank={clank} size="xs" class="absolute -left-[30px]" />
+                    <span class="tabular w-9 shrink-0 font-mono text-[11px] text-dim">{time}</span>
+                    <span class="text-white/85">{text}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ul class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {tabs.map((tab) => (
+        <li class="rounded-2xl border border-line p-4">
+          <p class="text-sm font-medium">{tab.label}</p>
+          <p class="mt-1 text-[13px] leading-relaxed text-dim">{tab.body}</p>
+        </li>
+      ))}
+    </ul>
+  </div>
+</section>
+
+<script>
+  import { wireTabs } from '../scripts/tabs';
+  const root = document.querySelector<HTMLElement>('[data-tabs]');
+  if (root) wireTabs(root);
+</script>

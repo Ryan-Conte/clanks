@@ -7,7 +7,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/node_modules/', '**/out/', '**/dist/', '**/.turbo/'],
+    ignores: ['**/node_modules/', '**/out/', '**/dist/', '**/.turbo/', '**/.astro/'],
   },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
@@ -25,6 +25,10 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
     },
+  },
+  {
+    files: ['apps/web/src/**/*.ts'],
+    languageOptions: { globals: globals.browser },
   },
   {
     files: ['apps/desktop/src/renderer/**/*.{ts,tsx}'],

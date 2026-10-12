@@ -47,4 +47,4 @@ macOS builds use the hardened runtime with the entitlements in `apps/desktop/bui
 
 ## The landing page
 
-clanks.si is its own repository. Its download buttons link to the latest release's files by the names above, and its `/docs` pages are copies of [`docs/guide`](guide/README.md), brought over with `npm run docs:sync` there.
+clanks.si is built from [`apps/web`](../apps/web) in this repository: `pnpm --filter @clanks/web build` writes a static site to `apps/web/out` that any static host can serve. Its download buttons link to the latest release's files by the names above (the links are in `apps/web/src/lib/site.ts`), and its `/docs` pages are rendered from [`docs/guide`](guide/README.md) at build time, so they change when the guides do.

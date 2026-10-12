@@ -1,0 +1,61 @@
+---
+import '../styles/global.css';
+import Footer from '../components/Footer.astro';
+import Nav from '../components/Nav.astro';
+import { DESCRIPTION } from '../lib/site';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const { title, description = DESCRIPTION } = Astro.props;
+const fullTitle = title ? `${title} · clanks` : 'clanks · put the clankers to work';
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const image = new URL('/og.png', Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#050506" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="clanks" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={image} />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body class="font-sans">
+    <a
+      href="#main"
+      class="sr-only z-50 rounded-full bg-white px-4 py-2 text-sm text-black focus:not-sr-only focus:fixed focus:top-4 focus:left-4"
+    >
+      Skip to content
+    </a>
+    <div class="relative overflow-x-clip">
+      <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-[1100px]">
+        <div class="animate-drift absolute top-[-260px] left-1/2 -translate-x-1/2 h-[760px] w-[1200px] max-w-none rounded-full bg-[radial-gradient(closest-side,rgba(185,167,255,0.24),transparent)] blur-2xl"></div>
+        <div class="absolute top-[60px] left-[62%] h-[420px] w-[640px] rounded-full bg-[radial-gradient(closest-side,rgba(124,231,210,0.1),transparent)] blur-2xl"></div>
+      </div>
+      <Nav />
+      <main id="main">
+        <slot />
+      </main>
+      <Footer />
+    </div>
+    <script>
+      import { pickDownloads } from '../scripts/download';
+      pickDownloads();
+    </script>
+  </body>
+</html>

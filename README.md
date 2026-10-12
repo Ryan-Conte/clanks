@@ -183,13 +183,14 @@ pnpm dev
 | `pnpm lint`, `pnpm format`, `pnpm typecheck` | The same checks CI runs. |
 | `pnpm db:generate` | Writes a migration after you change the schema in `packages/orchestrator/src/store/schema.ts`. |
 | `pnpm package` | Builds installers for your platform into `apps/desktop/dist`. |
+| `pnpm dev:web` | Runs clanks.si, the landing page and guides in `apps/web`, at `localhost:4321`. `pnpm build` builds it into `apps/web/out` with everything else. |
 | `pnpm --filter @clanks/models catalog:update` | Fills in new model catalog entries from Hugging Face: pinned revision, sha256 and size of each file, and the facts the memory estimate needs. `--refresh` moves every entry to its repo's latest commit. |
 
 `CLANKS_DATA_DIR` points the app at another data folder. Add `--smoke-test` to a packaged app to check that it starts, loads its window, reads its database and runs its bundled llama.cpp, then quits. CI does this on macOS, Windows and Linux for every push.
 
 ## Docs
 
-- [Using clanks](docs/guide/README.md): the guides, from installing it to routines and troubleshooting. clanks.si shows the same pages.
+- [Using clanks](docs/guide/README.md): the guides, from installing it to routines and troubleshooting. clanks.si renders these same files under `/docs`.
 - [Roadmap](docs/ROADMAP.md): milestones from first chat to a full crew with its own models, browser, design tool, integrations and marketplace.
 - [Context and memory](docs/CONTEXT.md): what each clank knows, what the whole crew shares, and who can change it.
 - [Live board](docs/BOARD.md): the full spec for the board, the activity feed and Home.
@@ -200,7 +201,7 @@ pnpm dev
 
 ## Related
 
-- [clanks.si](https://github.com/Ryan-Conte/clanks.si): the landing page.
+- [clanks.si](https://clanks.si): the landing page and the guides, built from [`apps/web`](apps/web).
 
 ## License
 

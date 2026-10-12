@@ -1,0 +1,27 @@
+---
+import { type ClankId, GRADIENTS } from '../lib/crew';
+
+interface Props {
+  clank: ClankId | 'sentinel';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
+  /** Working right now: the eye pulses, and a ring breathes around it. */
+  live?: boolean;
+  class?: string;
+}
+
+const SIZES = { xs: 'size-5', sm: 'size-7', md: 'size-9', lg: 'size-10' };
+const { clank, size = 'sm', live = false, class: extra = '' } = Astro.props;
+---
+
+<span
+  aria-hidden="true"
+  class:list={[
+    'grid shrink-0 place-items-center rounded-full bg-gradient-to-br',
+    GRADIENTS[clank],
+    SIZES[size],
+    live && 'animate-breathe',
+    extra,
+  ]}
+>
+  <span class:list={['size-[38%] rounded-full bg-black/70', live && 'animate-pulse-dot']}></span>
+</span>

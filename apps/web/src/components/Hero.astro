@@ -1,0 +1,192 @@
+---
+import Avatar from './Avatar.astro';
+import DownloadButton from './DownloadButton.astro';
+import { INITIAL, columnsHtml, feedHtml, needsYouHtml, workingText } from '../lib/board';
+import { DOWNLOADS } from '../lib/site';
+
+const sidebarCrew = [
+  { id: 'atlas', live: false },
+  { id: 'scribe', live: false },
+  { id: 'forge', live: true },
+  { id: 'gauge', live: true },
+  { id: 'quill', live: true },
+] as const;
+
+const promises = ['Runs on your computer', 'No account, no cloud', 'Nothing ships without you'];
+---
+
+<section class="relative z-10 mx-auto max-w-6xl px-4 pt-14 text-center sm:px-6 sm:pt-24">
+  <p class="animate-rise mx-auto mb-7 inline-flex items-center gap-2 rounded-full border border-line bg-white/[0.03] px-3 py-1.5 text-xs text-dim">
+    <span class="size-1.5 rounded-full bg-accent-2"></span>
+    <span class="font-medium text-white/85">clank</span>
+    <i>(n.)</i> short for clanker, slang for an AI
+  </p>
+  <h1
+    class="headline animate-rise mx-auto max-w-4xl text-[44px] leading-[1.02] min-[400px]:text-[52px] font-semibold tracking-[-0.045em] sm:text-7xl md:text-[92px]"
+    style="animation-delay: 60ms"
+  >
+    Put the clankers
+    <br />
+    to work.
+  </h1>
+  <p
+    class="animate-rise mx-auto mt-6 max-w-xl text-base leading-relaxed text-dim sm:text-lg"
+    style="animation-delay: 120ms"
+  >
+    A whole crew of AI helpers that lives on your computer. Tell them what you want in your own
+    words. They plan it, make it, check each other's work, and ask you before anything important.
+  </p>
+  <div
+    class="animate-rise mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
+    style="animation-delay: 180ms"
+  >
+    <DownloadButton />
+    <a
+      href="#how"
+      class="inline-flex h-12 items-center rounded-full border border-line bg-white/5 px-6 text-sm transition-colors hover:bg-white/10"
+    >
+      See how it works
+    </a>
+  </div>
+  <p class="animate-rise mt-4 text-xs text-dim" style="animation-delay: 220ms">
+    Free and open source ·{' '}
+    {DOWNLOADS.map((d) => (
+      <span data-also={d.platform} hidden={d.platform !== 'mac'}>
+        Also for{' '}
+        {DOWNLOADS.filter((o) => o.platform !== d.platform).map((o, i) => (
+          <>
+            {i > 0 && ' and '}
+            <a
+              href={o.href}
+              class="text-white/70 underline underline-offset-4 transition-colors hover:text-white"
+            >
+              {o.name}
+            </a>
+          </>
+        ))}
+      </span>
+    ))}
+  </p>
+  <ul
+    class="animate-rise mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-dim"
+    style="animation-delay: 260ms"
+  >
+    {promises.map((p) => (
+      <li class="flex items-center gap-2">
+        <span class="size-1 rounded-full bg-accent-2" />
+        {p}
+      </li>
+    ))}
+  </ul>
+</section>
+
+<section
+  aria-label="The live board: the crew working on a coffee cart's website"
+  class="animate-rise relative z-10 mx-auto mt-16 max-w-6xl px-4 sm:px-6"
+  style="animation-delay: 320ms"
+>
+  <div
+    data-live-board
+    class="overflow-hidden rounded-[22px] border border-white/10 bg-panel text-left shadow-2xl shadow-black/60 ring-1 ring-black"
+  >
+    <div class="flex h-10 items-center gap-2 border-b border-line bg-black/40 px-4">
+      <span class="size-3 rounded-full bg-white/15"></span>
+      <span class="size-3 rounded-full bg-white/15"></span>
+      <span class="size-3 rounded-full bg-white/15"></span>
+      <span class="ml-4 text-xs text-dim">Coffee cart site</span>
+    </div>
+    <div class="flex">
+      <aside
+        aria-hidden="true"
+        class="hidden w-48 shrink-0 flex-col gap-5 border-r border-line bg-panel/50 p-3 xl:flex"
+      >
+        <span class="flex h-9 items-center justify-center rounded-full bg-white text-[13px] font-medium text-black">
+          + New project
+        </span>
+        <span class="flex items-center rounded-lg px-2 text-[13px] text-white/80">
+          Home
+          <span class="ml-auto rounded-full bg-amber-300/15 px-2 text-[11px] text-amber-200">
+            2
+          </span>
+        </span>
+        <div>
+          <p class="mb-1.5 px-2 text-[11px] tracking-wider text-dim uppercase">Projects</p>
+          <p class="flex items-center gap-2 rounded-lg bg-white/[0.06] px-2 py-1.5 text-[13px]">
+            <span class="animate-pulse-dot size-1.5 rounded-full bg-accent-2"></span>Coffee cart
+            site
+          </p>
+          <p class="flex items-center gap-2 px-2 py-1.5 text-[13px] text-white/70">
+            <span class="size-1.5 rounded-full bg-white/30"></span>Spring launch
+          </p>
+          <p class="flex items-center gap-2 px-2 py-1.5 text-[13px] text-white/70">
+            <span class="size-1.5 rounded-full bg-amber-300"></span>Payments report
+          </p>
+        </div>
+        <div>
+          <p class="mb-1.5 px-2 text-[11px] tracking-wider text-dim uppercase">Crew</p>
+          <ul class="flex flex-col gap-1.5 px-2 text-[13px] text-white/75">
+            {sidebarCrew.map((c) => (
+              <li class="flex items-center gap-2 capitalize">
+                <Avatar clank={c.id} size="xs" live={c.live} />
+                {c.id}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+
+      <div class="min-w-0 flex-1">
+        <div
+          aria-hidden="true"
+          class="flex items-center justify-between gap-4 border-b border-line px-4 py-3 sm:px-5"
+        >
+          <div class="flex items-center gap-4 text-[13px] sm:gap-5">
+            <span class="text-dim">Overview</span>
+            <span class="border-b border-white pb-0.5 text-white">Board</span>
+            <span class="text-dim">Spec</span>
+            <span class="hidden text-dim sm:inline">Context</span>
+          </div>
+          <span class="flex items-center gap-2 text-xs whitespace-nowrap text-accent-2">
+            <span class="animate-pulse-dot size-1.5 rounded-full bg-accent-2"></span>
+            <span data-board="working">{workingText(INITIAL)}</span>
+          </span>
+        </div>
+        <p class="mx-4 mt-4 flex items-start gap-2.5 rounded-xl border border-amber-300/25 bg-amber-300/[0.05] px-3 py-2 text-[13px] text-amber-100 sm:mx-5 sm:items-center">
+          <span class="mt-1.5 size-1.5 shrink-0 rounded-full bg-amber-300 sm:mt-0"></span>
+          <span class="min-w-0 flex-1">
+            <span class="text-amber-100/70">Needs you:</span>{' '}
+            <span data-board="needs" set:html={needsYouHtml(INITIAL)} />
+          </span>
+          <span class="hidden shrink-0 rounded-full bg-white px-3 py-1 text-xs font-medium text-black sm:inline">
+            Review
+          </span>
+        </p>
+        <div class="flex">
+          <div
+            data-board="columns"
+            class="grid min-h-[372px] min-w-0 flex-1 grid-cols-2 content-start gap-3 p-4 transition-opacity duration-300 sm:p-5 md:grid-cols-4"
+            set:html={columnsHtml(INITIAL)}
+          />
+          <div class="hidden w-60 shrink-0 flex-col gap-3 border-l border-line p-5 lg:flex">
+            <p class="text-xs text-dim">Activity</p>
+            <ul
+              data-board="feed"
+              class="flex flex-col gap-3"
+              aria-live="off"
+              set:html={feedHtml(INITIAL)}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="mt-4 text-center text-xs text-dim">
+    The board in the app. Every card shows its clank and what it's doing this second.
+  </p>
+</section>
+
+<script>
+  import { playBoard } from '../scripts/board';
+  const root = document.querySelector<HTMLElement>('[data-live-board]');
+  if (root) playBoard(root);
+</script>
