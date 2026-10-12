@@ -1,0 +1,24 @@
+---
+/** The app's mark: four squares, two dark and two grey, on white. */
+interface Props {
+  size?: 'sm' | 'md';
+}
+const { size = 'md' } = Astro.props;
+const small = size === 'sm';
+---
+
+<span
+  aria-hidden="true"
+  class:list={[
+    'grid place-items-center bg-white',
+    small ? 'size-6 rounded-md' : 'size-7 rounded-lg',
+  ]}
+>
+  <span class:list={['grid grid-cols-2', small ? 'gap-[2px]' : 'gap-[3px]']}>
+    {['bg-black', 'bg-black/40', 'bg-black/40', 'bg-black'].map((tone) => (
+      <span
+        class:list={[tone, small ? 'size-[4px] rounded-[1px]' : 'size-[5px] rounded-[1.5px]']}
+      />
+    ))}
+  </span>
+</span>

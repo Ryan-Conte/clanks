@@ -1,0 +1,86 @@
+---
+import Avatar from './Avatar.astro';
+import SectionHead from './SectionHead.astro';
+
+const chips = ['A landing page', 'A launch plan', 'A researched report'];
+const criteria = [
+  ['AC-1', 'The menu shows every drink with its price'],
+  ['AC-2', 'Opening hours read right on any phone'],
+  ['AC-3', 'Order ahead, pay at pickup'],
+];
+---
+
+<section id="how" class="relative z-10 mx-auto mt-32 max-w-6xl scroll-mt-8 px-4 sm:px-6">
+  <SectionHead eyebrow="How it works" title="From one sentence to done.">
+    No setup wizard and no prompt writing. Say what you want and the crew takes it from there. You
+    approve the plan, and you approve what comes back.
+  </SectionHead>
+
+  <ol class="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <li class="flex flex-col gap-4 rounded-3xl border border-line bg-panel/60 p-5">
+      <span class="font-mono text-xs text-dim">01 · Say it</span>
+      <div class="rounded-2xl border border-line bg-raised p-3 text-[13px] leading-relaxed text-white/85">
+        A simple website for my coffee cart, with our menu and opening hours
+        <span
+          aria-hidden="true"
+          class="animate-caret ml-0.5 inline-block h-4 w-px translate-y-0.5 bg-white"
+        ></span>
+      </div>
+      <div class="flex flex-wrap gap-1.5 text-[11px] text-white/60">
+        {chips.map((chip) => (
+          <span class="rounded-full border border-line px-2 py-0.5">{chip}</span>
+        ))}
+      </div>
+      <p class="mt-auto text-sm leading-relaxed text-dim">
+        The project, its folder and its crew are made from that one line. Atlas asks what it needs
+        to know.
+      </p>
+    </li>
+
+    <li class="flex flex-col gap-4 rounded-3xl border border-line bg-panel/60 p-5">
+      <span class="font-mono text-xs text-dim">02 · Approve the plan</span>
+      <div class="flex flex-col gap-1.5 rounded-2xl border border-line bg-black/30 p-3 text-[12px]">
+        <span class="flex items-center gap-2 font-medium text-white">
+          <Avatar clank="scribe" size="xs" /> Spec v1 · 4 stories
+        </span>
+        {criteria.map(([key, text]) => (
+          <span class="text-dim">
+            <span class="font-mono text-accent">{key}</span> {text}
+          </span>
+        ))}
+      </div>
+      <p class="mt-auto text-sm leading-relaxed text-dim">
+        Scribe writes down what will be made, story by story. Nothing is built until you say yes.
+      </p>
+    </li>
+
+    <li class="flex flex-col gap-4 rounded-3xl border border-line bg-panel/60 p-5">
+      <span class="font-mono text-xs text-dim">03 · Watch them work</span>
+      <div class="flex flex-col gap-1.5 rounded-2xl border border-line bg-black/30 p-3">
+        <span class="font-mono text-[11px] text-dim">CLK-103</span>
+        <span class="text-[13px]">Order ahead for pickup</span>
+        <span class="flex items-center gap-1.5 text-[12px] text-accent-2">
+          <Avatar clank="forge" size="xs" live /> Forge · Running npm test
+        </span>
+      </div>
+      <p class="mt-auto text-sm leading-relaxed text-dim">
+        Tickets land on the board. Several clanks work at once, each on its own copy of the project.
+      </p>
+    </li>
+
+    <li class="flex flex-col gap-4 rounded-3xl border border-amber-300/20 bg-amber-300/[0.03] p-5">
+      <span class="font-mono text-xs text-amber-200/80">04 · You approve</span>
+      <div class="flex flex-col gap-2 rounded-2xl border border-line bg-black/30 p-3 text-[12px]">
+        <span class="text-white">CLK-101 · Home page</span>
+        <span class="text-dim">Checked by Gauge · Signed off by Atlas</span>
+        <span class="mt-1 self-start rounded-full bg-white px-3 py-1 font-medium text-black">
+          Approve and merge
+        </span>
+      </div>
+      <p class="mt-auto text-sm leading-relaxed text-dim">
+        Approving merges the work, on GitHub if that's where the project lives. Nothing ships on a
+        drag or a guess.
+      </p>
+    </li>
+  </ol>
+</section>

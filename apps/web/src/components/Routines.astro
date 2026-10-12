@@ -1,0 +1,58 @@
+---
+import Avatar from './Avatar.astro';
+import SectionHead from './SectionHead.astro';
+---
+
+<section id="routines" class="relative z-10 mx-auto mt-32 max-w-6xl scroll-mt-8 px-4 sm:px-6">
+  <div class="grid gap-10 lg:grid-cols-[1.1fr_1fr] lg:items-center">
+    <div class="lg:order-2">
+      <SectionHead eyebrow="Routines" tone="accent-2" title="Put the crew on a schedule.">
+        Ask in plain words. The crew does the work ahead of time, and you see exactly what will go
+        out, where and when. Approve it, and clanks sends exactly that at exactly then. Unapproved,
+        it never goes out, and if your laptop was asleep, it isn't posted late.
+      </SectionHead>
+    </div>
+
+    <div class="rounded-3xl border border-line bg-panel/60 p-5 sm:p-6 lg:order-1">
+      <p class="flex gap-3 rounded-2xl border border-line bg-raised px-4 py-3 text-[13px] text-white/85">
+        <Avatar clank="atlas" size="xs" class="mt-0.5" />
+        “Every Friday, have Prism make a promo banner for the weekend special and post it on X at
+        5pm.”
+      </p>
+      <div class="mt-4 rounded-2xl border border-amber-300/25 bg-amber-300/[0.04] p-4">
+        <p class="flex flex-wrap items-center justify-between gap-2 text-xs text-amber-100">
+          <span class="flex items-center gap-2">
+            <span class="animate-pulse-dot size-1.5 rounded-full bg-amber-300"></span>
+            Goes out Fri 5:00 pm · @bluecart on X
+          </span>
+          <span class="text-dim">Needs you</span>
+        </p>
+        <div class="mt-3 flex gap-3 rounded-xl border border-line bg-black/40 p-3">
+          <span class="grid size-9 shrink-0 place-items-center rounded-full bg-sky-400 text-sm font-semibold text-black">
+            B
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="text-[13px]">
+              <b class="font-medium">Blue Cart Coffee</b> <span class="text-dim">@bluecart</span>
+            </p>
+            <p class="mt-1 text-[13px] leading-relaxed text-white/85">
+              Weekend special: iced oat lattes, two for $9. Find us at the market, Saturday and
+              Sunday from 7.
+            </p>
+            <div class="mt-2 grid h-28 place-items-center rounded-lg bg-gradient-to-br from-fuchsia-300/70 via-violet-400/60 to-sky-400/60 px-3 text-center text-lg font-semibold tracking-tight text-black/80">
+              2 for $9 · this weekend
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <span class="rounded-full bg-white px-3.5 py-1.5 text-xs font-medium text-black">
+            Approve for 5:00 pm
+          </span>
+          <span class="rounded-full border border-line px-3.5 py-1.5 text-xs text-white/80">
+            Send back
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

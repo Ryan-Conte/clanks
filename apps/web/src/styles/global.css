@@ -1,0 +1,184 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/* The app's palette and type (apps/desktop/src/renderer/src/styles.css). Dark only, like the app. */
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+
+  --color-ink: #050506;
+  --color-panel: #0d0d10;
+  --color-raised: #15151a;
+  --color-line: #ffffff14;
+  --color-dim: #8a8a93;
+  --color-accent: #b9a7ff;
+  --color-accent-2: #7ce7d2;
+
+  --animate-pulse-dot: pulse-dot 2.4s ease-in-out infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-breathe: breathe 3.2s ease-in-out infinite;
+  --animate-drift: drift 16s ease-in-out infinite;
+  --animate-caret: caret 1.1s steps(1) infinite;
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes rise {
+    0% {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* A clank at work: a soft ring that swells and fades. */
+  @keyframes breathe {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent-2) 45%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent-2) 0%, transparent);
+    }
+  }
+
+  @keyframes drift {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(2%, -3%, 0) scale(1.05);
+    }
+  }
+
+  @keyframes caret {
+    0%,
+    50% {
+      opacity: 1;
+    }
+    50.01%,
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
+:root {
+  color-scheme: dark;
+  scrollbar-color: #ffffff24 transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body {
+  @apply bg-ink text-zinc-100 antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The big lines: white fading to grey. */
+.headline {
+  background: linear-gradient(180deg, #fff 30%, #9a9aa3 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-pulse-dot,
+  .animate-rise,
+  .animate-breathe,
+  .animate-drift,
+  .animate-caret {
+    animation: none;
+  }
+}
+
+/* A guide, rendered from docs/guide. */
+.prose {
+  @apply text-[16px] leading-relaxed break-words text-white/85;
+}
+.prose > * + * {
+  margin-top: 1em;
+}
+.prose h1 {
+  @apply text-4xl font-semibold tracking-[-0.03em] text-white;
+}
+.prose h2 {
+  @apply mt-12 scroll-mt-24 text-2xl font-semibold tracking-tight text-white;
+}
+.prose h3 {
+  @apply mt-8 scroll-mt-24 text-lg font-semibold text-white;
+}
+.prose strong {
+  @apply font-semibold text-white;
+}
+.prose ul {
+  @apply list-disc pl-5;
+}
+.prose ol {
+  @apply list-decimal pl-5;
+}
+.prose li + li,
+.prose li > ul,
+.prose li > ol {
+  margin-top: 0.4em;
+}
+.prose li::marker {
+  @apply text-dim;
+}
+.prose a {
+  @apply text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent;
+}
+.prose :not(pre) > code {
+  @apply rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.87em] text-white;
+}
+.prose pre {
+  @apply overflow-x-auto rounded-2xl border border-line p-4 font-mono text-[13px] leading-6;
+  background-color: var(--color-panel) !important;
+}
+.prose blockquote {
+  @apply border-l-2 border-line pl-4 text-dim;
+}
+.prose hr {
+  @apply border-line;
+}
+.prose table {
+  @apply block w-full overflow-x-auto border-collapse text-[14px];
+}
+.prose th,
+.prose td {
+  @apply border border-line px-3 py-2 text-left align-top;
+}
+.prose th {
+  @apply bg-white/[0.04] font-medium text-white;
+}

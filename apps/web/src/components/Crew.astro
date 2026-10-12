@@ -1,0 +1,53 @@
+---
+import Avatar from './Avatar.astro';
+import SectionHead from './SectionHead.astro';
+import { CREW } from '../lib/crew';
+---
+
+<section id="crew" class="relative z-10 mx-auto mt-32 max-w-6xl scroll-mt-8 px-4 sm:px-6">
+  <SectionHead eyebrow="Meet the crew" tone="accent-2" title="Eight clankers. One for every job.">
+    Pick who's on each project. Every clank has its own model, its own tools and its own memory of
+    the project, so you can ask any of them why they made a call.
+  </SectionHead>
+
+  <ul class="mt-12 grid gap-px overflow-hidden rounded-3xl border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+    {CREW.map((clank) => (
+      <li class="bg-ink p-6">
+        <div class="flex items-center gap-3">
+          <Avatar clank={clank.id} size="lg" />
+          <div>
+            <h3 class="flex items-center gap-2 font-medium">
+              {clank.name}
+              {clank.optional && (
+                <span class="rounded-full border border-line px-1.5 py-0.5 text-[10px] font-normal text-dim">
+                  optional
+                </span>
+              )}
+            </h3>
+            <p class="text-xs text-dim">
+              {clank.job} · {clank.role}
+            </p>
+          </div>
+        </div>
+        <p class="mt-4 text-sm leading-relaxed text-dim">{clank.blurb}</p>
+      </li>
+    ))}
+  </ul>
+
+  <div class="mt-4 flex flex-col gap-5 rounded-3xl border border-dashed border-white/15 p-6 sm:flex-row sm:items-center sm:justify-between">
+    <div class="max-w-xl">
+      <h3 class="font-medium">Need someone else?</h3>
+      <p class="mt-1.5 text-sm leading-relaxed text-dim">
+        Make your own clank with a name, a job description, a model and the tools it may use, then
+        give it a place in the line. Keep it in your library, or share it free on the marketplace.
+      </p>
+    </div>
+    <div class="flex shrink-0 items-center gap-3 rounded-2xl border border-line bg-panel px-4 py-3">
+      <Avatar clank="sentinel" size="md" />
+      <div>
+        <p class="text-sm">Sentinel</p>
+        <p class="font-mono text-[11px] text-dim">Security · between Gauge and Atlas</p>
+      </div>
+    </div>
+  </div>
+</section>

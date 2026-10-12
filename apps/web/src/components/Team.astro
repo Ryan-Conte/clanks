@@ -1,0 +1,54 @@
+---
+import Avatar from './Avatar.astro';
+import SectionHead from './SectionHead.astro';
+import type { ClankId } from '../lib/crew';
+
+const stages: { clank: ClankId; label: string; live?: boolean }[] = [
+  { clank: 'scribe', label: 'Spec' },
+  { clank: 'prism', label: 'Design' },
+  { clank: 'forge', label: 'Build', live: true },
+  { clank: 'gauge', label: 'Check' },
+  { clank: 'atlas', label: 'Sign-off' },
+];
+
+const bounces = [
+  ['Gauge › Forge', 'AC-4 failed: prices cut off on small screens'],
+  ['Forge › Scribe', "The spec doesn't say what happens when the cart is closed"],
+  ['Atlas › Prism', "The banner doesn't use the brand colours"],
+];
+---
+
+<section class="relative z-10 mx-auto mt-32 max-w-6xl px-4 sm:px-6">
+  <div class="grid gap-10 lg:grid-cols-[1fr_1.15fr] lg:items-center">
+    <SectionHead eyebrow="A real team" title="Not a swarm. A crew that pushes back.">
+      Work moves in order: spec, design, build, check, sign-off. Only the stages a ticket needs, so
+      a quick fix goes straight to Forge. When something's wrong, it goes back to whoever can fix
+      it, with a reason. If a ticket keeps looping, it comes to you.
+    </SectionHead>
+
+    <div class="rounded-3xl border border-line bg-panel/60 p-5 sm:p-6">
+      <ol class="flex items-start justify-between text-center text-[12px]">
+        {stages.map((stage, i) => (
+          <li class="flex flex-1 items-start">
+            {i > 0 && <span aria-hidden="true" class="mt-[18px] h-px flex-1 bg-white/15" />}
+            <span class="flex flex-col items-center gap-2 px-1">
+              <Avatar clank={stage.clank} size="md" live={stage.live} />
+              {stage.label}
+            </span>
+            {i < stages.length - 1 && (
+              <span aria-hidden="true" class="mt-[18px] h-px flex-1 bg-white/15" />
+            )}
+          </li>
+        ))}
+      </ol>
+      <ul class="mt-6 flex flex-col gap-2.5 border-t border-line pt-5 font-mono text-[12px] leading-relaxed">
+        {bounces.map(([who, why]) => (
+          <li class="text-white/80">
+            <span class="text-amber-200">↩ {who}</span> {why}
+          </li>
+        ))}
+        <li class="text-accent-2">✓ Atlas › You CLK-101 signed off, ready for you</li>
+      </ul>
+    </div>
+  </div>
+</section>

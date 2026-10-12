@@ -82,6 +82,7 @@ pnpm workspaces with Turborepo.
 ```
 apps/
   desktop/            Electron app: main process bootstrap, preload, renderer, browser and offscreen views
+  web/                clanks.si: the landing page, and the guides in docs/guide rendered as pages (Astro, static)
 packages/
   core/               Shared types, zod schemas, ticket state machine, event types
   orchestrator/       Conversation service, planner, scheduler, agent runtime, prompt assembly, store
@@ -767,7 +768,7 @@ Polish and the first public release, as built.
 - **Crash reports** are off unless turned on. A crash's dump is kept on the computer either way, with the version, the platform and where the app was, and nothing of the user's work. Sending needs somewhere to send to, set when the app is built (`MAIN_VITE_CLANKS_CRASH_URL`); a build without one says reports only stay on the computer, and has a button that opens their folder. An error nothing caught in the main process is written to `logs/errors.log` and the app carries on.
 - **Signing.** macOS builds use the hardened runtime with the entitlements the runtime and the bundled llama.cpp need, and are signed and notarised when the Developer ID and Apple credentials are in the environment. Windows builds are signed when a code-signing certificate is. With `CSC_IDENTITY_AUTO_DISCOVERY=false`, as in CI, a build is left unsigned, which is enough to check that it packages and starts.
 - **Releases.** A tag such as `v0.2.0` runs the release workflow: it checks the tag against the app's version, builds on all three platforms with the signing secrets, and uploads the installers and the updater's files to a draft release. Publishing the draft is what ships it. Installers have no version in their names, so clanks.si links to the latest release's files directly. The steps and the secrets are in [RELEASING.md](RELEASING.md).
-- **Docs and downloads.** The guides are in [`docs/guide`](guide/README.md), written for someone using the app rather than building it, and clanks.si shows them under `/docs` and has a download button for each platform.
+- **Docs and downloads.** The guides are in [`docs/guide`](guide/README.md), written for someone using the app rather than building it, and clanks.si, built from `apps/web`, renders them under `/docs` and has a download button for each platform.
 - **Licence.** Apache-2.0: permissive, with a patent grant, and no rights to the clanks name. The text is in `LICENSE` and the notices in `NOTICE`.
 - Not yet: an update's download resumed after a restart; updates for a `.deb`; a signed build tried on a machine it wasn't built on, which needs the certificates; delta updates.
 

@@ -7,3 +7,4 @@ out/
 .env*
 *.tsbuildinfo
 apps/desktop/resources/llama/
+.astro/
