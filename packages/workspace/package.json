@@ -1,0 +1,23 @@
+{
+  "name": "@clanks/workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Worktrees, checkpoints, diffs and command execution.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@clanks/core": "workspace:*",
+    "@lydell/node-pty": "1.2.0-beta.15",
+    "diff": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "vitest": "^5.0.3"
+  }
+}

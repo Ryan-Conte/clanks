@@ -1,0 +1,124 @@
+# A trimmed description of the Vercel REST API: only the calls the manifest lists.
+openapi: 3.0.3
+info:
+  title: Vercel REST API (trimmed for clanks)
+  version: '1'
+servers:
+  - url: https://api.vercel.com
+components:
+  parameters:
+    teamId:
+      name: teamId
+      in: query
+      description: The team's id, for anything that isn't on the personal account.
+      schema: { type: string }
+    limit:
+      name: limit
+      in: query
+      description: How many to return.
+      schema: { type: integer, minimum: 1, maximum: 100 }
+paths:
+  /v2/user:
+    get:
+      summary: Who this token belongs to.
+  /v2/teams:
+    get:
+      summary: The teams this token can reach, with their ids.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+  /v9/projects:
+    get:
+      summary: List projects, most recently updated first.
+      parameters:
+        - name: search
+          in: query
+          description: Only projects whose name has this in it.
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/teamId'
+  /v9/projects/{idOrName}:
+    get:
+      summary: One project, with its framework, repository and latest deployments.
+      parameters:
+        - name: idOrName
+          in: path
+          required: true
+          description: The project's id or its name.
+          schema: { type: string }
+        - $ref: '#/components/parameters/teamId'
+  /v9/projects/{idOrName}/domains:
+    get:
+      summary: The domains a project is served on.
+      parameters:
+        - name: idOrName
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/teamId'
+  /v6/deployments:
+    get:
+      summary: List deployments, newest first.
+      parameters:
+        - name: projectId
+          in: query
+          description: Only this project's.
+          schema: { type: string }
+        - name: target
+          in: query
+          description: Only production deployments, or only previews.
+          schema: { type: string, enum: [production, preview] }
+        - name: state
+          in: query
+          description: 'Comma-separated: BUILDING, ERROR, INITIALIZING, QUEUED, READY, CANCELED.'
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/teamId'
+  /v13/deployments/{idOrUrl}:
+    get:
+      summary: One deployment, with its state, target and the commit it was built from.
+      parameters:
+        - name: idOrUrl
+          in: path
+          required: true
+          description: The deployment's id, or its address without https://.
+          schema: { type: string }
+        - $ref: '#/components/parameters/teamId'
+  /v3/deployments/{idOrUrl}/events:
+    get:
+      summary: A deployment's build log, oldest line first.
+      parameters:
+        - name: idOrUrl
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: How many lines. Use -1 for all of them.
+          schema: { type: integer }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [forward, backward] }
+        - $ref: '#/components/parameters/teamId'
+  /v12/deployments/{id}/cancel:
+    patch:
+      summary: Stop a deployment that is still building.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The deployment's id.
+          schema: { type: string }
+        - $ref: '#/components/parameters/teamId'
+  /v10/projects/{projectId}/promote/{deploymentId}:
+    post:
+      summary: Make a deployment the project's production one.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: deploymentId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/teamId'

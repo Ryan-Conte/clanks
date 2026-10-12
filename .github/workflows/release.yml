@@ -1,0 +1,68 @@
+name: Release
+
+# A tag such as v0.2.0 builds signed installers for every platform and puts them on a draft
+# release, with the files the app's updater reads. Publishing the draft is what ships it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: The tag matches the app's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME but apps/desktop/package.json says $version."
+            exit 1
+          fi
+      - uses: actions/cache@v6
+        with:
+          path: apps/desktop/resources/llama
+          key: llama-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/models/src/runtime/llama-cpp.json') }}
+      - run: pnpm fetch-llama
+      - name: Build, sign and upload
+        working-directory: apps/desktop
+        run: pnpm exec electron-vite build && pnpm exec electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS: a Developer ID Application certificate as a base64 .p12, and what notarising
+          # needs. Without them the build is unsigned, and macOS won't open or update it.
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows: a code-signing certificate as a base64 .pfx.
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Where opt-in crash reports go. Left unset, reports stay on the user's computer.
+          MAIN_VITE_CLANKS_CRASH_URL: ${{ secrets.CLANKS_CRASH_URL }}
+          # The OAuth app that signing in to GitHub with a code goes through. Left unset, users
+          # paste a token instead.
+          MAIN_VITE_CLANKS_GITHUB_CLIENT_ID: ${{ secrets.CLANKS_GITHUB_CLIENT_ID }}

@@ -1,0 +1,308 @@
+# A trimmed description of the Stripe API: only the calls the manifest lists, with the parameters
+# a crew is likely to need. The full one is at https://github.com/stripe/openapi.
+openapi: 3.0.3
+info:
+  title: Stripe API (trimmed for clanks)
+  version: '2025'
+servers:
+  - url: https://api.stripe.com
+components:
+  parameters:
+    limit:
+      name: limit
+      in: query
+      description: How many to return, 1 to 100. 10 unless you say.
+      schema: { type: integer, minimum: 1, maximum: 100 }
+    starting_after:
+      name: starting_after
+      in: query
+      description: The id of the last item you already have, for the next page.
+      schema: { type: string }
+  schemas:
+    metadata:
+      type: object
+      description: Your own key and value pairs, kept with the object.
+      additionalProperties: { type: string }
+paths:
+  /v1/account:
+    get:
+      summary: The account this key belongs to.
+  /v1/balance:
+    get:
+      summary: The account's balance, available and pending, by currency.
+  /v1/products:
+    get:
+      summary: List products, newest first.
+      parameters:
+        - name: active
+          in: query
+          description: Only active products, or only archived ones.
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/starting_after'
+    post:
+      summary: Create a product.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, description: What customers see. }
+                description: { type: string }
+                active: { type: boolean }
+                default_price_data:
+                  type: object
+                  description: Creates a price with the product, as its default.
+                  required: [currency, unit_amount]
+                  properties:
+                    currency:
+                      { type: string, description: 'Three letters, lowercase: usd, aud, eur.' }
+                    unit_amount:
+                      { type: integer, description: In the smallest unit, such as cents. }
+                    recurring:
+                      type: object
+                      properties:
+                        interval: { type: string, enum: [day, week, month, year] }
+                images:
+                  type: array
+                  description: Up to 8 image addresses.
+                  items: { type: string }
+                url: { type: string, description: The product's page on your site. }
+                metadata: { $ref: '#/components/schemas/metadata' }
+  /v1/products/{id}:
+    post:
+      summary: Update a product. Only the fields you pass change.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The product's id, such as prod_abc.
+          schema: { type: string }
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                active: { type: boolean, description: False archives it. }
+                default_price: { type: string, description: The id of one of its prices. }
+                metadata: { $ref: '#/components/schemas/metadata' }
+  /v1/prices:
+    get:
+      summary: List prices, newest first.
+      parameters:
+        - name: product
+          in: query
+          description: Only this product's prices.
+          schema: { type: string }
+        - name: active
+          in: query
+          schema: { type: boolean }
+        - name: currency
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/starting_after'
+    post:
+      summary: Create a price for a product.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [currency, product, unit_amount]
+              properties:
+                product: { type: string, description: The product's id. }
+                currency: { type: string, description: 'Three letters, lowercase: usd, aud, eur.' }
+                unit_amount: { type: integer, description: In the smallest unit, such as cents. }
+                recurring:
+                  type: object
+                  description: Leave out for a one-off price.
+                  properties:
+                    interval: { type: string, enum: [day, week, month, year] }
+                    interval_count: { type: integer }
+                nickname: { type: string }
+                metadata: { $ref: '#/components/schemas/metadata' }
+  /v1/customers:
+    get:
+      summary: List customers, newest first.
+      parameters:
+        - name: email
+          in: query
+          description: Only customers with exactly this address.
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/starting_after'
+    post:
+      summary: Create a customer.
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                name: { type: string }
+                description: { type: string }
+                phone: { type: string }
+                metadata: { $ref: '#/components/schemas/metadata' }
+  /v1/checkout/sessions:
+    get:
+      summary: List checkout sessions, newest first.
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, complete, expired] }
+        - name: payment_intent
+          in: query
+          description: Only the session for this payment intent.
+          schema: { type: string }
+        - name: customer
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/starting_after'
+    post:
+      summary: Create a checkout session and get the address of its payment page.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [mode, line_items, success_url]
+              properties:
+                mode: { type: string, enum: [payment, subscription, setup] }
+                line_items:
+                  type: array
+                  description: What's being bought.
+                  items:
+                    type: object
+                    required: [price, quantity]
+                    properties:
+                      price: { type: string, description: A price's id. }
+                      quantity: { type: integer }
+                success_url: { type: string, description: Where the customer lands after paying. }
+                cancel_url: { type: string }
+                customer: { type: string, description: An existing customer's id. }
+                customer_email: { type: string }
+                client_reference_id: { type: string, description: Your own id for the order. }
+                metadata: { $ref: '#/components/schemas/metadata' }
+  /v1/checkout/sessions/{session}:
+    get:
+      summary: One checkout session, with its payment status.
+      parameters:
+        - name: session
+          in: path
+          required: true
+          description: The session's id, such as cs_test_abc.
+          schema: { type: string }
+  /v1/payment_intents:
+    get:
+      summary: List payment intents, newest first.
+      parameters:
+        - name: customer
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/starting_after'
+    post:
+      summary: Create a payment intent. With confirm true it charges straight away.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [amount, currency]
+              properties:
+                amount: { type: integer, description: In the smallest unit, such as cents. }
+                currency: { type: string, description: 'Three letters, lowercase: usd, aud, eur.' }
+                customer: { type: string }
+                description: { type: string }
+                payment_method:
+                  type: string
+                  description: A payment method's id. In test mode, pm_card_visa.
+                confirm: { type: boolean, description: Charge it now, with payment_method. }
+                automatic_payment_methods:
+                  type: object
+                  properties:
+                    enabled: { type: boolean }
+                    allow_redirects: { type: string, enum: [always, never] }
+                receipt_email: { type: string }
+                return_url: { type: string }
+                metadata: { $ref: '#/components/schemas/metadata' }
+  /v1/payment_intents/{intent}:
+    get:
+      summary: One payment intent, with its status and latest charge.
+      parameters:
+        - name: intent
+          in: path
+          required: true
+          description: The payment intent's id, such as pi_abc.
+          schema: { type: string }
+  /v1/payment_intents/{intent}/confirm:
+    post:
+      summary: Confirm a payment intent, which charges its payment method.
+      parameters:
+        - name: intent
+          in: path
+          required: true
+          description: The payment intent's id, such as pi_abc.
+          schema: { type: string }
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                payment_method:
+                  type: string
+                  description: A payment method's id. In test mode, pm_card_visa.
+                return_url: { type: string }
+  /v1/refunds:
+    get:
+      summary: List refunds, newest first.
+      parameters:
+        - name: payment_intent
+          in: query
+          schema: { type: string }
+        - name: charge
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/starting_after'
+    post:
+      summary: Refund a payment, in full or in part.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                payment_intent: { type: string, description: The payment intent to refund. }
+                charge: { type: string, description: Or the charge to refund. }
+                amount:
+                  type: integer
+                  description: In the smallest unit. Leave out to refund all of it.
+                reason:
+                  type: string
+                  enum: [duplicate, fraudulent, requested_by_customer]
+                metadata: { $ref: '#/components/schemas/metadata' }
+  /v1/events:
+    get:
+      summary: List what happened on the account in the last 30 days, newest first.
+      parameters:
+        - name: type
+          in: query
+          description: 'Only events of this type, such as checkout.session.completed or payment_intent.succeeded.'
+          schema: { type: string }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/starting_after'

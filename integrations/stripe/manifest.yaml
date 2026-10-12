@@ -1,0 +1,42 @@
+id: stripe
+name: Stripe
+summary: Products, prices, customers, payments, checkout sessions and refunds.
+hosts: [api.stripe.com]
+auth:
+  type: api_key
+  header: Authorization
+  format: 'Bearer {secret}'
+  label: Secret key
+  hint: Dashboard, Developers, API keys. A key that starts sk_test_ is test mode; sk_live_ is the real account. A restricted key (rk_test_, rk_live_) works too, with read access to the account.
+  modes:
+    test: { prefix: [sk_test_, rk_test_] }
+    live: { prefix: [sk_live_, rk_live_] }
+openapi: openapi.yaml
+check: get_account
+account: settings.dashboard.display_name
+operations:
+  - { id: get_account, op: 'GET /v1/account', risk: read }
+  - { id: get_balance, op: 'GET /v1/balance', risk: read }
+  - { id: list_products, op: 'GET /v1/products', risk: read }
+  - { id: create_product, op: 'POST /v1/products', risk: write }
+  - { id: update_product, op: 'POST /v1/products/{id}', risk: write }
+  - { id: list_prices, op: 'GET /v1/prices', risk: read }
+  - { id: create_price, op: 'POST /v1/prices', risk: write }
+  - { id: list_customers, op: 'GET /v1/customers', risk: read }
+  - { id: create_customer, op: 'POST /v1/customers', risk: write }
+  - { id: list_checkout_sessions, op: 'GET /v1/checkout/sessions', risk: read }
+  - { id: get_checkout_session, op: 'GET /v1/checkout/sessions/{session}', risk: read }
+  - { id: create_checkout_session, op: 'POST /v1/checkout/sessions', risk: write }
+  - { id: list_payment_intents, op: 'GET /v1/payment_intents', risk: read }
+  - { id: get_payment_intent, op: 'GET /v1/payment_intents/{intent}', risk: read }
+  # These move money on a live account. On a test one nothing is charged, so they count as writes.
+  - { id: create_payment_intent, op: 'POST /v1/payment_intents', risk: outbound, test: write }
+  - id: confirm_payment_intent
+    op: 'POST /v1/payment_intents/{intent}/confirm'
+    risk: outbound
+    test: write
+    verify: get_payment_intent
+  - { id: list_refunds, op: 'GET /v1/refunds', risk: read }
+  - { id: create_refund, op: 'POST /v1/refunds', risk: outbound, test: write, verify: list_refunds }
+  - { id: list_events, op: 'GET /v1/events', risk: read }
+guide: guide.md

@@ -1,0 +1,89 @@
+appId: si.clanks.app
+productName: clanks
+copyright: Copyright © 2026 Ryan Conte
+
+directories:
+  buildResources: build
+  output: dist
+
+# Workspace packages are bundled into out/ by electron-vite. Only runtime `dependencies`
+# (better-sqlite3 and its prebuilt binaries) are copied in as node_modules.
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - '!**/*.map'
+  # better-sqlite3 also ships SQLite's C sources and a prebuild for every platform.
+  # Only the binaries for the platform being packaged are needed.
+  - '!node_modules/better-sqlite3/{deps,src}/**'
+  - '!node_modules/better-sqlite3/binding.gyp'
+asarUnpack:
+  - '**/*.node'
+  - resources/**
+  # The terminal's native module starts helper programs, DLLs and a worker script, which the OS
+  # can't load from inside the asar archive.
+  - 'node_modules/@lydell/**'
+# better-sqlite3 ships N-API prebuilds that work in Electron as they are.
+npmRebuild: false
+
+# The licence and its notices go with every install, in the app's resources folder.
+extraResources:
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: ../../NOTICE
+    to: NOTICE.txt
+
+mac:
+  target: [dmg, zip]
+  category: public.app-category.developer-tools
+  # Signed with the Developer ID in the keychain or in CSC_LINK, and notarised when APPLE_ID,
+  # APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID (or an App Store Connect API key) are set. With
+  # CSC_IDENTITY_AUTO_DISCOVERY=false it's left unsigned, which is how CI checks a build.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/{linux,linuxmusl,win32}-*'
+
+win:
+  target: [nsis]
+  executableName: clanks
+  # Signed when WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD (or CSC_LINK and CSC_KEY_PASSWORD) hold a
+  # code-signing certificate. Without one the installer is unsigned and SmartScreen says so.
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*'
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # No version in the names, so clanks.si links straight to the latest release's files.
+  artifactName: ${productName}-setup-${arch}.${ext}
+
+linux:
+  target: [AppImage, deb]
+  category: Development
+  executableName: clanks
+  maintainer: Ryan Conte
+  synopsis: Put the clankers to work.
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/{darwin,linuxmusl,win32}-*'
+
+dmg:
+  artifactName: ${productName}-${arch}.${ext}
+
+appImage:
+  artifactName: ${productName}-${arch}.${ext}
+
+deb:
+  artifactName: ${productName}-${arch}.${ext}
+
+# Where a release goes and where the app looks for a newer one: this repository's releases. A
+# build is only ever uploaded by the release workflow (`--publish always`); `pnpm package` never
+# uploads. Linux updates itself from the AppImage; the .deb is updated by installing a newer one.
+publish:
+  provider: github
+  owner: Ryan-Conte
+  repo: clanks
+  releaseType: draft

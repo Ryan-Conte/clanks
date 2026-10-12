@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1791149718596,
+      "tag": "0000_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791160864351,
+      "tag": "0001_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791164238608,
+      "tag": "0002_chat",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791199303836,
+      "tag": "0003_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791236852572,
+      "tag": "0004_browser",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791241613111,
+      "tag": "0005_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791259613163,
+      "tag": "0006_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791599455667,
+      "tag": "0007_design",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791618710489,
+      "tag": "0008_beyond_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791674996094,
+      "tag": "0009_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791715406984,
+      "tag": "0010_routines",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+id: google_analytics
+name: Google Analytics
+summary: Reports from your Google Analytics 4 properties. Read only.
+hosts: [analyticsdata.googleapis.com, analyticsadmin.googleapis.com]
+auth:
+  type: oauth2
+  authorize_url: https://accounts.google.com/o/oauth2/v2/auth
+  token_url: https://oauth2.googleapis.com/token
+  scopes: ['https://www.googleapis.com/auth/analytics.readonly']
+  # So Google hands back a refresh token, and the connection outlasts the first hour.
+  extra: { access_type: offline, prompt: consent }
+  label: Google account
+  hint: Google has no client anyone can use, so bring your own. In console.cloud.google.com, turn on the Google Analytics Data API and the Admin API, then make an OAuth client of type Desktop app and paste its id and secret here.
+openapi: openapi.yaml
+check: list_accounts
+account: accountSummaries.0.displayName
+operations:
+  - { id: list_accounts, op: 'GET /v1beta/accountSummaries', risk: read }
+  - { id: get_metadata, op: 'GET /v1beta/properties/{property}/metadata', risk: read }
+  # Reports are asked for with a POST, but they only read.
+  - { id: run_report, op: 'POST /v1beta/properties/{property}:runReport', risk: read }
+  - {
+      id: run_realtime_report,
+      op: 'POST /v1beta/properties/{property}:runRealtimeReport',
+      risk: read,
+    }
+guide: guide.md

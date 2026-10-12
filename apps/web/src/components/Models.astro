@@ -1,0 +1,68 @@
+---
+import SectionHead from './SectionHead.astro';
+
+/** Models from the app's catalog (packages/models/src/catalog.json), as one computer would see them. */
+const others = [
+  { title: 'Qwen3.5 9B', fit: 'Runs fast', tone: 'text-accent-2' },
+  { title: 'gpt-oss 20B', fit: 'Runs fast', tone: 'text-accent-2' },
+  { title: 'Qwen3.6 35B A3B', fit: 'Runs, a little slower', tone: 'text-white/70' },
+  { title: 'gpt-oss 120B', fit: 'Too big for this computer', tone: 'text-dim' },
+];
+
+const points = [
+  'Picks a model for your graphics card and memory, before you download',
+  'A model per clank: plan with a big one, build with a fast one',
+  'Serve your models to other apps on localhost, if you like',
+  'Optional: Anthropic, OpenAI, Google or OpenRouter with your own key',
+];
+---
+
+<section id="models" class="relative z-10 mx-auto mt-32 max-w-6xl scroll-mt-8 px-4 sm:px-6">
+  <div class="grid gap-10 lg:grid-cols-2 lg:items-center">
+    <div>
+      <SectionHead eyebrow="Local models" title="The brains run on your machine.">
+        clanks downloads an open model that fits your computer and runs it itself, with llama.cpp
+        built in. No Ollama, no server, no command line. Your work stays private and keeps going
+        with no internet.
+      </SectionHead>
+      <ul class="mt-6 flex flex-col gap-3 text-sm text-white/85">
+        {points.map((point) => (
+          <li class="flex gap-3">
+            <span aria-hidden="true" class="text-accent-2">
+              ✓
+            </span>
+            {point}
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    <div class="flex flex-col gap-3 rounded-3xl border border-line bg-panel/60 p-5 sm:p-6">
+      <p class="text-xs text-dim">This computer · Apple M3 Pro · 36 GB</p>
+      <div class="flex flex-col gap-4 rounded-2xl border border-line bg-black/25 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p class="flex flex-wrap items-center gap-2 font-medium">
+            Gemma 4 26B A4B
+            <span class="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-accent">
+              Best for this computer
+            </span>
+          </p>
+          <p class="mt-0.5 text-[13px] text-dim">
+            16.8 GB to download · Runs fast on this computer
+          </p>
+        </div>
+        <span class="self-start rounded-full bg-white px-4 py-2 text-[13px] font-medium whitespace-nowrap text-black sm:self-auto">
+          Download and set up
+        </span>
+      </div>
+      <ul class="flex flex-col gap-3">
+        {others.map((m) => (
+          <li class="flex items-center justify-between gap-4 rounded-2xl border border-line px-4 py-3 text-[13px]">
+            <span class:list={[m.tone === 'text-dim' && 'text-dim']}>{m.title}</span>
+            <span class:list={['text-right', m.tone]}>{m.fit}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+</section>

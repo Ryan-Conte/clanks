@@ -1,0 +1,24 @@
+{
+  "name": "@clanks/tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Built-in tools, the permission policy and the MCP client.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@clanks/core": "workspace:*",
+    "@clanks/workspace": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "vitest": "^5.0.3"
+  }
+}

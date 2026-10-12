@@ -1,0 +1,95 @@
+---
+import Avatar from './Avatar.astro';
+import { CREW } from '../lib/crew';
+import { DOWNLOADS, REPO } from '../lib/site';
+
+const promises = [
+  ['No account. No cloud.', 'Projects, chats and models live in a folder on your computer.'],
+  [
+    'Keys in your keychain',
+    'Never in a file, never shown to a model, and sent only to the provider you chose.',
+  ],
+  ['Risky things ask first', 'Pushing, deleting, deploying: a clank asks, and says why.'],
+  ['Never without you', 'No merge, email, post or purchase happens until you approve it.'],
+];
+---
+
+<section aria-label="Privacy" class="relative z-10 mx-auto mt-32 max-w-6xl px-4 sm:px-6">
+  <ul class="grid gap-px overflow-hidden rounded-3xl border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+    {promises.map(([title, body]) => (
+      <li class="bg-ink p-6">
+        <h3 class="font-medium">{title}</h3>
+        <p class="mt-2 text-sm leading-relaxed text-dim">{body}</p>
+      </li>
+    ))}
+  </ul>
+</section>
+
+<section id="download" class="relative z-10 mx-auto mt-24 max-w-6xl scroll-mt-8 px-4 pb-24 sm:px-6">
+  <div class="relative overflow-hidden rounded-[32px] border border-line bg-panel px-5 py-16 text-center sm:py-20">
+    <div
+      aria-hidden="true"
+      class="pointer-events-none absolute top-full left-1/2 h-[500px] w-[900px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(185,167,255,0.3),transparent)]"
+    ></div>
+    <div class="relative mx-auto mb-6 flex w-max -space-x-2">
+      {CREW.map((clank) => (
+        <span class="rounded-full ring-4 ring-panel">
+          <Avatar clank={clank.id} size="lg" />
+        </span>
+      ))}
+    </div>
+    <h2 class="headline relative text-4xl font-semibold tracking-[-0.035em] sm:text-6xl">
+      Your crew is waiting.
+    </h2>
+    <p class="relative mx-auto mt-4 max-w-md text-dim">
+      One download, one model, and they're ready. Free, open source, and yours.
+    </p>
+    <ul class="relative mx-auto mt-10 grid max-w-3xl gap-3 sm:grid-cols-3">
+      {DOWNLOADS.map((d, i) => (
+        <li
+          class:list={[
+            'relative flex items-center justify-between gap-3 rounded-2xl px-5 py-4 text-left transition-colors',
+            i === 0
+              ? 'bg-white text-black hover:bg-white/85'
+              : 'border border-line bg-white/5 hover:bg-white/10',
+          ]}
+        >
+          <a
+            href={d.href}
+            class="flex flex-1 flex-col gap-1 rounded-2xl after:absolute after:inset-0 after:rounded-2xl"
+          >
+            <span class="text-sm font-medium">{d.name}</span>
+            <span class:list={['font-mono text-[11px]', i === 0 ? 'text-black/50' : 'text-dim']}>
+              {d.detail}
+            </span>
+          </a>
+          {d.alt && (
+            <a
+              href={d.alt.href}
+              class="relative z-10 rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-white/80 hover:text-white"
+            >
+              {d.alt.label}
+            </a>
+          )}
+        </li>
+      ))}
+    </ul>
+    <p class="relative mt-6 text-xs text-dim">
+      Every release is on{' '}
+      <a
+        href={`${REPO}/releases`}
+        class="text-white/70 underline underline-offset-4 hover:text-white"
+      >
+        GitHub
+      </a>
+      . New to it? Start with{' '}
+      <a
+        href="/docs/getting-started/"
+        class="text-white/70 underline underline-offset-4 hover:text-white"
+      >
+        Getting started
+      </a>
+      .
+    </p>
+  </div>
+</section>

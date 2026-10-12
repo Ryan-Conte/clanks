@@ -1,0 +1,413 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "name": "qwen3.5",
+      "tag": "0.8b",
+      "title": "Qwen3.5 0.8B",
+      "summary": "Tiny and quick. Good for trying clanks on modest hardware; too small for real crew work.",
+      "repo": "ggml-org/Qwen3.5-0.8B-GGUF",
+      "revision": "8fea620810c4afa23dd6443f999a48574c1611a3",
+      "quant": "Q8_0",
+      "params": "0.8B",
+      "license": "apache-2.0",
+      "tags": ["general"],
+      "capabilities": { "tools": true, "vision": false, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "Qwen3.5-0.8B-Q8_0.gguf",
+          "sha256": "37ae482d336108d23516fa35e8e0c4126688d81018b87178a18d752a1357814f",
+          "size": 833592096
+        }
+      ],
+      "facts": {
+        "architecture": "qwen35",
+        "blockCount": 25,
+        "contextLength": 262144,
+        "kvPerToken": 6144,
+        "swaKvPerToken": 0,
+        "slidingWindow": 0,
+        "parameterCount": 772845888
+      }
+    },
+    {
+      "name": "gemma4",
+      "tag": "e2b",
+      "title": "Gemma 4 E2B",
+      "summary": "Google's smallest Gemma 4. Writes well for its size and reads images.",
+      "repo": "ggml-org/gemma-4-E2B-it-GGUF",
+      "revision": "b4243c156154b6dca9324415f8c7ccc098b4aed1",
+      "quant": "Q4_0",
+      "params": "5B-E2B",
+      "license": "apache-2.0",
+      "tags": ["general", "writing"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "gemma-4-E2B-it-Q4_0.gguf",
+          "sha256": "8e30dff3ac4c8434c49a7036fa15564bdbb6044e42bf04550bf1a096ad7e6a52",
+          "size": 2841481184
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-gemma-4-E2B-it-Q8_0.gguf",
+          "sha256": "9406f99c16d68cda4f1f0552192dcc99021ea1fc6d2fd50b1dc3ccf30d04b292",
+          "size": 557368064
+        }
+      ],
+      "facts": {
+        "architecture": "gemma4",
+        "blockCount": 35,
+        "contextLength": 131072,
+        "kvPerToken": 3072,
+        "swaKvPerToken": 6144,
+        "slidingWindow": 512,
+        "parameterCount": 4628569635
+      }
+    },
+    {
+      "name": "qwen3.5",
+      "tag": "4b",
+      "title": "Qwen3.5 4B",
+      "summary": "A capable all-rounder for laptops and machines without a GPU. Codes, reasons and reads images.",
+      "repo": "unsloth/Qwen3.5-4B-GGUF",
+      "revision": "e87f176479d0855a907a41277aca2f8ee7a09523",
+      "quant": "Q4_K_M",
+      "params": "4B",
+      "license": "apache-2.0",
+      "tags": ["general", "code", "reasoning"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "Qwen3.5-4B-Q4_K_M.gguf",
+          "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+          "size": 2740937888
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-F16.gguf",
+          "sha256": "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864",
+          "size": 672423616
+        }
+      ],
+      "facts": {
+        "architecture": "qwen35",
+        "blockCount": 32,
+        "contextLength": 262144,
+        "kvPerToken": 16384,
+        "swaKvPerToken": 0,
+        "slidingWindow": 0,
+        "parameterCount": 4205751296
+      }
+    },
+    {
+      "name": "gemma4",
+      "tag": "e4b",
+      "title": "Gemma 4 E4B",
+      "summary": "Small enough for a laptop, with clear writing and image understanding.",
+      "repo": "ggml-org/gemma-4-E4B-it-GGUF",
+      "revision": "b8093469224f83f5c38f691eb906c380e9e63114",
+      "quant": "Q4_0",
+      "params": "8B-E4B",
+      "license": "apache-2.0",
+      "tags": ["general", "writing", "design"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "gemma-4-E4B-it-Q4_0.gguf",
+          "sha256": "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2",
+          "size": 4590807392
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-gemma-4-E4B-it-Q8_0.gguf",
+          "sha256": "197f49a93027f9843772bd24a6a9e0be2a32a788de5a3def330e9c585d86edd1",
+          "size": 559874816
+        }
+      ],
+      "facts": {
+        "architecture": "gemma4",
+        "blockCount": 42,
+        "contextLength": 131072,
+        "kvPerToken": 8192,
+        "swaKvPerToken": 20480,
+        "slidingWindow": 512,
+        "parameterCount": 7463013674
+      }
+    },
+    {
+      "name": "qwen3.5",
+      "tag": "9b",
+      "title": "Qwen3.5 9B",
+      "summary": "The sweet spot for an 8 to 12 GB GPU: solid code, reasoning and tool use.",
+      "repo": "unsloth/Qwen3.5-9B-GGUF",
+      "revision": "3885219b6810b007914f3a7950a8d1b469d598a5",
+      "quant": "Q4_K_M",
+      "params": "9B",
+      "license": "apache-2.0",
+      "tags": ["general", "code", "reasoning"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "Qwen3.5-9B-Q4_K_M.gguf",
+          "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+          "size": 5680522464
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-F16.gguf",
+          "sha256": "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+          "size": 918166080
+        }
+      ],
+      "facts": {
+        "architecture": "qwen35",
+        "blockCount": 32,
+        "contextLength": 262144,
+        "kvPerToken": 16384,
+        "swaKvPerToken": 0,
+        "slidingWindow": 0,
+        "parameterCount": 8953803264
+      }
+    },
+    {
+      "name": "gemma4",
+      "tag": "12b",
+      "title": "Gemma 4 12B",
+      "summary": "A strong writer and designer's assistant for a 12 GB GPU, with vision.",
+      "repo": "ggml-org/gemma-4-12B-it-GGUF",
+      "revision": "e3e681731089efaa3f0917336944ac64752db8ba",
+      "quant": "Q4_0",
+      "params": "12B",
+      "license": "apache-2.0",
+      "tags": ["writing", "design", "general"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "gemma-4-12B-it-Q4_0.gguf",
+          "sha256": "3712b9bd32cae83a22f67ee7a4466d8d7a4f21646ac8a07d19bf9418e8767a70",
+          "size": 7219673216
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-gemma-4-12B-it-Q8_0.gguf",
+          "sha256": "59e62255435dda870e2d1de97cc031330b31a898bac12b38a182cecff9cd3738",
+          "size": 158987616
+        }
+      ],
+      "facts": {
+        "architecture": "gemma4",
+        "blockCount": 48,
+        "contextLength": 262144,
+        "kvPerToken": 8192,
+        "swaKvPerToken": 163840,
+        "slidingWindow": 1024,
+        "parameterCount": 11907350576
+      }
+    },
+    {
+      "name": "gpt-oss",
+      "tag": "20b",
+      "title": "gpt-oss 20B",
+      "summary": "OpenAI's open-weight reasoner. Fast for its size, good at code and tool use. Text only.",
+      "repo": "ggml-org/gpt-oss-20b-GGUF",
+      "revision": "ef9b12f2ff56c69cf32153a02784e7a3c88bf524",
+      "quant": "MXFP4",
+      "params": "21B-A4B",
+      "license": "apache-2.0",
+      "tags": ["reasoning", "code"],
+      "capabilities": { "tools": true, "vision": false, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "gpt-oss-20b-MXFP4.gguf",
+          "sha256": "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901",
+          "size": 12109566624
+        }
+      ],
+      "facts": {
+        "architecture": "gpt-oss",
+        "blockCount": 24,
+        "contextLength": 131072,
+        "kvPerToken": 12288,
+        "swaKvPerToken": 12288,
+        "slidingWindow": 128,
+        "parameterCount": 20914757184
+      }
+    },
+    {
+      "name": "gemma4",
+      "tag": "26b",
+      "title": "Gemma 4 26B A4B",
+      "summary": "A mixture of experts that runs like a 4B: quick, with good writing and vision.",
+      "repo": "ggml-org/gemma-4-26B-A4B-it-GGUF",
+      "revision": "bb4531cda34d1ea09d9814959ed4d5833cf2a4c8",
+      "quant": "Q4_0",
+      "params": "26B-A4B",
+      "license": "apache-2.0",
+      "tags": ["general", "writing", "design"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "gemma-4-26B-A4B-it-Q4_0.gguf",
+          "sha256": "d208665ab1cd3a69f7a9a4bc59430e8448c8093d9b06334f566ac59d6d504a03",
+          "size": 14618145824
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-gemma-4-26B-A4B-it-Q8_0.gguf",
+          "sha256": "cc4e855736da450bf1e162d8cccfe0ad685727d0c9e04ef7dd8d884f3121039b",
+          "size": 806408320
+        }
+      ],
+      "facts": {
+        "architecture": "gemma4",
+        "blockCount": 30,
+        "contextLength": 262144,
+        "kvPerToken": 10240,
+        "swaKvPerToken": 102400,
+        "slidingWindow": 1024,
+        "parameterCount": 25233142046
+      }
+    },
+    {
+      "name": "qwen3.8",
+      "tag": "27b",
+      "title": "Qwen3.8 27B",
+      "summary": "A dense 27B for a 24 GB GPU. Among the best open models at code and careful reasoning.",
+      "repo": "ggml-org/Qwen3.8-27B-GGUF",
+      "revision": "71bc7b627595dc8a91039addd9c791ae548d6747",
+      "quant": "Q4_K_M",
+      "params": "27B",
+      "license": "apache-2.0",
+      "tags": ["code", "reasoning", "general"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "Qwen3.8-27B-Q4_K_M.gguf",
+          "sha256": "c600de0300ae8a0eb3a6c0b8b5561b8b96f16bd2c863c2a66c42de29d391a747",
+          "size": 18973870528
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-Qwen3.8-27B-Q8_0.gguf",
+          "sha256": "2e968a6af97ce35d8971890b257b9b7edabf20ad91450501fa53162a19ee33eb",
+          "size": 629247008
+        }
+      ],
+      "facts": {
+        "architecture": "qwen35",
+        "blockCount": 64,
+        "contextLength": 262144,
+        "kvPerToken": 32768,
+        "swaKvPerToken": 0,
+        "slidingWindow": 0,
+        "parameterCount": 26895998464
+      }
+    },
+    {
+      "name": "nemotron3.5",
+      "tag": "30b",
+      "title": "Nemotron 3.5 Lightning 30B A3B",
+      "summary": "NVIDIA's hybrid mixture of experts with a million-token context. Built for long documents.",
+      "repo": "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+      "revision": "8a08a1c81dadcc75d35dbb96016cfd344b632e67",
+      "quant": "Q4_0",
+      "params": "30B-A3B",
+      "license": "openmdw-1.1",
+      "tags": ["long-context", "reasoning"],
+      "capabilities": { "tools": true, "vision": false, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf",
+          "sha256": "61f87e75974e4b535dcdf9aad056541a9514f1dfa4538b463b081d19b7a00e3c",
+          "size": 18898091584
+        }
+      ],
+      "facts": {
+        "architecture": "nemotron_h_moe",
+        "blockCount": 52,
+        "contextLength": 1048576,
+        "kvPerToken": 3072,
+        "swaKvPerToken": 0,
+        "slidingWindow": 0,
+        "parameterCount": 31577940288
+      }
+    },
+    {
+      "name": "qwen3.6",
+      "tag": "35b",
+      "title": "Qwen3.6 35B A3B",
+      "summary": "A fast mixture of experts for a 24 GB GPU or 32 GB Mac. Strong at code, tools and long context.",
+      "repo": "ggml-org/Qwen3.6-35B-A3B-GGUF",
+      "revision": "baec3ebee244827cda0f4557eafa8b28f7545fa6",
+      "quant": "Q4_K_M",
+      "params": "35B-A3B",
+      "license": "apache-2.0",
+      "tags": ["code", "reasoning", "general", "long-context"],
+      "capabilities": { "tools": true, "vision": true, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "Qwen3.6-35B-A3B-Q4_K_M.gguf",
+          "sha256": "671e47e0ec53c665d048b98c3ecbfd5236b5ca9c3e02ed19fc8f81f7b85140c7",
+          "size": 20419565568
+        },
+        {
+          "role": "projector",
+          "path": "mmproj-Qwen3.6-35B-A3B-Q8_0.gguf",
+          "sha256": "904cbf8c8e876220066ab3bf676c7efa40f3da372276fdaf8b01d2fb2a37a51d",
+          "size": 614194304
+        }
+      ],
+      "facts": {
+        "architecture": "qwen35moe",
+        "blockCount": 40,
+        "contextLength": 262144,
+        "kvPerToken": 10240,
+        "swaKvPerToken": 0,
+        "slidingWindow": 0,
+        "parameterCount": 34660610688
+      }
+    },
+    {
+      "name": "gpt-oss",
+      "tag": "120b",
+      "title": "gpt-oss 120B",
+      "summary": "OpenAI's large open-weight reasoner, for 80 GB or more of GPU or unified memory.",
+      "repo": "ggml-org/gpt-oss-120b-GGUF",
+      "revision": "238abdd290bb874b90a5da1b4549881b7d05c091",
+      "quant": "MXFP4",
+      "params": "117B-A5B",
+      "license": "apache-2.0",
+      "tags": ["reasoning", "code", "general"],
+      "capabilities": { "tools": true, "vision": false, "reasoning": true },
+      "files": [
+        {
+          "role": "model",
+          "path": "gpt-oss-120b-MXFP4.gguf",
+          "sha256": "582bd40f6886200101f4c4ed9f25f3fe80cc14c86e9e2b37746cd8904a0c622d",
+          "size": 63387346208
+        }
+      ],
+      "facts": {
+        "architecture": "gpt-oss",
+        "blockCount": 36,
+        "contextLength": 131072,
+        "kvPerToken": 18432,
+        "swaKvPerToken": 18432,
+        "slidingWindow": 128,
+        "parameterCount": 116829156672
+      }
+    }
+  ]
+}

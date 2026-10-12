@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- What Electron's V8 needs under the hardened runtime. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- The bundled llama.cpp server loads its own libraries, and CUDA-free builds of them are
+       fetched and checked by sha256 rather than signed by this team. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

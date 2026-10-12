@@ -1,0 +1,51 @@
+id: xcom
+name: X
+summary: Post to X as your account, with or without a picture, and read back what you posted.
+hosts: [api.x.com]
+# Where a post is read. Nothing is sent there.
+links: [x.com]
+auth:
+  type: oauth2
+  authorize_url: https://x.com/i/oauth2/authorize
+  token_url: https://api.x.com/2/oauth2/token
+  scopes: [tweet.read, tweet.write, users.read, media.write, offline.access]
+  # X only hands a code back to an address registered with the app, port and all.
+  redirect_port: 8739
+  label: X account
+  hint: Bring your own client. At developer.x.com, make an app, set up OAuth 2.0 as a Native App with read and write, and give it the callback http://127.0.0.1:8739/callback. Paste its client id here; a native app has no secret. How much you can post depends on your X API plan.
+openapi: openapi.yaml
+check: me
+account: data.username
+operations:
+  - { id: me, op: 'GET /2/users/me', risk: read }
+  - id: recent_posts
+    risk: read
+    summary: Your latest posts, newest first.
+    input: {}
+    steps:
+      - call: 'GET /2/users/me'
+        save: { user_id: data.id }
+      - call: 'GET /2/users/{id}/tweets'
+        with: { id: '{user_id}', max_results: 10 }
+  # Posting is public the moment it happens, so it waits for approval every time.
+  - id: create_post
+    op: 'POST /2/tweets'
+    risk: outbound
+    verify: recent_posts
+    link: 'https://x.com/i/web/status/{data.id}'
+  - id: create_post_with_image
+    risk: outbound
+    verify: recent_posts
+    link: 'https://x.com/i/web/status/{data.id}'
+    summary: Post with one picture.
+    input:
+      text: { type: string, required: true, description: 'The post, at most 280 characters.' }
+      image: { type: string, required: true, description: 'The picture as a PNG, in base64.' }
+    steps:
+      - call: 'POST /2/media/upload'
+        with: { media: '{image}', media_category: tweet_image, media_type: image/png }
+        save: { media_id: data.id }
+      - call: 'POST /2/tweets'
+        with: { text: '{text}', media: { media_ids: ['{media_id}'] } }
+  - { id: delete_post, op: 'DELETE /2/tweets/{id}', risk: outbound }
+guide: guide.md

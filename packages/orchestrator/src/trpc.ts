@@ -1,0 +1,131 @@
+import type { ModelManager } from '@clanks/models';
+import type { ProviderRegistry } from '@clanks/providers';
+import { initTRPC } from '@trpc/server';
+import type { ActivityService } from './activity/service';
+import type { ArtifactService } from './artifacts/service';
+import type { BoardService } from './board/service';
+import type { BrowserService } from './browser/service';
+import type { ChatService } from './chat/service';
+import type { ContextService } from './context/service';
+import type { CrewService } from './crew/crew';
+import type { DesignService } from './design/service';
+import type { EmailService } from './email/service';
+import type { GitHubService } from './github/service';
+import type { GitLabService } from './gitlab/service';
+import type { IntegrationService } from './integrations/service';
+import type { LocalApi } from './local-api/server';
+import type { MarketplaceService } from './marketplace/service';
+import type { McpService } from './mcp/service';
+import type { AppDataLayout } from './paths';
+import type { ProjectService } from './projects/service';
+import type { ProviderService } from './providers';
+import type { RoutineService } from './routines/service';
+import type { SandboxService } from './sandbox/service';
+import type { SecretStore } from './secrets';
+import type { SettingsService } from './settings';
+import type { ShellService } from './shell';
+import type { Store } from './store/store';
+import type { TerminalService } from './terminal/service';
+import type { ToolService } from './tools/service';
+import type { WorkspaceService } from './workspace/service';
+
+export interface AppInfo {
+  name: string;
+  version: string;
+  platform: NodeJS.Platform;
+  arch: string;
+  /** True for an installed build, false when running from source. */
+  packaged: boolean;
+  versions: { electron: string; chrome: string; node: string };
+}
+
+/** What the desktop shell does for the orchestrator: native dialogs and the file manager. */
+export interface Host {
+  /** Asks the user to pick a folder. Null if they cancel. */
+  pickFolder(options: { title: string; defaultPath?: string }): Promise<string | null>;
+  /** Opens a folder in the system file manager. */
+  openFolder(path: string): Promise<void>;
+  /**
+   * Asks where to save a file, then writes it there. Resolves with the path, or null if the user
+   * cancels.
+   */
+  saveFile(
+    options: { title: string; defaultName: string; extensions: string[] },
+    data: Uint8Array,
+  ): Promise<string | null>;
+  /** Opens an https page in the user's own browser, such as a service's sign-in. */
+  openUrl(url: string): Promise<void>;
+  /** Looks for a newer clanks now. Missing where the app can't update itself. */
+  checkForUpdates?(): Promise<void>;
+  /** Fetches the newer version that was found. */
+  downloadUpdate?(): Promise<void>;
+  /** Restarts into the version that was fetched. */
+  installUpdate?(): void;
+}
+
+export interface OrchestratorContext {
+  appInfo: AppInfo;
+  paths: AppDataLayout;
+  store: Store;
+  settings: SettingsService;
+  secrets: SecretStore;
+  models: ModelManager;
+  /** Every provider, by id: what model calls go through. */
+  providers: ProviderRegistry;
+  /** Cloud keys and model servers, as Settings shows them. */
+  providerSettings: ProviderService;
+  crew: CrewService;
+  chat: ChatService;
+  /** Each chat's worktree, checkpoints and review notes. */
+  workspace: WorkspaceService;
+  /** Commands clanks run and the user's own shells. */
+  terminal: TerminalService;
+  /** Every model and tool call, step by step. */
+  activity: ActivityService;
+  /** Tool policies, "always allow" rules and search. */
+  tools: ToolService;
+  mcp: McpService;
+  /** Every chat's browser tabs, and who's driving them. */
+  browser: BrowserService;
+  /** Projects: their workspaces, crews and models. */
+  projects: ProjectService;
+  /** Each project's tickets, spec and activity feed, and the runs that work them. */
+  board: BoardService;
+  /** Each project's notes, and each clank's memory of it. */
+  context: ContextService;
+  /** Projects' designs and tokens, for Studio and the design tools. */
+  design: DesignService;
+  /** Docker containers for projects that run commands in them. */
+  sandbox: SandboxService;
+  /** The user's GitHub account, for cloning and making repositories. */
+  github: GitHubService;
+  /** The user's GitLab account, the same for projects hosted there. */
+  gitlab: GitLabService;
+  /** What the crew made that isn't in a repository: documents, notes, pictures of pages. */
+  artifacts: ArtifactService;
+  /** The account emails the user approves go out through. */
+  email: EmailService;
+  /** Connected services: integrations, the accounts connected to each, and who may use them. */
+  integrations: IntegrationService;
+  /** What marketplaces list, what's installed from them, and publishing to one. */
+  marketplace: MarketplaceService;
+  /** Routines: what's scheduled, what's running, and what's approved to go out at its time. */
+  routines: RoutineService;
+  /** Pulled models served to other apps on 127.0.0.1, when the user turns it on. */
+  localApi: LocalApi;
+  /** What the desktop shell tells the window: updates, and where a notification leads. */
+  shell: ShellService;
+  host: Host | null;
+}
+
+const t = initTRPC.context<OrchestratorContext>().create({
+  isServer: true,
+  // Values cross Electron IPC by structured clone, which keeps Dates, Maps and Sets as they are.
+  // An identity transformer tells tRPC so, which keeps the window's inferred types honest: a Date
+  // stays a Date rather than becoming the string JSON would make of it.
+  transformer: { serialize: (value: unknown) => value, deserialize: (value: unknown) => value },
+});
+
+export const router = t.router;
+export const publicProcedure = t.procedure;
+export const createCallerFactory = t.createCallerFactory;

@@ -1,0 +1,305 @@
+@import 'tailwindcss';
+@import './fonts.css';
+
+/* The clanks.si palette and type. Dark only, like the site. */
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+
+  --color-ink: #050506;
+  --color-panel: #0d0d10;
+  --color-line: #ffffff14;
+  --color-dim: #8a8a93;
+  --color-accent: #b9a7ff;
+  --color-accent-2: #7ce7d2;
+  /* A surface lifted off a panel: menus, the box you write in, a card under the pointer. */
+  --color-raised: #15151a;
+
+  --animate-pulse-dot: pulse-dot 2.4s ease-in-out infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-pop: pop 0.16s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-breathe: breathe 3.2s ease-in-out infinite;
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes rise {
+    0% {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pop {
+    0% {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* A clank at work: a soft ring that swells and fades. */
+  @keyframes breathe {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent-2) 45%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent-2) 0%, transparent);
+    }
+  }
+}
+
+:root {
+  color-scheme: dark;
+  scrollbar-color: #ffffff24 transparent;
+}
+
+/* Unlike scrollbar-color, scrollbar-width isn't inherited. */
+* {
+  scrollbar-width: thin;
+}
+
+html,
+body {
+  @apply bg-ink text-zinc-100 antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+/* Numbers that change in place, such as counts and times, keep their width. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Frameless window: the title bar drags the window, and leaves room for the window controls:
+   the traffic lights on the left on macOS, the overlay on the right on Windows and Linux. */
+.titlebar {
+  padding-left: 16px;
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px);
+}
+:root[data-platform='mac'] .titlebar {
+  padding-left: 84px;
+}
+.app-drag {
+  -webkit-app-region: drag;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-dot,
+  .animate-rise,
+  .animate-pop,
+  .animate-breathe {
+    animation: none;
+  }
+}
+
+/* The diff editor: a marker in the gutter for each change, and the picked one lit up. */
+.monaco-editor .hunk-glyph {
+  margin-left: 7px;
+  width: 4px !important;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  cursor: pointer;
+}
+.monaco-editor .hunk-glyph-active {
+  background: #fcd34d;
+}
+.monaco-editor .hunk-active-line {
+  background: rgba(252, 211, 77, 0.07);
+}
+
+/* The terminal fills its pane; xterm draws its own scrollbar. */
+.xterm {
+  height: 100%;
+}
+
+/* Replies, rendered from Markdown. */
+.markdown {
+  @apply text-[15px] leading-relaxed break-words text-white/90;
+}
+.markdown > * + * {
+  margin-top: 0.8em;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  @apply font-semibold tracking-tight text-white;
+  margin-top: 1.2em;
+}
+.markdown h1 {
+  font-size: 1.35em;
+}
+.markdown h2 {
+  font-size: 1.2em;
+}
+.markdown h3 {
+  font-size: 1.05em;
+}
+.markdown strong {
+  @apply font-semibold text-white;
+}
+.markdown ul {
+  @apply list-disc pl-5;
+}
+.markdown ol {
+  @apply list-decimal pl-5;
+}
+.markdown li + li,
+.markdown li > ul,
+.markdown li > ol {
+  margin-top: 0.3em;
+}
+.markdown li::marker {
+  @apply text-dim;
+}
+.markdown a {
+  @apply text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent;
+}
+.markdown :not(pre) > code {
+  @apply rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.87em] text-white;
+}
+.markdown blockquote {
+  @apply border-l-2 border-line pl-4 text-dim;
+}
+.markdown hr {
+  @apply border-line;
+}
+.markdown table {
+  @apply w-full border-collapse text-[13px];
+}
+.markdown th,
+.markdown td {
+  @apply border border-line px-3 py-1.5 text-left align-top;
+}
+.markdown th {
+  @apply bg-white/[0.04] font-medium text-white;
+}
+
+/*
+ * A document as a page: a written hand-in shown in the conversation the way its PDF prints, in the
+ * same type and colours as the export (PAGE_CSS in the orchestrator's exports).
+ */
+.paper {
+  background: #fff;
+  color: #16161a;
+  font-family: 'Inter Variable', Inter, 'Segoe UI', system-ui, sans-serif;
+}
+.paper .markdown {
+  color: #16161a;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.paper .markdown h1,
+.paper .markdown h2,
+.paper .markdown h3,
+.paper .markdown h4,
+.paper .markdown strong,
+.paper .markdown th {
+  color: #16161a;
+}
+.paper .markdown h1 {
+  font-size: 1.7em;
+  letter-spacing: -0.01em;
+  margin-top: 0;
+}
+.paper .markdown h2 {
+  font-size: 1.25em;
+}
+.paper .markdown a {
+  color: #2a4bd7;
+  text-decoration-color: #2a4bd766;
+}
+.paper .markdown :not(pre) > code {
+  background: #f1f1f5;
+  color: #16161a;
+}
+.paper .markdown blockquote {
+  border-color: #d0d0d8;
+  color: #4a4a55;
+}
+.paper .markdown li::marker {
+  color: #6a6a75;
+}
+.paper .markdown hr,
+.paper .markdown th,
+.paper .markdown td {
+  border-color: #d0d0d8;
+}
+.paper .markdown th {
+  background: #f1f1f5;
+}
+.paper .code-block {
+  background: #f1f1f5;
+  border-color: #d0d0d8;
+  color: #16161a;
+}
+.paper .code-block > div {
+  border-color: #d0d0d8;
+}
+
+/* Code, in the clanks.si palette. */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-type,
+.hljs-doctag {
+  color: var(--color-accent);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-template-tag {
+  color: var(--color-accent-2);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-bullet {
+  @apply text-amber-300;
+}
+.hljs-title,
+.hljs-section,
+.hljs-name {
+  @apply text-sky-300;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-selector-class,
+.hljs-selector-id {
+  @apply text-pink-300;
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  @apply text-dim italic;
+}
+.hljs-addition {
+  @apply bg-accent-2/10 text-accent-2;
+}
+.hljs-deletion {
+  @apply bg-rose-400/10 text-rose-300;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}

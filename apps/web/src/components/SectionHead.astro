@@ -1,0 +1,28 @@
+---
+interface Props {
+  eyebrow: string;
+  title: string;
+  tone?: 'accent' | 'accent-2';
+  id?: string;
+}
+const { eyebrow, title, tone = 'accent', id } = Astro.props;
+---
+
+<div class="max-w-2xl">
+  <p
+    class:list={[
+      'mb-3 font-mono text-xs tracking-[0.2em] uppercase',
+      tone === 'accent' ? 'text-accent' : 'text-accent-2',
+    ]}
+  >
+    {eyebrow}
+  </p>
+  <h2 id={id} class="text-4xl font-semibold tracking-[-0.03em] text-balance sm:text-5xl">
+    {title}
+  </h2>
+  {Astro.slots.has('default') && (
+    <p class="mt-4 text-[17px] leading-relaxed text-dim">
+      <slot />
+    </p>
+  )}
+</div>

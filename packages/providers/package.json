@@ -1,0 +1,22 @@
+{
+  "name": "@clanks/providers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The provider interface and its adapters, starting with the built-in runtime.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@clanks/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "vitest": "^5.0.3"
+  }
+}

@@ -1,0 +1,74 @@
+---
+import SectionHead from './SectionHead.astro';
+
+/** The integrations in the repo's integrations/ folder, plus where projects live and email. */
+const services = [
+  'GitHub',
+  'GitLab',
+  'Stripe',
+  'Notion',
+  'Slack',
+  'Vercel',
+  'Google Analytics',
+  'X',
+  'Your email',
+];
+
+const listings = [
+  ['Shopify store', 'crew'],
+  ['Podcast launch', 'crew'],
+  ['Sentinel', 'clank'],
+];
+---
+
+<section class="relative z-10 mx-auto mt-32 max-w-6xl px-4 sm:px-6">
+  <SectionHead eyebrow="Integrations and the marketplace" title="Plugs into what you already use.">
+    Connect a service with a key or a sign-in that stays in your keychain, then choose which
+    projects and which clanks may use it.
+  </SectionHead>
+
+  <div class="mt-12 grid gap-4 lg:grid-cols-3">
+    <div class="rounded-3xl border border-line bg-panel/60 p-5 sm:p-6 lg:col-span-2">
+      <ul class="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {services.map((name) => (
+          <li class="grid place-items-center rounded-2xl border border-line bg-black/30 px-3 py-4 text-center text-sm">
+            {name}
+          </li>
+        ))}
+        <li class="grid place-items-center rounded-2xl border border-dashed border-white/15 px-3 py-4 text-center text-sm text-dim">
+          + any MCP server
+        </li>
+      </ul>
+      <ul class="mt-5 grid gap-2 text-[13px] sm:grid-cols-3">
+        <li class="rounded-2xl border border-accent-2/20 bg-accent-2/[0.05] p-3">
+          <b class="font-medium text-accent-2">Reads run.</b>
+          <span class="block text-dim">Clanks look things up freely.</span>
+        </li>
+        <li class="rounded-2xl border border-line p-3">
+          <b class="font-medium">Changes ask first.</b>
+          <span class="block text-dim">You okay each one.</span>
+        </li>
+        <li class="rounded-2xl border border-amber-300/25 bg-amber-300/[0.04] p-3">
+          <b class="font-medium text-amber-200">Money, posts and messages ask every time.</b>
+          <span class="block text-dim">With test or live mode shown.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="flex flex-col gap-3 rounded-3xl border border-line bg-panel/60 p-5 sm:p-6">
+      <h3 class="font-medium">A free marketplace</h3>
+      <p class="text-sm leading-relaxed text-dim">
+        Install clanks, integrations, routines and whole crews that others have shared. No account
+        and no paid listings. You see every tool, permission and host before anything installs.
+      </p>
+      <ul class="mt-auto flex flex-col gap-2 text-[13px]">
+        {listings.map(([name, kind]) => (
+          <li class="flex items-center justify-between rounded-xl border border-line px-3 py-2">
+            {name}
+            <span class="text-dim">{kind}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,611 @@
+import type { GitHubDeviceCode, GitHubRepo, GitHubStatus, ProjectRepo } from '@clanks/core';
+import { GitError, git } from '@clanks/workspace';
+import { EventEmitter } from 'node:events';
+import { existsSync, readdirSync } from 'node:fs';
+import type { CheckState, PullRequest, RepoHostClient } from '../repos/host';
+import type { SecretStore } from '../secrets';
+
+export type { PullRequest } from '../repos/host';
+
+/** A GitHub problem worded for the user. */
+export class GitHubError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GitHubError';
+  }
+}
+
+/** The keychain entry for the GitHub token. */
+export const GITHUB_TOKEN = 'github:token';
+/** Who the token belongs to, so the window can say without asking GitHub. */
+const GITHUB_USER = 'github.user';
+
+const API = 'https://api.github.com';
+const DEVICE_CODE_URL = 'https://github.com/login/device/code';
+const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
+
+export interface GitHubServiceOptions {
+  secrets: SecretStore;
+  /** Where who's signed in is kept: the app's internal settings. */
+  store: { read(key: string): unknown; write(key: string, value: unknown): void };
+  /**
+   * The OAuth app that signing in with a code goes through. Without one, the user signs in with a
+   * token they make on github.com.
+   */
+  clientId: string | null;
+  fetch?: typeof fetch;
+  /** Tests make polling instant. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  now?: () => Date;
+}
+
+interface User {
+  login: string;
+  name: string | null;
+}
+
+interface RepoJson {
+  full_name: string;
+  name: string;
+  owner: { login: string };
+  description: string | null;
+  private: boolean;
+  default_branch: string;
+  html_url: string;
+  pushed_at: string | null;
+}
+
+/**
+ * The user's GitHub account: signing in, their repositories, making one, and cloning one for a
+ * project. The token stays in the keychain and goes only to GitHub; a clone gets it through git's
+ * environment, never its config, so it's never written to disk. Emits `change` when the sign-in
+ * changes.
+ */
+export class GitHubService extends EventEmitter<{ change: [] }> implements RepoHostClient {
+  readonly host = 'github' as const;
+  private device: { code: GitHubDeviceCode; controller: AbortController } | null = null;
+  private error: string | null = null;
+
+  constructor(private readonly options: GitHubServiceOptions) {
+    super();
+  }
+
+  status(): GitHubStatus {
+    const user = this.user();
+    return {
+      signedIn: this.options.secrets.has(GITHUB_TOKEN) && user !== null,
+      login: user?.login ?? null,
+      name: user?.name ?? null,
+      deviceFlow: this.options.clientId !== null,
+      device: this.device?.code ?? null,
+      error: this.error,
+    };
+  }
+
+  signedIn(): boolean {
+    return this.status().signedIn;
+  }
+
+  /** Signs in with a token the user made, once GitHub says whose it is. */
+  async signInWithToken(token: string): Promise<GitHubStatus> {
+    const user = await this.whoIs(token);
+    this.save(token, user);
+    return this.status();
+  }
+
+  /**
+   * Starts signing in with a code: the user enters it on github.com, and the app picks up the token
+   * once they have, in the background.
+   */
+  async startDeviceFlow(): Promise<GitHubDeviceCode> {
+    const { clientId } = this.options;
+    if (!clientId) throw new GitHubError('Signing in with a code needs a GitHub app; use a token');
+    this.cancelDeviceFlow();
+    const response = await this.post(DEVICE_CODE_URL, { client_id: clientId, scope: 'repo' });
+    const body = (await response.json()) as {
+      device_code?: string;
+      user_code?: string;
+      verification_uri?: string;
+      expires_in?: number;
+      interval?: number;
+      error_description?: string;
+    };
+    if (!body.device_code || !body.user_code || !body.verification_uri) {
+      throw new GitHubError(
+        `GitHub didn't start the sign-in${body.error_description ? `: ${body.error_description}` : ''}`,
+      );
+    }
+    const code: GitHubDeviceCode = {
+      userCode: body.user_code,
+      verificationUri: body.verification_uri,
+      expiresAt: new Date(this.now().getTime() + (body.expires_in ?? 900) * 1000),
+    };
+    const controller = new AbortController();
+    this.device = { code, controller };
+    this.error = null;
+    this.emit('change');
+    void this.poll(clientId, body.device_code, body.interval ?? 5, code, controller.signal);
+    return code;
+  }
+
+  cancelDeviceFlow(): void {
+    if (!this.device) return;
+    this.device.controller.abort();
+    this.device = null;
+    this.emit('change');
+  }
+
+  signOut(): void {
+    this.cancelDeviceFlow();
+    this.options.secrets.delete(GITHUB_TOKEN);
+    this.options.store.write(GITHUB_USER, null);
+    this.error = null;
+    this.emit('change');
+  }
+
+  /** The repositories the user can push to, most recently pushed first. */
+  async repos(): Promise<GitHubRepo[]> {
+    const repos: GitHubRepo[] = [];
+    for (let page = 1; page <= 5; page++) {
+      const response = await this.api(
+        `/user/repos?per_page=100&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`,
+      );
+      const list = (await response.json()) as RepoJson[];
+      repos.push(...list.map(toRepo));
+      if (list.length < 100) break;
+    }
+    return repos;
+  }
+
+  /** Makes a repository with a first commit, so there's a branch to work from. */
+  async createRepo(input: {
+    name: string;
+    description: string;
+    private: boolean;
+  }): Promise<GitHubRepo> {
+    const response = await this.api('/user/repos', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: input.name,
+        description: input.description,
+        private: input.private,
+        auto_init: true,
+      }),
+    });
+    return toRepo((await response.json()) as RepoJson);
+  }
+
+  /** Clones a repository into a folder that doesn't exist yet, or is empty. */
+  async clone(fullName: string, into: string): Promise<ProjectRepo> {
+    if (existsSync(into) && readdirSync(into).length > 0) {
+      throw new GitHubError(`${into} isn't empty. Pick a new folder to clone into.`);
+    }
+    const token = this.token();
+    const response = await this.api(`/repos/${fullName}`);
+    const repo = toRepo((await response.json()) as RepoJson);
+    try {
+      await git(['clone', '--quiet', `https://github.com/${repo.fullName}.git`, into], {
+        cwd: process.cwd(),
+        env: authEnv(token),
+      });
+    } catch (error) {
+      throw new GitHubError(
+        `Couldn't clone ${repo.fullName}: ${error instanceof GitError ? error.stderr.split('\n').at(-1) || error.message : String(error)}`,
+      );
+    }
+    return { host: 'github', fullName: repo.fullName, url: repo.url, private: repo.private };
+  }
+
+  /**
+   * Pushes a branch of a clone to GitHub. Only the crew's own `clanks/*` branches are ever pushed,
+   * and never with force, so nothing the user pushed can be overwritten.
+   */
+  async push(folder: string, branch: string): Promise<void> {
+    if (!/^clanks\/[\w.-]+$/.test(branch)) {
+      throw new GitHubError(`Only the crew's own branches are pushed, not ${branch}`);
+    }
+    const token = this.token();
+    try {
+      await git(['push', '--quiet', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], {
+        cwd: folder,
+        env: authEnv(token),
+      });
+    } catch (error) {
+      throw new GitHubError(
+        `Couldn't push ${branch}: ${error instanceof GitError ? error.stderr.split('\n').find((l) => l.trim()) || error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** Fetches a branch from GitHub, so new work starts from what's merged there. */
+  async fetch(folder: string, branch: string): Promise<void> {
+    const token = this.token();
+    try {
+      await git(['fetch', '--quiet', 'origin', branch], { cwd: folder, env: authEnv(token) });
+    } catch (error) {
+      throw new GitHubError(
+        `Couldn't fetch ${branch}: ${error instanceof GitError ? error.stderr.split('\n').find((l) => l.trim()) || error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** Opens a pull request, or finds the one already open for the branch. */
+  async openPullRequest(input: {
+    repo: string;
+    head: string;
+    base: string;
+    title: string;
+    body: string;
+  }): Promise<PullRequest> {
+    const [owner] = input.repo.split('/');
+    const open = await this.api(
+      `/repos/${input.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${input.head}`)}`,
+    );
+    const found = ((await open.json()) as PullJson[])[0];
+    if (found) return toPull(found);
+    const response = await this.api(`/repos/${input.repo}/pulls`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: input.title,
+        head: input.head,
+        base: input.base,
+        body: input.body,
+      }),
+    });
+    return toPull((await response.json()) as PullJson);
+  }
+
+  async pullRequest(repo: string, number: number): Promise<PullRequest> {
+    const response = await this.api(`/repos/${repo}/pulls/${number}`);
+    return toPull((await response.json()) as PullJson);
+  }
+
+  /**
+   * Merges a pull request, as the user who approved it. Throws `GitHubError` with GitHub's reason
+   * when it can't, such as a conflict or a required check that hasn't passed.
+   */
+  async mergePullRequest(repo: string, number: number, title: string): Promise<string> {
+    const response = await this.api(`/repos/${repo}/pulls/${number}/merge`, {
+      method: 'PUT',
+      body: JSON.stringify({ merge_method: 'merge', commit_title: title }),
+    });
+    const body = (await response.json()) as { sha?: string; merged?: boolean; message?: string };
+    if (!body.merged || !body.sha) {
+      throw new GitHubError(`GitHub didn't merge it: ${body.message ?? 'no reason given'}`);
+    }
+    return body.sha;
+  }
+
+  async closePullRequest(repo: string, number: number): Promise<void> {
+    await this.api(`/repos/${repo}/pulls/${number}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ state: 'closed' }),
+    });
+  }
+
+  /**
+   * Proposes files to a repository as a pull request from the user's account, the way publishing
+   * to a marketplace works. With push access the branch goes on the repository itself; without it,
+   * on the user's fork, which is made if there isn't one. Nothing is ever written to the default
+   * branch.
+   */
+  async proposeFiles(input: {
+    /** `owner/name` of the repository the pull request goes to. */
+    repo: string;
+    branch: string;
+    files: { path: string; text: string }[];
+    title: string;
+    body: string;
+  }): Promise<PullRequest & { repo: string }> {
+    const login = this.user()?.login;
+    if (!login) throw new GitHubError('Sign in to GitHub first');
+    const upstream = (await (await this.api(`/repos/${input.repo}`)).json()) as {
+      full_name: string;
+      default_branch: string;
+      permissions?: { push?: boolean };
+    };
+    const base = upstream.default_branch;
+    let head = upstream.full_name;
+    if (!upstream.permissions?.push) {
+      const fork = (await (
+        await this.api(`/repos/${upstream.full_name}/forks`, {
+          method: 'POST',
+          body: JSON.stringify({ default_branch_only: true }),
+        })
+      ).json()) as { full_name: string };
+      head = fork.full_name;
+      await this.waitForRepo(head);
+      // An older fork starts from wherever it was left: bring its base up to date first.
+      await this.api(`/repos/${head}/merge-upstream`, {
+        method: 'POST',
+        body: JSON.stringify({ branch: base }),
+      }).catch(() => {});
+    }
+    const ref = (await (
+      await this.api(`/repos/${head}/git/ref/heads/${encodeURIComponent(base)}`)
+    ).json()) as { object: { sha: string } };
+    try {
+      await this.api(`/repos/${head}/git/refs`, {
+        method: 'POST',
+        body: JSON.stringify({ ref: `refs/heads/${input.branch}`, sha: ref.object.sha }),
+      });
+    } catch (error) {
+      // Publishing the same version again carries on from the branch that's there.
+      if (!(error instanceof GitHubError) || !/already exists/i.test(error.message)) throw error;
+    }
+    for (const file of input.files) {
+      const path = file.path.split('/').map(encodeURIComponent).join('/');
+      let sha: string | undefined;
+      try {
+        const existing = (await (
+          await this.api(`/repos/${head}/contents/${path}?ref=${encodeURIComponent(input.branch)}`)
+        ).json()) as { sha?: string };
+        sha = existing.sha;
+      } catch {
+        // Not there yet, which is the usual case.
+      }
+      await this.api(`/repos/${head}/contents/${path}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          message: `${input.title}: ${file.path.split('/').pop()}`,
+          content: Buffer.from(file.text, 'utf8').toString('base64'),
+          branch: input.branch,
+          ...(sha ? { sha } : {}),
+        }),
+      });
+    }
+    const [headOwner] = head.split('/');
+    const headRef = head === upstream.full_name ? input.branch : `${headOwner}:${input.branch}`;
+    const open = await this.api(
+      `/repos/${upstream.full_name}/pulls?state=open&head=${encodeURIComponent(`${headOwner}:${input.branch}`)}`,
+    );
+    const found = ((await open.json()) as PullJson[])[0];
+    if (found) return { ...toPull(found), repo: upstream.full_name };
+    const response = await this.api(`/repos/${upstream.full_name}/pulls`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: input.title,
+        head: headRef,
+        base,
+        body: input.body,
+        maintainer_can_modify: true,
+      }),
+    });
+    return { ...toPull((await response.json()) as PullJson), repo: upstream.full_name };
+  }
+
+  /** A fork takes a moment to exist after GitHub agrees to make it. */
+  private async waitForRepo(fullName: string): Promise<void> {
+    const sleep = this.options.sleep ?? defaultSleep;
+    const never = new AbortController().signal;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        await this.api(`/repos/${fullName}/branches?per_page=1`);
+        return;
+      } catch {
+        await sleep(1500, never);
+      }
+    }
+    throw new GitHubError(
+      `GitHub hasn't finished making your fork, ${fullName}. Try again shortly.`,
+    );
+  }
+
+  /** How the checks on a commit are doing, from check runs and commit statuses together. */
+  async checks(repo: string, sha: string): Promise<CheckState> {
+    const [runs, status] = await Promise.all([
+      this.api(`/repos/${repo}/commits/${sha}/check-runs?per_page=100`).then(
+        (r) => r.json() as Promise<{ check_runs: { status: string; conclusion: string | null }[] }>,
+      ),
+      this.api(`/repos/${repo}/commits/${sha}/status`).then(
+        (r) => r.json() as Promise<{ state: string; total_count: number }>,
+      ),
+    ]);
+    const conclusions = runs.check_runs.map((r) =>
+      r.status === 'completed' ? r.conclusion : null,
+    );
+    if (runs.check_runs.length === 0 && status.total_count === 0) return null;
+    const bad = ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'];
+    if (conclusions.some((c) => c !== null && bad.includes(c)) || status.state === 'failure') {
+      return 'failing';
+    }
+    if (
+      conclusions.some((c) => c === null) ||
+      (status.total_count > 0 && status.state === 'pending')
+    ) {
+      return 'pending';
+    }
+    return 'passing';
+  }
+
+  private async poll(
+    clientId: string,
+    deviceCode: string,
+    interval: number,
+    code: GitHubDeviceCode,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const sleep = this.options.sleep ?? defaultSleep;
+    let wait = interval;
+    try {
+      while (!signal.aborted && this.now() < code.expiresAt) {
+        await sleep(wait * 1000, signal);
+        if (signal.aborted) return;
+        const response = await this.post(ACCESS_TOKEN_URL, {
+          client_id: clientId,
+          device_code: deviceCode,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        });
+        const body = (await response.json()) as {
+          access_token?: string;
+          error?: string;
+          error_description?: string;
+          interval?: number;
+        };
+        if (body.access_token) {
+          const user = await this.whoIs(body.access_token);
+          if (signal.aborted) return;
+          this.device = null;
+          this.save(body.access_token, user);
+          return;
+        }
+        if (body.error === 'authorization_pending') continue;
+        if (body.error === 'slow_down') {
+          wait = body.interval ?? wait + 5;
+          continue;
+        }
+        throw new GitHubError(
+          body.error === 'access_denied'
+            ? 'You cancelled the sign-in on GitHub'
+            : body.error === 'expired_token'
+              ? 'The code expired. Start again.'
+              : `GitHub didn't sign you in: ${body.error_description ?? body.error ?? 'no reason given'}`,
+        );
+      }
+      if (!signal.aborted) throw new GitHubError('The code expired. Start again.');
+    } catch (error) {
+      if (signal.aborted) return;
+      this.error = error instanceof Error ? error.message : String(error);
+      this.device = null;
+      this.emit('change');
+    }
+  }
+
+  private save(token: string, user: User): void {
+    this.options.secrets.set(GITHUB_TOKEN, token);
+    this.options.store.write(GITHUB_USER, user);
+    this.error = null;
+    this.emit('change');
+  }
+
+  private user(): User | null {
+    const value = this.options.store.read(GITHUB_USER) as Partial<User> | null | undefined;
+    return value && typeof value.login === 'string'
+      ? { login: value.login, name: typeof value.name === 'string' ? value.name : null }
+      : null;
+  }
+
+  private token(): string {
+    const token = this.options.secrets.get(GITHUB_TOKEN);
+    if (!token) throw new GitHubError('Sign in to GitHub first');
+    return token;
+  }
+
+  private async whoIs(token: string): Promise<User> {
+    const response = await this.api('/user', {}, token);
+    const body = (await response.json()) as { login: string; name: string | null };
+    return { login: body.login, name: body.name };
+  }
+
+  private async api(path: string, init: RequestInit = {}, token = this.token()): Promise<Response> {
+    let response: Response;
+    try {
+      response = await (this.options.fetch ?? fetch)(`${API}${path}`, {
+        ...init,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'clanks',
+          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+      });
+    } catch (error) {
+      throw new GitHubError(
+        `Couldn't reach GitHub: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (response.ok) return response;
+    const body = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      errors?: { message?: string }[];
+    };
+    const detail = body.errors?.[0]?.message ?? body.message ?? response.statusText;
+    if (response.status === 401) {
+      throw new GitHubError('GitHub turned the token down. Sign in again.');
+    }
+    throw new GitHubError(`GitHub said: ${detail}`);
+  }
+
+  private async post(url: string, body: Record<string, string>): Promise<Response> {
+    try {
+      return await (this.options.fetch ?? fetch)(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'clanks',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new GitHubError(
+        `Couldn't reach GitHub: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private now(): Date {
+    return this.options.now?.() ?? new Date();
+  }
+}
+
+/**
+ * git's environment for talking to GitHub as the user: the token goes in a header set through
+ * environment variables, which git reads for this one command and never saves.
+ */
+export function authEnv(token: string): Record<string, string> {
+  const basic = Buffer.from(`x-access-token:${token}`).toString('base64');
+  return {
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+  };
+}
+
+interface PullJson {
+  number: number;
+  html_url: string;
+  state: 'open' | 'closed';
+  merged?: boolean;
+  merged_at?: string | null;
+  mergeable?: boolean | null;
+  head: { sha: string };
+}
+
+function toPull(json: PullJson): PullRequest {
+  return {
+    number: json.number,
+    url: json.html_url,
+    state: json.merged || json.merged_at ? 'merged' : json.state,
+    head: json.head.sha,
+    mergeable: json.mergeable ?? null,
+  };
+}
+
+function toRepo(json: RepoJson): GitHubRepo {
+  return {
+    fullName: json.full_name,
+    name: json.name,
+    owner: json.owner.login,
+    description: json.description ?? '',
+    private: json.private,
+    defaultBranch: json.default_branch,
+    url: json.html_url,
+    pushedAt: json.pushed_at ? new Date(json.pushed_at) : null,
+  };
+}
+
+function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}

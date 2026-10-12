@@ -1,0 +1,34 @@
+id: vercel
+name: Vercel
+summary: Projects, deployments and their build logs, and promoting a deployment to production.
+hosts: [api.vercel.com]
+auth:
+  type: api_key
+  header: Authorization
+  format: 'Bearer {secret}'
+  label: Access token
+  hint: vercel.com/account/tokens. Scope the token to the one team it should reach.
+openapi: openapi.yaml
+check: get_user
+account: user.username
+operations:
+  - { id: get_user, op: 'GET /v2/user', risk: read }
+  - { id: list_teams, op: 'GET /v2/teams', risk: read }
+  - { id: list_projects, op: 'GET /v9/projects', risk: read }
+  - { id: get_project, op: 'GET /v9/projects/{idOrName}', risk: read }
+  - { id: list_domains, op: 'GET /v9/projects/{idOrName}/domains', risk: read }
+  - { id: list_deployments, op: 'GET /v6/deployments', risk: read }
+  - { id: get_deployment, op: 'GET /v13/deployments/{idOrUrl}', risk: read }
+  - { id: get_build_logs, op: 'GET /v3/deployments/{idOrUrl}/events', risk: read }
+  - {
+      id: cancel_deployment,
+      op: 'PATCH /v12/deployments/{id}/cancel',
+      risk: write,
+      verify: get_deployment,
+    }
+  # Promoting puts a deployment in front of the site's visitors.
+  - id: promote_deployment
+    op: 'POST /v10/projects/{projectId}/promote/{deploymentId}'
+    risk: outbound
+    verify: get_deployment
+guide: guide.md
