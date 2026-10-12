@@ -5,7 +5,9 @@ import {
   type ModelChoice,
   type NewProject,
   SAMPLE_TEMPLATE,
+  suggestFolder,
   suggestKey,
+  suggestName,
 } from '@clanks/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
@@ -13,33 +15,51 @@ import { Avatar } from '../components/Avatar';
 import { ModelPicker } from '../components/ModelPicker';
 import { RepoPicker } from '../components/project/GitHub';
 import { GitLabRepoPicker } from '../components/project/GitLab';
-import { Button, ErrorText, FolderIcon, Switch, inputClass } from '../components/ui';
-import { useCrew } from '../lib/crew';
+import {
+  Button,
+  Chip,
+  Disclosure,
+  ErrorText,
+  FolderIcon,
+  PageHeader,
+  Switch,
+  inputClass,
+} from '../components/ui';
+import { plainJob, useCrew } from '../lib/crew';
 import { useModels } from '../lib/models';
 import { useNav } from '../lib/nav';
 import { joinPath } from '../lib/projects';
 import { useTRPC } from '../lib/trpc';
 
 const FOLDER_NOTES = {
-  ready: 'A git repository. The crew works on copies of it, each on a branch of its own.',
+  ready:
+    "Good to go. The crew works on its own copies of it, so nothing in it changes until you've approved it.",
   not_repo:
-    "Not a git repository yet. clanks will make it one and commit what's in it, so the crew can work on copies.",
-  no_commits: "A repository with nothing committed yet. clanks will commit what's in it.",
-  no_git: "git isn't installed. The crew needs it to work on copies of the folder.",
+    'clanks will start keeping track of changes in this folder (with git), so the crew can work on copies of it and you approve each change.',
+  no_commits:
+    "clanks will save what's in this folder as its starting point, so the crew can work on copies of it.",
+  no_git:
+    "This computer doesn't have git yet, a free tool the crew uses to keep track of its changes. Install it from git-scm.com, then choose the folder again.",
   missing: "That folder isn't there.",
 } as const;
 
-/** Name it, pick a workspace, pick the crew, pick the models. */
-export function NewProjectPage() {
+type Source = 'new' | 'folder' | 'github' | 'gitlab';
+
+/**
+ * A project with every choice on show, for when Home's one box isn't enough: where it lives, who's
+ * on it and what they run on. Only what it's about is asked for; the rest has an answer already.
+ */
+export function NewProjectPage(props: { idea: string; templateId: string | null }) {
   const trpc = useTRPC();
   const { go } = useNav();
   const crew = useCrew();
   const snapshot = useModels();
-  const [name, setName] = useState('');
-  const [brief, setBrief] = useState('');
+  const [brief, setBrief] = useState(props.idea);
+  const [typedName, setName] = useState<string | null>(null);
+  const name = typedName ?? (brief.trim() ? suggestName(brief) : '');
   const [key, setKey] = useState<string | null>(null);
   const shownKey = key ?? suggestKey(name || 'Project');
-  const [source, setSource] = useState<'folder' | 'github' | 'gitlab'>('folder');
+  const [source, setSource] = useState<Source>('new');
   const [folder, setFolder] = useState<string | null>(null);
   const [repo, setRepo] = useState<GitHubRepo | null>(null);
   const [into, setInto] = useState<string | null>(null);
@@ -53,13 +73,18 @@ export function NewProjectPage() {
   const templates = (useQuery(trpc.projects.templates.queryOptions()).data ?? []).filter(
     (t) => t.id !== SAMPLE_TEMPLATE,
   );
-  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [templateId, setTemplateId] = useState<string | null>(props.templateId);
   const template = templates.find((t) => t.id === templateId) ?? null;
   const [notes, setNotes] = useState<{ projectId: string; notes: string[] } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
 
   const check = useQuery(
     trpc.projects.checkFolder.queryOptions(folder ?? '', { enabled: folder !== null }),
   );
+  // Where a folder made for it would go, to say so before it's made.
+  const slug = suggestFolder(name || 'project');
+  const newFolder = useQuery(trpc.projects.cloneFolder.queryOptions(slug));
   const cloneFolder = useQuery(
     trpc.projects.cloneFolder.queryOptions(repo?.name ?? 'repo', { enabled: repo !== null }),
   );
@@ -71,64 +96,86 @@ export function NewProjectPage() {
       onSuccess: (path) => path && repo && setInto(joinPath(path, repo.name)),
     }),
   );
-  const createBlank = useMutation(
-    trpc.projects.create.mutationOptions({
-      onSuccess: (project) => go({ page: 'project', id: project.id, tab: 'board' }),
-    }),
-  );
-  const createFromTemplate = useMutation(
-    trpc.projects.createFromTemplate.mutationOptions({
-      onSuccess: (started) => {
-        // Something couldn't be started: say so before moving on, since the project is there.
-        if (started.notes.length > 0) {
-          setNotes({ projectId: started.project.id, notes: started.notes });
-        } else if (started.conversationId) go({ page: 'chat', id: started.conversationId });
-        else go({ page: 'project', id: started.project.id, tab: 'board' });
-      },
-    }),
-  );
-  const create = template ? createFromTemplate : createBlank;
+  const makeFolder = useMutation(trpc.projects.makeFolder.mutationOptions());
+  const createBlank = useMutation(trpc.projects.create.mutationOptions());
+  const createFromTemplate = useMutation(trpc.projects.createFromTemplate.mutationOptions());
+  const startChat = useMutation(trpc.chat.start.mutationOptions());
 
   const clonePath = into ?? cloneFolder.data ?? null;
   const keyValid = /^[A-Z][A-Z0-9]{1,5}$/.test(shownKey);
   const workspaceReady =
-    source === 'folder'
-      ? folder !== null &&
-        check.data !== undefined &&
-        !['no_git', 'missing'].includes(check.data.status)
-      : repo !== null && clonePath !== null;
-  const ready = name.trim() !== '' && keyValid && workspaceReady && !create.isPending;
+    source === 'new'
+      ? true
+      : source === 'folder'
+        ? folder !== null &&
+          check.data !== undefined &&
+          !['no_git', 'missing'].includes(check.data.status)
+        : repo !== null && clonePath !== null;
+  const ready = name.trim() !== '' && keyValid && workspaceReady && !starting;
   const chosen = crew.filter((c) => c.id === LEAD_CLANK || members.has(c.id));
 
-  const submit = () => {
-    const project: NewProject = {
-      name: name.trim(),
-      brief: brief.trim(),
-      key: shownKey,
-      workspace:
-        source === 'folder'
-          ? { kind: 'folder', path: folder! }
-          : { kind: source, repo: repo!.fullName, into: clonePath! },
-      crew: chosen.map((c) => c.id),
-      model,
-      models: perClank
-        ? Object.fromEntries(
-            Object.entries(models).filter(([id]) => chosen.some((c) => c.id === id)),
-          )
-        : {},
-    };
-    if (template) createFromTemplate.mutate({ project, templateId: template.id });
-    else createBlank.mutate(project);
+  const submit = async () => {
+    setStarting(true);
+    setFailure(null);
+    try {
+      const project: NewProject = {
+        name: name.trim(),
+        brief: brief.trim().split(/\s+/).join(' ').slice(0, 500),
+        key: shownKey,
+        workspace:
+          source === 'new'
+            ? { kind: 'folder', path: await makeFolder.mutateAsync(name.trim()) }
+            : source === 'folder'
+              ? { kind: 'folder', path: folder! }
+              : { kind: source, repo: repo!.fullName, into: clonePath! },
+        crew: chosen.map((c) => c.id),
+        model,
+        models: perClank
+          ? Object.fromEntries(
+              Object.entries(models).filter(([id]) => chosen.some((c) => c.id === id)),
+            )
+          : {},
+      };
+      if (template) {
+        const started = await createFromTemplate.mutateAsync({ project, templateId: template.id });
+        // Something couldn't be started: say so before moving on, since the project is there.
+        if (started.notes.length > 0) {
+          setNotes({ projectId: started.project.id, notes: started.notes });
+        } else if (started.conversationId) {
+          go({ page: 'chat', id: started.conversationId, projectId: started.project.id });
+        } else go({ page: 'project', id: started.project.id, tab: 'overview' });
+        return;
+      }
+      const made = await createBlank.mutateAsync(project);
+      // What it's about is the first thing Atlas hears, so the user lands in a conversation.
+      if (brief.trim()) {
+        try {
+          const { conversation } = await startChat.mutateAsync({
+            clankId: LEAD_CLANK,
+            text: brief.trim(),
+            projectId: made.id,
+          });
+          go({ page: 'chat', id: conversation.id, projectId: made.id });
+          return;
+        } catch {
+          // The project is there all the same, and its overview says what Atlas needs.
+        }
+      }
+      go({ page: 'project', id: made.id, tab: 'overview' });
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      setStarting(false);
+    }
   };
 
   if (notes) {
     return (
       <div className="relative mx-auto flex max-w-3xl flex-col gap-6 px-10 py-12">
-        <header className="flex flex-col gap-2">
-          <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase">New project</p>
-          <h1 className="text-3xl font-semibold tracking-[-0.03em]">The project is made</h1>
-          <p className="text-dim">Not everything the template starts with could be done:</p>
-        </header>
+        <PageHeader
+          title="The project is made"
+          description="Not everything it starts with could be done:"
+        />
         <ul className="flex list-disc flex-col gap-2 pl-5 text-sm text-amber-100">
           {notes.notes.map((note) => (
             <li key={note}>{note}</li>
@@ -137,7 +184,7 @@ export function NewProjectPage() {
         <div>
           <Button
             variant="primary"
-            onClick={() => go({ page: 'project', id: notes.projectId, tab: 'board' })}
+            onClick={() => go({ page: 'project', id: notes.projectId, tab: 'overview' })}
           >
             Open the project
           </Button>
@@ -148,127 +195,99 @@ export function NewProjectPage() {
 
   return (
     <div className="relative mx-auto flex max-w-3xl flex-col gap-6 px-10 py-12">
-      <header className="flex flex-col gap-2">
-        <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase">New project</p>
-        <h1 className="text-3xl font-semibold tracking-[-0.03em]">
-          Every project gets its own crew
-        </h1>
-        <p className="text-dim">
-          Name it, give it a workspace, and pick who works on it. Atlas leads, and talks the idea
-          through with you before anything is built.
-        </p>
-      </header>
+      <PageHeader
+        title="Start a project"
+        description="Say what you're making. Atlas, who leads the crew, talks it through with you before anything is made. Everything below has a sensible answer already, so change only what you want to."
+      />
 
-      {templates.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <p className="text-[11px] font-medium tracking-[0.15em] text-dim uppercase">Start from</p>
-          <div className="grid grid-cols-3 gap-2">
-            <Choice
-              active={template === null}
-              onClick={() => setTemplateId(null)}
-              title="A blank project"
-            >
-              Talk the idea through with Atlas, and go from there.
-            </Choice>
+      <Step title="What are you making?">
+        {templates.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            <Chip active={template === null} onClick={() => setTemplateId(null)}>
+              Anything
+            </Chip>
             {templates.map((t) => (
-              <Choice
+              <Chip
                 key={t.id}
                 active={template?.id === t.id}
+                title={t.summary}
                 onClick={() => {
                   setTemplateId(t.id);
                   // The crew it wants, which can still be changed below.
                   setMembers(new Set(t.crew));
                 }}
-                title={t.name}
               >
-                {t.summary}
-              </Choice>
+                {t.name}
+              </Chip>
             ))}
           </div>
-          {template && (
-            <p className="text-[12px] text-dim">
-              {template.tickets.length > 0
-                ? `It puts ${template.tickets.length} ${template.tickets.length === 1 ? 'ticket' : 'tickets'} on the board straight away. `
-                : ''}
-              {template.kickoff
-                ? 'Atlas is told what you want, from what you write below, and takes it from there in a chat you can read and steer.'
-                : ''}
-              {template.source === 'marketplace' ? ' From the marketplace.' : ''}
-            </p>
-          )}
-        </section>
-      )}
-
-      <Step number={1} title="Name it">
-        <div className="grid grid-cols-[1fr_8rem] gap-3">
+        )}
+        <textarea
+          autoFocus
+          rows={3}
+          aria-label="What you're making"
+          placeholder={
+            template?.ask
+              ? `${template.ask}${template.example ? ` For example: ${template.example}` : ''}`
+              : 'In your own words. For example: a website for my surf shop that shows our boards and takes bookings for lessons.'
+          }
+          className={`${inputClass} h-auto resize-none py-3 text-[15px] leading-relaxed`}
+          value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+        />
+        {template && (
+          <p className="text-[13px] text-dim">
+            {template.summary}
+            {template.source === 'marketplace' ? ' From the marketplace.' : ''}
+          </p>
+        )}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[13px] text-dim">Its name</span>
           <input
-            autoFocus
             aria-label="Project name"
             placeholder="Surf shop"
             className={inputClass}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <input
-            aria-label="Ticket key letters"
-            title="Tickets in this project are numbered with these letters"
-            className={`${inputClass} font-mono uppercase`}
-            value={shownKey}
-            onChange={(e) =>
-              setKey(
-                e.target.value
-                  .toUpperCase()
-                  .replace(/[^A-Z0-9]/g, '')
-                  .slice(0, 6),
-              )
-            }
-          />
-        </div>
-        <input
-          aria-label="What you're making"
-          placeholder={
-            template?.ask
-              ? `${template.ask}${template.example ? ` Such as: ${template.example}` : ''}`
-              : "A line about what you're making: a website that sells surf boards"
-          }
-          className={inputClass}
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-        />
-        <p className="text-[12px] text-dim">
-          Tickets will be numbered{' '}
-          <span className="font-mono text-white/80">{keyValid ? `${shownKey}-1` : '…'}</span>,{' '}
-          <span className="font-mono text-white/80">{keyValid ? `${shownKey}-2` : '…'}</span>.
-          {!keyValid && ' Use 2 to 6 letters or digits, starting with a letter.'}
-        </p>
+        </label>
       </Step>
 
-      <Step number={2} title="Pick a workspace">
-        <div className="grid grid-cols-3 gap-2">
-          <Choice active={source === 'folder'} onClick={() => setSource('folder')} title="A folder">
-            A folder on this computer, for code or anything else.
-          </Choice>
+      <Step title="Where should it live?">
+        <div className="flex flex-wrap gap-1.5">
           {(
             [
+              ['new', 'A new folder'],
+              ['folder', 'A folder I have'],
               ['github', 'GitHub'],
               ['gitlab', 'GitLab'],
             ] as const
-          ).map(([host, title]) => (
-            <Choice
-              key={host}
-              active={source === host}
+          ).map(([id, label]) => (
+            <Chip
+              key={id}
+              active={source === id}
               onClick={() => {
-                setSource(host);
                 // A repository picked on one host isn't on the other.
-                if (source !== host) setRepo(null);
+                if (source !== id) setRepo(null);
+                setSource(id);
               }}
-              title={title}
             >
-              One of your repositories, or a new one, cloned here.
-            </Choice>
+              {label}
+            </Chip>
           ))}
         </div>
-        {source === 'folder' ? (
+        {source === 'new' ? (
+          <p className="text-sm text-dim">
+            clanks makes a folder for it
+            {newFolder.data && (
+              <>
+                {' '}
+                at <span className="font-mono text-[13px] text-white/80">{newFolder.data}</span>
+              </>
+            )}
+            . Everything the crew makes ends up there.
+          </p>
+        ) : source === 'folder' ? (
           <div className="flex flex-col gap-2">
             <span className="flex items-center gap-3">
               <Button onClick={() => chooseFolder.mutate({ title: 'Project folder' })}>
@@ -287,6 +306,10 @@ export function NewProjectPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
+            <p className="text-sm text-dim">
+              One of your repositories, or a new one, copied to this computer. The crew opens a pull
+              request for each piece of work.
+            </p>
             {source === 'gitlab' ? (
               <GitLabRepoPicker
                 value={repo}
@@ -294,9 +317,7 @@ export function NewProjectPage() {
                   setRepo(next);
                   setInto(null);
                 }}
-                suggestedName={(name.trim() || 'project')
-                  .toLowerCase()
-                  .replace(/[^a-z0-9._-]+/g, '-')}
+                suggestedName={slug}
               />
             ) : (
               <RepoPicker
@@ -305,14 +326,12 @@ export function NewProjectPage() {
                   setRepo(next);
                   setInto(null);
                 }}
-                suggestedName={(name.trim() || 'project')
-                  .toLowerCase()
-                  .replace(/[^a-z0-9._-]+/g, '-')}
+                suggestedName={slug}
               />
             )}
             {repo && clonePath && (
               <span className="flex items-center gap-3 text-sm">
-                <span className="text-dim">Clone into</span>
+                <span className="text-dim">Copied into</span>
                 <span className="min-w-0 truncate font-mono text-[13px]">{clonePath}</span>
                 <Button
                   size="sm"
@@ -327,20 +346,18 @@ export function NewProjectPage() {
         )}
       </Step>
 
-      <Step number={3} title="Pick the crew">
+      <Step title="Who's on it?">
         {crews.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[13px] text-dim">Start from a crew:</span>
+            <span className="text-[13px] text-dim">A ready-made crew:</span>
             {crews.map((preset) => (
-              <button
+              <Chip
                 key={preset.id}
-                type="button"
                 onClick={() => setMembers(new Set(preset.clanks))}
                 title={`${preset.clanks.length} clanks${preset.integrations.length ? `, expecting ${preset.integrations.join(', ')}` : ''}`}
-                className="rounded-full border border-line px-3 py-1 text-[13px] text-dim transition-colors hover:border-accent/50 hover:text-white"
               >
                 {preset.name}
-              </button>
+              </Chip>
             ))}
           </div>
         )}
@@ -350,84 +367,114 @@ export function NewProjectPage() {
             const on = lead || members.has(clank.id);
             return (
               <li key={clank.id}>
-                <label
-                  className={`flex h-full cursor-pointer items-start gap-3 rounded-2xl border p-3 transition-colors ${on ? 'border-accent/40 bg-accent/[0.06]' : 'border-line hover:bg-white/[0.03]'} ${lead ? 'cursor-default' : ''}`}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={on}
+                  disabled={lead}
+                  title={clank.summary}
+                  onClick={() =>
+                    setMembers((current) => {
+                      const next = new Set(current);
+                      if (on) next.delete(clank.id);
+                      else next.add(clank.id);
+                      return next;
+                    })
+                  }
+                  className={`flex h-full w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition-colors ${on ? 'border-accent/40 bg-accent/[0.06]' : 'border-line opacity-60 hover:opacity-100'} ${lead ? 'cursor-default' : ''}`}
                 >
                   <Avatar colour={clank.avatar} />
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="flex items-baseline gap-2 text-sm">
-                      <span className="font-medium">{clank.name}</span>
-                      <span className="text-[12px] text-dim">{clank.role}</span>
-                    </span>
-                    <span className="text-[12px] leading-snug text-white/60">
-                      {lead ? 'Leads every project, so always in.' : clank.summary}
+                    <span className="text-sm font-medium">{clank.name}</span>
+                    <span className="truncate text-[12px] text-dim">
+                      {lead ? 'Leads every project' : plainJob(clank)}
                     </span>
                   </span>
-                  <input
-                    type="checkbox"
-                    className="mt-1 accent-[#b9a7ff]"
-                    checked={on}
-                    disabled={lead}
-                    onChange={(e) =>
-                      setMembers((current) => {
-                        const next = new Set(current);
-                        if (e.target.checked) next.add(clank.id);
-                        else next.delete(clank.id);
-                        return next;
-                      })
-                    }
-                  />
-                </label>
+                  <span
+                    className={`grid size-5 shrink-0 place-items-center rounded-full border text-[11px] ${on ? 'border-accent bg-accent text-black' : 'border-line text-transparent'}`}
+                  >
+                    ✓
+                  </span>
+                </button>
               </li>
             );
           })}
         </ul>
       </Step>
 
-      <Step number={4} title="Pick the models">
-        <p className="text-sm text-dim">
-          One model for the whole crew, or a different one for each clank. You can change these any
-          time in the project's settings.
-        </p>
-        <ModelPicker
-          value={model}
-          onChange={setModel}
-          emptyLabel={`Each clank's own, or the crew's model${snapshot?.crewModel ? ` (${snapshot.crewModel})` : ''}`}
-        />
-        <label className="flex items-center gap-3 text-sm">
-          <Switch checked={perClank} onChange={setPerClank} label="A model per clank" />A model per
-          clank
-        </label>
-        {perClank && (
-          <ul className="flex flex-col gap-2">
-            {chosen.map((clank) => (
-              <li key={clank.id} className="grid grid-cols-[8rem_1fr] items-center gap-3">
-                <span className="flex items-center gap-2 text-sm">
-                  <Avatar colour={clank.avatar} size="xs" /> {clank.name}
-                </span>
-                <ModelPicker
-                  value={models[clank.id] ?? null}
-                  onChange={(choice) =>
-                    setModels((current) => {
-                      const next = { ...current };
-                      if (choice) next[clank.id] = choice;
-                      else delete next[clank.id];
-                      return next;
-                    })
-                  }
-                  emptyLabel="The project's model"
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </Step>
+      <Disclosure summary="More options: the model each clank runs on, and how tickets are numbered">
+        <div className="flex flex-col gap-6 rounded-3xl border border-line bg-panel/60 p-7">
+          <div className="flex flex-col gap-3">
+            <h3 className="text-sm font-medium">Models</h3>
+            <p className="text-sm text-dim">
+              One model for the whole crew, or a different one for each clank. You can change these
+              any time in the project's settings.
+            </p>
+            <ModelPicker
+              value={model}
+              onChange={setModel}
+              emptyLabel={`Each clank's own, or the crew's model${snapshot?.crewModel ? ` (${snapshot.crewModel})` : ''}`}
+            />
+            <label className="flex items-center gap-3 text-sm">
+              <Switch checked={perClank} onChange={setPerClank} label="A model per clank" />A model
+              per clank
+            </label>
+            {perClank && (
+              <ul className="flex flex-col gap-2">
+                {chosen.map((clank) => (
+                  <li key={clank.id} className="grid grid-cols-[8rem_1fr] items-center gap-3">
+                    <span className="flex items-center gap-2 text-sm">
+                      <Avatar colour={clank.avatar} size="xs" /> {clank.name}
+                    </span>
+                    <ModelPicker
+                      value={models[clank.id] ?? null}
+                      onChange={(choice) =>
+                        setModels((current) => {
+                          const next = { ...current };
+                          if (choice) next[clank.id] = choice;
+                          else delete next[clank.id];
+                          return next;
+                        })
+                      }
+                      emptyLabel="The project's model"
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="flex flex-col gap-3">
+            <h3 className="text-sm font-medium">Ticket numbers</h3>
+            <div className="flex items-center gap-3">
+              <input
+                aria-label="Ticket key letters"
+                className={`${inputClass} w-28 font-mono uppercase`}
+                value={shownKey}
+                onChange={(e) =>
+                  setKey(
+                    e.target.value
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]/g, '')
+                      .slice(0, 6),
+                  )
+                }
+              />
+              <p className="text-[13px] text-dim">
+                Each piece of work gets a short number to call it by:{' '}
+                <span className="font-mono text-white/80">{keyValid ? `${shownKey}-1` : '…'}</span>,{' '}
+                <span className="font-mono text-white/80">{keyValid ? `${shownKey}-2` : '…'}</span>.
+                {!keyValid && ' Use 2 to 6 letters or digits, starting with a letter.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </Disclosure>
 
       <div className="flex items-center gap-3">
-        <Button variant="primary" disabled={!ready} onClick={submit}>
-          {create.isPending
-            ? source !== 'folder'
-              ? `Cloning ${repo?.name ?? ''}…`
+        <Button variant="primary" size="lg" disabled={!ready} onClick={() => void submit()}>
+          {starting
+            ? source === 'github' || source === 'gitlab'
+              ? `Copying ${repo?.name ?? ''}…`
               : 'Setting it up…'
             : 'Start the project'}
         </Button>
@@ -435,40 +482,16 @@ export function NewProjectPage() {
           Cancel
         </Button>
       </div>
-      {create.error && <ErrorText>{create.error.message}</ErrorText>}
+      {failure && <ErrorText>{failure}</ErrorText>}
     </div>
   );
 }
 
-function Step(props: { number: number; title: string; children: ReactNode }) {
+function Step(props: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-4 rounded-3xl border border-line bg-panel/60 p-7 backdrop-blur-xl">
-      <h2 className="flex items-center gap-3 text-lg font-medium tracking-tight">
-        <span className="grid size-6 place-items-center rounded-full border border-line font-mono text-[11px] text-dim">
-          {props.number}
-        </span>
-        {props.title}
-      </h2>
+      <h2 className="text-lg font-medium tracking-tight">{props.title}</h2>
       {props.children}
     </section>
-  );
-}
-
-function Choice(props: {
-  active: boolean;
-  onClick: () => void;
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={props.active}
-      onClick={props.onClick}
-      className={`flex flex-col gap-1 rounded-2xl border p-4 text-left transition-colors ${props.active ? 'border-accent/50 bg-accent/[0.08]' : 'border-line hover:bg-white/[0.03]'}`}
-    >
-      <span className="text-sm font-medium">{props.title}</span>
-      <span className="text-[13px] text-white/60">{props.children}</span>
-    </button>
   );
 }

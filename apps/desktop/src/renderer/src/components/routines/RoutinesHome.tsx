@@ -1,26 +1,9 @@
 import type { RoutinesOverview } from '@clanks/core';
 import { useSubscription } from '@trpc/tanstack-react-query';
-import type { ReactNode } from 'react';
 import { useNav } from '../../lib/nav';
 import { ACTION_STATUS, fromNow, useNow } from '../../lib/routines';
 import { useTRPC } from '../../lib/trpc';
-import { Dot } from '../ui';
-
-function Card(props: { title: string; tone?: 'amber'; count?: number; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-3 rounded-2xl border border-line bg-panel/60 p-5">
-      <p
-        className={`flex items-center gap-2 font-mono text-xs tracking-[0.2em] uppercase ${props.tone === 'amber' ? 'text-amber-200' : 'text-accent'}`}
-      >
-        {props.title}
-        {props.count !== undefined && props.count > 0 && (
-          <span className="text-white/60">{props.count}</span>
-        )}
-      </p>
-      {props.children}
-    </section>
-  );
-}
+import { Dot, SectionCard } from '../ui';
 
 /** Routines across every project, on Home: what waits on the user, and what's coming up. */
 export function RoutinesHome() {
@@ -37,7 +20,7 @@ export function RoutinesHome() {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {overview.needs.length > 0 && (
-        <Card title="Routines need you" tone="amber" count={overview.needs.length}>
+        <SectionCard title="Routines need you" tone="amber" count={overview.needs.length}>
           <ul className="flex flex-col gap-1">
             {overview.needs.map((need) => (
               <li key={`${need.kind}:${need.actionId ?? need.runId ?? need.routineId}`}>
@@ -54,10 +37,10 @@ export function RoutinesHome() {
               </li>
             ))}
           </ul>
-        </Card>
+        </SectionCard>
       )}
       {overview.coming.length > 0 && (
-        <Card title={overview.paused ? 'Scheduled (paused)' : 'Scheduled'}>
+        <SectionCard title={overview.paused ? 'Scheduled (paused)' : 'Scheduled'}>
           <ul className="flex flex-col gap-1">
             {overview.coming.slice(0, 8).map((item) => (
               <li key={`${item.kind}:${item.actionId ?? `${item.routineId}:${+item.at}`}`}>
@@ -83,7 +66,7 @@ export function RoutinesHome() {
               </li>
             ))}
           </ul>
-        </Card>
+        </SectionCard>
       )}
     </div>
   );

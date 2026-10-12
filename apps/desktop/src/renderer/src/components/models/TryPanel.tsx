@@ -79,10 +79,10 @@ export function TryPanel({
   return (
     <Panel
       title="Try a model"
-      description="Ask it something. It answers here, on this machine, even with the network off."
+      description="Ask it something. It answers here, on this computer, even with no internet."
     >
       {library.length === 0 ? (
-        <p className="text-sm text-dim">Pull a model to try it.</p>
+        <p className="text-sm text-dim">Download a model to try it.</p>
       ) : (
         <form onSubmit={send} className="flex flex-col gap-3">
           <div className="flex gap-2">

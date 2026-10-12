@@ -251,4 +251,30 @@ describe('pictures from tools', () => {
       ],
     });
   });
+
+  it("go after the user's words when the user sent them, and alone when there are no words", () => {
+    expect(
+      toOpenAIMessages([
+        { role: 'user', content: 'What is this?', images: [picture] },
+        { role: 'assistant', content: 'A surfboard.' },
+        { role: 'user', content: '', images: [picture, picture] },
+      ]),
+    ).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is this?' },
+          { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } },
+        ],
+      },
+      { role: 'assistant', content: 'A surfboard.' },
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } },
+          { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } },
+        ],
+      },
+    ]);
+  });
 });

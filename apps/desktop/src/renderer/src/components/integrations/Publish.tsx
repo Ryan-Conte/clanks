@@ -89,7 +89,11 @@ export function Publish({ kind, id }: { kind: 'clank' | 'integration'; id: strin
             ))}
           </ul>
           {!data.publisher && (
-            <Button size="sm" className="self-start" onClick={() => go({ page: 'settings' })}>
+            <Button
+              size="sm"
+              className="self-start"
+              onClick={() => go({ page: 'settings', section: 'connections' })}
+            >
               Open Settings
             </Button>
           )}

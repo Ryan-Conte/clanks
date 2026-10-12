@@ -17,14 +17,14 @@ import {
   sourcesOf,
 } from '@clanks/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { TYPE_LABELS, namer } from '../../lib/board';
 import { useCrew } from '../../lib/crew';
 import { formatAgo, formatBytes } from '../../lib/format';
 import { useTRPC } from '../../lib/trpc';
 import { CopyButton, Markdown } from '../chat/Markdown';
 import { CampaignSchedule } from '../routines/CampaignSchedule';
-import { Badge, Button, ErrorText, IconButton, XIcon, inputClass } from '../ui';
+import { Badge, Button, ErrorText, IconButton, XIcon, Zoomable, inputClass } from '../ui';
 
 const EXPORT_LABELS: Record<DocumentExport, string> = {
   md: 'Markdown',
@@ -126,6 +126,119 @@ export function WrittenOutput({ card, snapshot }: { card: TicketCard; snapshot: 
   );
 }
 
+/**
+ * A document as a page, the way its PDF prints, shown where it's being read. A long one is folded
+ * to `fold` rem with a way to open it in place, so a conversation isn't all one document.
+ */
+export function Paper(props: { text: string; meta?: string; fold: number }) {
+  const [open, setOpen] = useState(false);
+  const [tall, setTall] = useState(false);
+  const page = useRef<HTMLDivElement>(null);
+  const { text, fold } = props;
+  // Whether there's more than the fold shows is known once it's drawn.
+  useLayoutEffect(() => {
+    const el = page.current;
+    if (el) setTall(el.scrollHeight > fold * 16 + 48);
+  }, [text, fold]);
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return (
+    <div className="paper relative overflow-hidden rounded-xl shadow-lg shadow-black/40">
+      <div
+        ref={page}
+        className="overflow-hidden px-8 py-7"
+        style={open || !tall ? undefined : { maxHeight: `${fold}rem` }}
+      >
+        {props.meta && <p className="mb-4 text-[11px] text-[#6a6a75]">{props.meta}</p>}
+        <Markdown text={text} />
+      </div>
+      {tall && (
+        <div
+          className={`flex justify-center pb-4 ${open ? 'pt-1' : 'absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white to-transparent pt-16'}`}
+        >
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            className="rounded-full border border-[#d0d0d8] bg-white px-4 py-1.5 text-[13px] font-medium text-[#16161a] shadow-sm transition-colors hover:bg-[#f1f1f5]"
+          >
+            {open ? 'Fold it away' : `Read all of it (${words.toLocaleString('en')} words)`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A written hand-in in full, right where it's shown: the document as a page, an email with who
+ * it goes to, a research note with its sources and the pages they were read from, a campaign with
+ * its posts. Nothing has to be opened somewhere else to judge it.
+ */
+export function WrittenInline(props: {
+  card: TicketCard;
+  snapshot: BoardSnapshot;
+  /** How much of a long document shows before it's opened, in rem. */
+  fold: number;
+}) {
+  const { card, snapshot } = props;
+  const [scheduling, setScheduling] = useState(false);
+  const artifacts = useArtifacts(card);
+  const output = card.output;
+  if (!output || !isWrittenOutput(card.type)) return null;
+  const document = outputDocument(output);
+  const warnings = Array.isArray(output.warnings)
+    ? output.warnings.filter((w): w is string => typeof w === 'string')
+    : [];
+  const email = emailOf(output);
+  const posts = postsOf(output);
+  const others = artifacts.filter((a) => !document || a.name !== document.name);
+  const text = document?.text ?? '';
+
+  return (
+    <div className="flex flex-col gap-3">
+      {email ? (
+        <EmailView card={card} />
+      ) : (
+        text && (
+          <Paper
+            text={card.type === 'copy' ? keepLineBreaks(text) : text}
+            meta={`${snapshot.project.name} · ${card.key}`}
+            fold={props.fold}
+          />
+        )
+      )}
+      {warnings.length > 0 && (
+        <ul className="flex flex-col gap-1 rounded-xl border border-amber-300/20 bg-amber-300/[0.04] px-3 py-2 text-[12px] text-amber-100/90">
+          {warnings.map((warning, i) => (
+            <li key={i}>{warning}</li>
+          ))}
+        </ul>
+      )}
+      {card.type === 'research' && <Sources card={card} />}
+      {card.type === 'campaign' && <Posts posts={posts} projectId={snapshot.project.id} />}
+      {card.sent?.at && email === null && (
+        <p className="text-[12px] text-accent-2">
+          Sent {formatAgo(new Date(card.sent.at))} from {card.sent.from} to{' '}
+          {card.sent.to.join(', ')}.
+        </p>
+      )}
+      {!email && text && <ExportButtons card={card} />}
+      {card.type === 'campaign' && posts.length > 0 && card.outcome === 'approved' && (
+        <span className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="primary" onClick={() => setScheduling(true)}>
+            Schedule the posts
+          </Button>
+          <span className="text-[12px] text-dim">
+            Each post with a time and an account goes out then, once you've approved it as shown.
+          </span>
+        </span>
+      )}
+      {scheduling && <CampaignSchedule card={card} onClose={() => setScheduling(false)} />}
+      {others.length > 0 && <Files artifacts={others} />}
+    </div>
+  );
+}
+
 /** The first lines of a piece of writing, without its Markdown marks. */
 function preview(text: string): string {
   return text
@@ -146,7 +259,7 @@ function ExportButtons({ card, version }: { card: TicketCard; version?: string |
   return (
     <div className="flex flex-col gap-1.5">
       <span className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] text-dim">Export</span>
+        <span className="text-[11px] text-dim">Save as</span>
         {formats.map((format) => (
           <Button
             key={format}
@@ -569,7 +682,7 @@ function ShotPicture({ artifact, alt }: { artifact: string; alt: string }) {
   const picture = useQuery(trpc.artifacts.picture.queryOptions(artifact, { staleTime: Infinity }));
   if (!picture.data) return null;
   return (
-    <img
+    <Zoomable
       src={picture.data}
       alt={alt}
       className="max-h-72 w-full rounded-lg border border-line object-cover object-top"

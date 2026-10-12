@@ -27,7 +27,7 @@ export function ProjectIntegrations({ snapshot }: { snapshot: BoardSnapshot }) {
       title="Integrations"
       description="The services this project's crew can use, and which clanks. Reads run; changes ask you first; anything that spends money, publishes or contacts people asks every time, and so does any change to a live account."
       actions={
-        <Button size="sm" onClick={() => go({ page: 'settings' })}>
+        <Button size="sm" onClick={() => go({ page: 'settings', section: 'connections' })}>
           Connect an account
         </Button>
       }
@@ -35,7 +35,7 @@ export function ProjectIntegrations({ snapshot }: { snapshot: BoardSnapshot }) {
     >
       {connected.length === 0 ? (
         <p className="text-sm text-dim">
-          Nothing's connected yet. Connect an account in Settings, under Integrations, then turn it
+          Nothing's connected yet. Connect an account in Settings, under Connections, then turn it
           on here.
         </p>
       ) : (

@@ -1,8 +1,10 @@
 import {
   type BoardSnapshot,
+  MAX_MESSAGE_IMAGES,
   type ProjectSummary,
   TICKET_COLUMNS,
   clankIdSchema,
+  messageImageSchema,
   modelChoiceSchema,
   newProjectSchema,
   newTicketSchema,
@@ -13,11 +15,17 @@ import {
   ticketPatchSchema,
 } from '@clanks/core';
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { ProjectError } from '../projects/service';
-import { createFromTemplate, createSample, projectTemplates } from '../projects/templates';
+import {
+  createFromTemplate,
+  createSample,
+  newProjectFolder,
+  projectTemplates,
+  projectsRoot,
+  quickStart,
+} from '../projects/templates';
 import { userProcedure } from '../procedures';
 import { publicProcedure, router } from '../trpc';
 import { snapshots } from './live';
@@ -66,11 +74,16 @@ export const projectsRouter = router({
   /** Where a clone of a repository would go by default: a free folder under ~/clanks. */
   cloneFolder: publicProcedure.input(z.string().min(1).max(100)).query(({ input }) => {
     const name = input.replace(/[^\w.-]+/g, '-');
-    const base = join(homedir(), 'clanks', name);
+    const base = join(projectsRoot(), name);
     let path = base;
     for (let i = 2; existsSync(path); i++) path = `${base}-${i}`;
     return path;
   }),
+
+  /** Makes a new folder under ~/clanks for a project of this name, and says where it is. */
+  makeFolder: userProcedure
+    .input(z.string().trim().min(1).max(100))
+    .mutation(({ input }) => newProjectFolder(input)),
 
   create: userProcedure
     .input(newProjectSchema)
@@ -83,6 +96,21 @@ export const projectsRouter = router({
   createFromTemplate: userProcedure
     .input(z.object({ project: newProjectSchema, templateId: z.string().max(64) }))
     .mutation(({ ctx, input }) => createFromTemplate(ctx, input.project, input.templateId)),
+
+  /**
+   * A project from one sentence: named from it, in a new folder under ~/clanks, with the usual
+   * crew or a template's, and Atlas told the idea in a chat to carry on in.
+   */
+  quickStart: userProcedure
+    .input(
+      z.object({
+        idea: z.string().trim().min(1).max(8000),
+        templateId: z.string().max(64).nullish(),
+        /** Pictures that go to Atlas with it, such as a sketch or a site to match. */
+        images: z.array(messageImageSchema).max(MAX_MESSAGE_IMAGES).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => quickStart(ctx, input)),
 
   /** The first-run tour's sample project, in a folder of its own. It's only ever offered once. */
   createSample: userProcedure.mutation(async ({ ctx }) => {

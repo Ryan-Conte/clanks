@@ -1,6 +1,5 @@
 import {
   type BoardSnapshot,
-  COLUMN_TITLES,
   REPO_HOST_NAMES,
   type RepoHost,
   type SpecStory,
@@ -15,6 +14,7 @@ import {
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import {
+  COLUMN_LABELS,
   SHOWN_FIELDS,
   TYPE_LABELS,
   actorName,
@@ -72,7 +72,7 @@ export function TicketDrawer(props: {
           <span className="flex items-center gap-2">
             <span className="font-mono text-[12px] text-dim">{card.key}</span>
             <Badge tone={card.type === 'spec' ? 'lavender' : 'dim'}>{TYPE_LABELS[card.type]}</Badge>
-            <span className="text-[12px] text-dim">{COLUMN_TITLES[card.column]}</span>
+            <span className="text-[12px] text-dim">{COLUMN_LABELS[card.column]}</span>
           </span>
           <h2 className="text-base leading-snug font-medium">{card.title}</h2>
           <span className="flex items-center gap-1.5 text-[12px] text-white/75">
@@ -95,14 +95,14 @@ export function TicketDrawer(props: {
                 go({ page: 'project', id: projectId, tab: 'design', run: makerRun.conversationId })
               }
             >
-              Studio
+              See the design
             </Button>
           )}
           {watchable && (
             <Button
               size="sm"
               variant="ghost"
-              title="Follow its run in the workbench"
+              title="Watch the clank at work on it: its files, commands and pages"
               onClick={() => props.onWatch(card)}
             >
               Watch
@@ -115,7 +115,7 @@ export function TicketDrawer(props: {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
-        <Actions
+        <TicketActions
           card={card}
           snapshot={snapshot}
           draftVersion={draft?.version ?? null}
@@ -147,7 +147,7 @@ export function TicketDrawer(props: {
           </Section>
         )}
 
-        <Section title="Route">
+        <Section title="Who it goes through">
           <Route card={card} name={name} />
           <Checks card={card} snapshot={snapshot} name={name} />
         </Section>
@@ -162,13 +162,13 @@ export function TicketDrawer(props: {
         )}
 
         {card.description && (
-          <Section title="Description">
+          <Section title="What it is">
             <Markdown text={card.description} />
           </Section>
         )}
 
         {card.stories.length > 0 && (
-          <Section title="Stories">
+          <Section title="From the spec">
             <ul className="flex flex-col gap-1 text-[13px]">
               {card.stories.map((id) => (
                 <li key={id}>
@@ -180,7 +180,7 @@ export function TicketDrawer(props: {
           </Section>
         )}
 
-        <Section title="Acceptance criteria">
+        <Section title="Done when">
           {card.criteria.length === 0 ? (
             <p className="text-[13px] text-dim">None yet.</p>
           ) : (
@@ -199,7 +199,9 @@ export function TicketDrawer(props: {
 
         {card.output && (
           <Section
-            title={`Handed in${card.route[0]?.clankId ? ` by ${name(card.route[0].clankId)}` : ''}`}
+            title={
+              card.route[0]?.clankId ? `What ${name(card.route[0].clankId)} made` : 'What was made'
+            }
           >
             {isWrittenOutput(card.type) ? (
               <>
@@ -214,7 +216,7 @@ export function TicketDrawer(props: {
         {card.reviews.map((review, i) => {
           const { clankId, at, ...rest } = review;
           return (
-            <Section key={i} title={`Passed by ${name(clankId)}`}>
+            <Section key={i} title={`${name(clankId)}'s check`}>
               <span className="text-[11px] text-dim">{formatAgo(new Date(at))}</span>
               <Fields fields={rest} />
             </Section>
@@ -243,7 +245,7 @@ export function TicketDrawer(props: {
           </Section>
         )}
 
-        <Section title="Chats">
+        <Section title="Conversations">
           <ul className="flex flex-col gap-1">
             {card.conversationId && (
               <li>
@@ -275,7 +277,7 @@ export function TicketDrawer(props: {
         </Section>
 
         {(card.usage.tokens > 0 || card.usage.ms > 0) && (
-          <Section title="Spent">
+          <Section title="Used so far">
             <p className="text-[13px] text-white/80">{usageText(card.usage)}</p>
           </Section>
         )}
@@ -306,15 +308,17 @@ function mergeWords(card: TicketCard, host: RepoHost | null): string | null {
   if (d.pr) {
     return `Approving merges ${pullRequestName(host ?? 'github', d.pr.number)} on ${REPO_HOST_NAMES[host ?? 'github']}, as you.`;
   }
-  return `Approving merges \`${d.branch}\` into \`${d.base}\` in the project's folder.`;
+  return `Approving adds this work to the project's folder (it merges \`${d.branch}\` into \`${d.base}\`).`;
 }
 
 /** What the user can do about the ticket where it is now. */
-function Actions(props: {
+export function TicketActions(props: {
   card: TicketCard;
   snapshot: BoardSnapshot;
   draftVersion: number | null;
   onClose: () => void;
+  /** Only what the ticket is waiting on the user for, as the conversation shows it. */
+  compact?: boolean;
 }) {
   const { card } = props;
   const trpc = useTRPC();
@@ -370,8 +374,8 @@ function Actions(props: {
           {card.state === 'looping'
             ? (card.reason ?? 'It kept bouncing, so it came to you.')
             : card.type === 'spec'
-              ? `Atlas signed off spec v${props.draftVersion ?? card.specVersion ?? ''}. Read it on the Spec tab, then approve it, and Atlas plans the board from it.`
-              : 'Signed off and ready for you.'}
+              ? `Spec v${props.draftVersion ?? card.specVersion ?? ''} is what will be made, written up and checked by Atlas. Approve it, and Atlas plans the work from it.`
+              : 'Checked by the crew and ready for you.'}
         </p>
         {sending && (
           <p className="text-[12px] text-dim">
@@ -413,11 +417,13 @@ function Actions(props: {
                     ? 'Try sending again'
                     : 'Approve and send'
                 : approve.isPending
-                  ? 'Merging…'
+                  ? 'Approving…'
                   : merge
                     ? card.delivery?.error
-                      ? 'Try the merge again'
-                      : 'Approve and merge'
+                      ? 'Try again'
+                      : card.delivery?.pr
+                        ? 'Approve and merge'
+                        : 'Approve'
                     : 'Approve'}
           </Button>
           {sending && (
@@ -436,12 +442,12 @@ function Actions(props: {
             </Button>
           )}
           <Button size="sm" onClick={() => setWriting('changes')}>
-            Request changes…
+            Ask for changes…
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setWriting('reject')}>
             Reject…
           </Button>
-          {card.type === 'spec' && (
+          {card.type === 'spec' && !props.compact && (
             <Button
               size="sm"
               variant="ghost"
@@ -489,7 +495,7 @@ function Actions(props: {
               variant="ghost"
               onClick={() => go({ page: 'chat', id: run.conversationId })}
             >
-              Open the run
+              See what happened
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={() => setWriting('reject')}>
@@ -512,7 +518,7 @@ function Actions(props: {
     body = (
       <>
         <p className="text-[13px] text-white/85">
-          {crew.find((c) => c.id === card.createdBy)?.name ?? 'A clank'} proposed this. Take it on,
+          {crew.find((c) => c.id === card.createdBy)?.name ?? 'A clank'} suggested this. Take it on,
           or delete it.
         </p>
         <Button size="sm" variant="primary" onClick={() => accept.mutate(card.id)}>
@@ -527,7 +533,10 @@ function Actions(props: {
   return (
     <div className="flex flex-col gap-2.5">
       {body && (
-        <div className="flex flex-col items-start gap-2.5 rounded-2xl border border-amber-300/25 bg-amber-300/[0.05] p-3.5">
+        // In the conversation it's already in a card of its own.
+        <div
+          className={`flex flex-col items-start gap-2.5 ${props.compact ? '' : 'rounded-2xl border border-amber-300/25 bg-amber-300/[0.05] p-3.5'}`}
+        >
           {body}
         </div>
       )}
@@ -578,7 +587,7 @@ function Actions(props: {
           </span>
         </form>
       )}
-      {(working && underway) || card.column === 'backlog' ? (
+      {!props.compact && ((working && underway) || card.column === 'backlog') ? (
         <span className="flex flex-wrap justify-end gap-2">
           {working && underway && (
             <Button size="sm" variant="ghost" onClick={() => pause.mutate(card.id)}>
@@ -638,7 +647,7 @@ function InlineCode({ text }: { text: string }) {
 function Route({ card, name }: { card: TicketCard; name: (id: string) => string }) {
   const steps = [
     ...card.route.map((s, i) => ({
-      label: s.clankId ? name(s.clankId) : `Any ${TYPE_LABELS[card.type]} maker`,
+      label: s.clankId ? name(s.clankId) : 'Whoever is free',
       at: i === card.step && !card.doneAt && !card.detour,
       past: i < card.step || card.doneAt !== null,
     })),
@@ -775,7 +784,7 @@ function Delivery({ card, host }: { card: TicketCard; host: RepoHost | null }) {
   const republish = useMutation(trpc.board.republish.mutationOptions());
   const d = card.delivery!;
   return (
-    <Section title="Branch">
+    <Section title="Where the work is">
       <p className="text-[13px] text-white/85">
         <code className="font-mono text-[12px]">{d.branch}</code> into{' '}
         <code className="font-mono text-[12px]">{d.base}</code>
@@ -836,7 +845,7 @@ function Assignee({ card, snapshot }: { card: TicketCard; snapshot: BoardSnapsho
         disabled={assign.isPending}
         onChange={(e) => assign.mutate({ id: card.id, clankId: e.target.value || null })}
       >
-        {!started && <option value="">Open: the first free {TYPE_LABELS[card.type]} maker</option>}
+        {!started && <option value="">Open: whoever is free first</option>}
         {makers.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
@@ -845,8 +854,8 @@ function Assignee({ card, snapshot }: { card: TicketCard; snapshot: BoardSnapsho
       </select>
       {started && (
         <p className="text-[12px] text-dim">
-          Giving it to another maker stops this run; the work so far stays on its branch, and the
-          new maker carries on from there.
+          Giving it to someone else stops the work under way. What's done so far is kept, and they
+          carry on from there.
         </p>
       )}
       {assign.error && <ErrorText>{assign.error.message}</ErrorText>}
@@ -866,7 +875,7 @@ function Dependencies({ card, snapshot }: { card: TicketCard; snapshot: BoardSna
   );
   if (!editable && deps.length === 0) return null;
   return (
-    <Section title="Waits on">
+    <Section title="Waits for">
       <ul className="flex flex-col gap-1">
         {deps.length === 0 && (
           <li className="text-[13px] text-dim">Nothing. It can start any time.</li>
@@ -912,7 +921,7 @@ function Dependencies({ card, snapshot }: { card: TicketCard; snapshot: BoardSna
 }
 
 /** What a clank handed in, field by field, but for those something above already shows. */
-function Fields({ fields, hide }: { fields: Record<string, unknown>; hide?: Set<string> }) {
+export function Fields({ fields, hide }: { fields: Record<string, unknown>; hide?: Set<string> }) {
   const entries = Object.entries(fields).filter(
     ([key, value]) =>
       key !== 'type' &&

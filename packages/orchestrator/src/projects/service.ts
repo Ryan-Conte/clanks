@@ -318,7 +318,7 @@ export class ProjectService extends EventEmitter<{ change: [projectId: string] }
     if (check.status === 'missing') throw new ProjectError(`${check.path} isn't a folder`);
     if (check.status === 'no_git') {
       throw new ProjectError(
-        "git isn't installed, and the crew needs it to work on copies of the folder",
+        "This computer doesn't have git yet, a free tool the crew uses to keep track of its changes. Install it from git-scm.com, then try again.",
       );
     }
     try {

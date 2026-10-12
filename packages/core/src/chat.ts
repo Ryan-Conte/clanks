@@ -22,7 +22,9 @@ export interface ChatImage {
 }
 
 export type ChatMessage =
-  | { role: 'system' | 'user'; content: string }
+  | { role: 'system'; content: string }
+  /** `images` are pictures the user put in their message, for a model that can see. */
+  | { role: 'user'; content: string; images?: ChatImage[] }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
   | { role: 'tool'; toolCallId: string; content: string; images?: ChatImage[] };
 
@@ -32,7 +34,12 @@ const chatImageSchema = z.object({
 });
 
 export const chatMessageSchema: z.ZodType<ChatMessage> = z.union([
-  z.object({ role: z.enum(['system', 'user']), content: z.string() }),
+  z.object({ role: z.literal('system'), content: z.string() }),
+  z.object({
+    role: z.literal('user'),
+    content: z.string(),
+    images: z.array(chatImageSchema).optional(),
+  }),
   z.object({
     role: z.literal('assistant'),
     content: z.string(),

@@ -60,7 +60,11 @@ export function ToolsPanel({ clank }: { clank: ClankSummary }) {
         </>
       }
       actions={
-        <Button size="sm" variant="ghost" onClick={() => go({ page: 'settings' })}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => go({ page: 'settings', section: 'connections' })}
+        >
           MCP servers
         </Button>
       }

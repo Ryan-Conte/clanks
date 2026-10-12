@@ -186,10 +186,20 @@ function toAnthropic(history: ChatMessage[]): {
         system.push(message.content);
         break;
       case 'user': {
+        // Pictures the user put in their message go with its words. Empty text blocks are refused.
+        const blocks: Anthropic.ContentBlockParam[] = [
+          ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+          ...(message.images ?? []).map((image): Anthropic.ImageBlockParam => ({
+            type: 'image',
+            source: { type: 'base64', media_type: image.mediaType, data: image.data },
+          })),
+        ];
         // Feedback that follows tool results joins their turn, since turns must alternate.
         const last = messages.at(-1);
         if (last?.role === 'user' && Array.isArray(last.content)) {
-          last.content.push({ type: 'text', text: message.content });
+          last.content.push(...blocks);
+        } else if (message.images?.length) {
+          messages.push({ role: 'user', content: blocks });
         } else {
           messages.push({ role: 'user', content: message.content });
         }

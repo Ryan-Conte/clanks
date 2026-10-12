@@ -12,26 +12,31 @@ Download the installer for your computer from [clanks.si](https://clanks.si) and
 
 ## First run
 
-1. **Your machine is sized up.** clanks looks at your graphics card and memory and recommends a model that fits. With 16 GB of memory and no graphics card that's one small model for the whole crew; with a 24 GB card, a much more capable one.
-2. **Pull the model.** It's downloaded once from Hugging Face, checked by its sha256, and kept in clanks' own folder. From then on it runs offline.
-3. **Give it to the crew.** Every clank uses it unless you give one a model of its own later.
-4. **Watch the sample project,** if you like. It makes a small project in `~/clanks/coffee-cart` with two tickets: Quill writes the copy for a one-page site, and Forge builds the page from it. You read the copy and approve it, watch Forge's files change, see Gauge check the page in the built-in browser, and approve the result. Nothing leaves your computer.
+The first screen introduces the crew and has one button: **Download and set up**.
 
-You can skip either step. **Models** in the sidebar pulls a model later, and **New project** starts your own.
+- clanks looks at your computer's graphics card and memory and picks a model that fits. With 16 GB of memory and no graphics card that's one small model for the whole crew; with a 24 GB card, a much more capable one.
+- The model is downloaded once from Hugging Face, checked, and kept in clanks' own folder. On an NVIDIA card, the build that makes it fast is downloaded with it.
+- When it lands, the crew is given it and you're taken to Home. You can close the window meanwhile; the download carries on, and picks up where it was after a restart.
+
+**Other ways to set up** lists the other models that run on your computer, a way in for a cloud model with your own key, and **Skip for now**. The crew can't do anything until it has a model, and Home says so with a button back to this screen.
+
+Home then offers a **sample project**, once: a one-page site for a coffee cart, in a folder of its own. Quill writes the page, Forge builds it, Gauge checks it and you approve. Nothing leaves your computer.
 
 ## Your first project
 
-**New project** asks four things:
+On **Home**, say what you want in the box, in your own words, and press Enter. That's all it needs:
 
-1. **A name**, and a line about what you're making.
-2. **A workspace:** a folder on your computer, or one of your GitHub or GitLab repositories, cloned for you. A folder that isn't a git repository is made one, because the crew works on copies of it.
-3. **The crew:** tick the clanks you want. Atlas, the lead, is always in.
-4. **The models:** one for the whole crew, or one per clank.
+- the project is named from what you wrote, which you can change from its **⋯** menu;
+- it gets a new folder of its own in `~/clanks`;
+- it gets the usual crew: Atlas, Scribe, Prism, Forge and Gauge;
+- Atlas is told what you wrote, and you land in a conversation with it.
 
-You can also start from a template, such as **Ship a feature** or **Plan a launch**. A template picks a crew and tells Atlas what you want in your own words, in a chat you can read and steer.
+The chips under the box start from a template, such as **A landing page** or **A launch plan**. A template picks the crew for that kind of work and tells Atlas what to set up.
 
-Then talk to Atlas. Say what you want built, answer its questions, and approve the spec it brings back. The [board](projects.md) shows the rest.
+**More options**, under the box once you've started typing, opens the full form: a folder you already have, or one of your GitHub or GitLab repositories, copied to your computer; who's in the crew; a model for the project or for each clank; and the letters tickets are numbered with. A folder that isn't a git repository is made one, because the crew works on copies of it, so git has to be installed.
+
+Then talk to Atlas. Answer its questions, and approve what the crew brings back. It all happens in that one [conversation](projects.md).
 
 ## Closing the window
 
-Closing the window leaves clanks running in the tray, so the crew carries on. **Quit clanks** in the tray's menu stops everything. Settings → In the background changes that.
+Closing the window leaves clanks running in the tray, so the crew carries on. **Quit clanks** in the tray's menu stops everything. Settings → This app → In the background changes that.

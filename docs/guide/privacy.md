@@ -29,8 +29,8 @@ What a clank reads on a web page, in a file or in another clank's work can't giv
 
 ## Updates
 
-clanks checks its releases page when it starts and a few times a day. Finding a newer version only tells you: fetching it and restarting into it each wait for you. Turn the check off in Settings → Updates.
+clanks checks its releases page when it starts and a few times a day. Finding a newer version only tells you: fetching it and restarting into it each wait for you. Turn the check off in Settings → This app, under Updates.
 
 ## Crash reports
 
-When clanks crashes, a report of where in the app it happened is kept on your computer. It has no chats, files, prompts or keys in it. It's sent only if you turn that on in Settings → Crash reports, and only by a build that has somewhere to send it.
+When clanks crashes, a report of where in the app it happened is kept on your computer. It has no chats, files, prompts or keys in it. It's sent only if you turn that on in Settings → This app, under Crash reports, and only by a build that has somewhere to send it.

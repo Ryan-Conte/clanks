@@ -104,7 +104,13 @@ export const chatRouter = router({
   start: userProcedure
     .input(newConversationSchema)
     .mutation(({ ctx, input }) =>
-      ctx.chat.start(input.clankId, input.text, input.folder ?? null, input.projectId ?? null),
+      ctx.chat.start(
+        input.clankId,
+        input.text,
+        input.folder ?? null,
+        input.projectId ?? null,
+        input.images,
+      ),
     ),
 
   /** Asks for a folder for a chat that isn't saved yet. Resolves null if the user cancels. */
@@ -115,7 +121,7 @@ export const chatRouter = router({
 
   send: userProcedure
     .input(sendMessageSchema)
-    .mutation(({ ctx, input }) => ctx.chat.send(input.conversationId, input.text)),
+    .mutation(({ ctx, input }) => ctx.chat.send(input.conversationId, input.text, input.images)),
 
   retry: userProcedure
     .input(conversationIdSchema)

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { type ButtonHTMLAttributes, type ReactNode, useEffect, useRef, useState } from 'react';
 
 export function Panel(props: {
   title: string;
@@ -33,9 +33,225 @@ export function Row({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+/** A page's opening lines: what it is, in a sentence anyone can read, and what to do there. */
+export function PageHeader(props: {
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <header className="flex items-end justify-between gap-6">
+      <div className="flex min-w-0 flex-col gap-2">
+        <h1 className="text-3xl font-semibold tracking-[-0.03em]">{props.title}</h1>
+        {props.description && (
+          <p className="max-w-2xl text-[15px] leading-relaxed text-dim">{props.description}</p>
+        )}
+      </div>
+      {props.actions && <div className="flex shrink-0 items-center gap-2">{props.actions}</div>}
+    </header>
+  );
+}
+
+/** A titled group on a page: a count beside the title, and amber when it's waiting on the user. */
+export function SectionCard(props: {
+  title: string;
+  tone?: 'amber' | undefined;
+  count?: number | undefined;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className={`flex flex-col gap-3 rounded-3xl border p-5 ${props.tone === 'amber' ? 'border-amber-300/20 bg-amber-300/[0.04]' : 'border-line bg-panel/60'}`}
+    >
+      <header className="flex items-center justify-between gap-3">
+        <h2
+          className={`flex items-center gap-2 text-sm font-medium ${props.tone === 'amber' ? 'text-amber-100' : 'text-white'}`}
+        >
+          {props.tone === 'amber' && <Dot tone="amber" live />}
+          {props.title}
+          {props.count !== undefined && props.count > 0 && (
+            <span className="tabular font-normal text-dim">{props.count}</span>
+          )}
+        </h2>
+        {props.actions}
+      </header>
+      {props.children}
+    </section>
+  );
+}
+
+/** Something there's none of yet, said kindly, with what to do about it. */
+export function EmptyState(props: { title: string; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-3xl border border-dashed border-line px-8 py-10 text-center">
+      <p className="font-medium">{props.title}</p>
+      {props.children && <p className="max-w-md text-sm text-dim">{props.children}</p>}
+      {props.action}
+    </div>
+  );
+}
+
+/** Details most people never need, folded away under a line that says what's in there. */
+export function Disclosure(props: {
+  summary: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+}) {
+  return (
+    <details open={props.defaultOpen} className={`group/disclosure ${props.className ?? ''}`}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-dim transition-colors select-none hover:text-white [&::-webkit-details-marker]:hidden">
+        <span className="transition-transform group-open/disclosure:rotate-90">
+          <ChevronIcon />
+        </span>
+        {props.summary}
+      </summary>
+      <div className="pt-4">{props.children}</div>
+    </details>
+  );
+}
+
+/** A choice among a few, as a pill that's on or off. */
+export function Chip({
+  active = false,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      {...props}
+      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-[13px] whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-40 ${active ? 'border-accent/60 bg-accent/15 text-white' : 'border-line text-white/70 hover:border-white/20 hover:bg-white/[0.04] hover:text-white'} ${className}`}
+    />
+  );
+}
+
+/**
+ * A picture that opens large, over the window, when it's clicked: a design, a page as a clank saw
+ * it, a screenshot the user sent. Escape, or a click anywhere, puts it away.
+ */
+export function Zoomable(props: { src: string; alt: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [open]);
+  return (
+    <>
+      <button
+        type="button"
+        title="Look closer"
+        onClick={() => setOpen(true)}
+        className="block w-full cursor-zoom-in rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      >
+        <img src={props.src} alt={props.alt} className={props.className} />
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={props.alt}
+          onClick={() => setOpen(false)}
+          className="animate-pop fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center overflow-auto bg-black/85 p-8 pt-14 backdrop-blur-sm"
+        >
+          <img
+            src={props.src}
+            alt={props.alt}
+            className="max-h-full max-w-full rounded-xl border border-line object-contain shadow-2xl"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  /** A line under it, for an item that needs saying more about. */
+  hint?: string;
+  icon?: ReactNode;
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
+/** A button that opens a short list of things to do, for what doesn't earn a button of its own. */
+export function Menu(props: {
+  label: string;
+  items: (MenuItem | null | false | undefined)[];
+  children?: ReactNode;
+  align?: 'left' | 'right';
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+  const items = props.items.filter((item): item is MenuItem => Boolean(item));
+  if (items.length === 0) return null;
+
+  return (
+    <div ref={root} className="relative">
+      <IconButton
+        label={props.label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={open ? 'bg-white/[0.08] text-white' : ''}
+      >
+        {props.children ?? <MoreIcon />}
+      </IconButton>
+      {open && (
+        <ul
+          role="menu"
+          className={`animate-pop absolute top-9 z-40 flex min-w-56 flex-col gap-0.5 rounded-2xl border border-line bg-raised p-1.5 shadow-2xl shadow-black/60 ${props.align === 'left' ? 'left-0' : 'right-0'}`}
+        >
+          {items.map((item) => (
+            <li key={item.label} role="none">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={item.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  item.onSelect();
+                }}
+                className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-40 ${item.danger ? 'text-rose-300' : 'text-white/90'}`}
+              >
+                {item.icon && <span className="mt-0.5 shrink-0 text-dim">{item.icon}</span>}
+                <span className="flex min-w-0 flex-col">
+                  <span>{item.label}</span>
+                  {item.hint && <span className="text-[12px] text-dim">{item.hint}</span>}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'lg';
 };
 
 export function Button({
@@ -50,7 +266,11 @@ export function Button({
     ghost: 'text-dim hover:bg-white/5 hover:text-white',
     danger: 'border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20',
   };
-  const sizes = { sm: 'h-8 px-3 text-[13px]', md: 'h-10 px-5 text-sm' };
+  const sizes = {
+    sm: 'h-8 px-3 text-[13px]',
+    md: 'h-10 px-5 text-sm',
+    lg: 'h-12 px-7 text-[15px]',
+  };
   return (
     <button
       type="button"
@@ -251,6 +471,87 @@ function Icon({ children, size = 16 }: { children: ReactNode; size?: number }) {
     >
       {children}
     </svg>
+  );
+}
+
+/** A picture in a frame: add a screenshot or a photo to a message. */
+export function ImageIcon() {
+  return (
+    <Icon>
+      <rect x="2.5" y="3" width="11" height="10" rx="2" />
+      <circle cx="6" cy="6.5" r="1" />
+      <path d="m3 11.5 3-3 2.5 2.5 2-2 2.5 2.5" />
+    </Icon>
+  );
+}
+
+export function HomeIcon() {
+  return (
+    <Icon>
+      <path d="M2.5 7.5 8 2.5l5.5 5v5a1 1 0 0 1-1 1H10V10H6v3.5H3.5a1 1 0 0 1-1-1z" />
+    </Icon>
+  );
+}
+
+export function ChevronIcon() {
+  return (
+    <Icon size={14}>
+      <path d="m6 3.5 4.5 4.5L6 12.5" />
+    </Icon>
+  );
+}
+
+export function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <circle cx="3.5" cy="8" r="1.25" />
+      <circle cx="8" cy="8" r="1.25" />
+      <circle cx="12.5" cy="8" r="1.25" />
+    </svg>
+  );
+}
+
+/** An eye: watch a clank work. */
+export function EyeIcon() {
+  return (
+    <Icon>
+      <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="2" />
+    </Icon>
+  );
+}
+
+export function PauseIcon() {
+  return (
+    <Icon>
+      <path d="M5.5 3.5v9m5-9v9" />
+    </Icon>
+  );
+}
+
+export function PlayIcon() {
+  return (
+    <Icon>
+      <path d="M5 3.5v9l7.5-4.5z" />
+    </Icon>
+  );
+}
+
+/** A four-pointed star: something made for you, or a place to start. */
+export function SparkIcon() {
+  return (
+    <Icon>
+      <path d="M8 2c.5 3.2 2.3 5 6 6-3.7 1-5.5 2.8-6 6-.5-3.2-2.3-5-6-6 3.7-1 5.5-2.8 6-6z" />
+    </Icon>
+  );
+}
+
+export function BoardIcon() {
+  return (
+    <Icon>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+      <path d="M6.2 2.5v8m3.6-8v5" />
+    </Icon>
   );
 }
 

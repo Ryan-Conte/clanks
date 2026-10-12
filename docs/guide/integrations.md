@@ -2,7 +2,7 @@
 
 ## Connecting a service
 
-Settings → Integrations lists the services clanks can work with: Stripe, Notion, Slack, Vercel, Google Analytics and X ship with the app. For each you can see every address it calls and everything it can do before you connect anything.
+Settings → Connections lists the services clanks can work with: Stripe, Notion, Slack, Vercel, Google Analytics and X ship with the app. For each you can see every address it calls and everything it can do before you connect anything.
 
 1. **Connect** an account with an API key or by signing in. The key or token goes into your operating system's keychain. The app can use it; nothing can read it back, including the window.
 2. **Turn it on in a project**, in the project's Settings, for the clanks you choose there. A connection does nothing until you do.
@@ -28,7 +28,7 @@ The **Marketplace** page lists what people have shared: clanks, integrations, cr
 - **An update** shows what changed, as a diff, with any new tool or address pointed out. Accept it, or stay on the version you have.
 - **Publishing** is on a clank you made, or an integration you added from a folder. It shows what would be sent, asks for an open licence, and opens a pull request from your GitHub account.
 
-A team can add a marketplace of its own in Settings → Marketplaces.
+A team can add a marketplace of its own in Settings → Connections, under Marketplaces.
 
 ## Integrations of your own
 

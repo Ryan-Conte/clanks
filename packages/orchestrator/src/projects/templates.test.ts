@@ -1,11 +1,17 @@
-import { BUILTIN_TEMPLATES, SAMPLE_TEMPLATE, columnOf, fillTemplate } from '@clanks/core';
+import {
+  BUILTIN_TEMPLATES,
+  DEFAULT_PROJECT_CREW,
+  SAMPLE_TEMPLATE,
+  columnOf,
+  fillTemplate,
+} from '@clanks/core';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { call, repository, say, setup, until } from '../board/test-kit';
 import { createCallerFactory } from '../trpc';
 import { appRouter } from '../router';
 import { tempDir } from '../test-helpers';
-import { createFromTemplate, createSample, projectTemplates } from './templates';
+import { createFromTemplate, createSample, projectTemplates, quickStart } from './templates';
 
 describe('project templates', () => {
   it('ship with the app, each with a crew that exists and something to start with', async () => {
@@ -120,6 +126,60 @@ describe('project templates', () => {
     );
     expect(columnOf(context.board.ticket(tickets[1]!.id))).toBe('backlog');
   }, 60_000);
+
+  it('start a project from one sentence: a name, a folder, the usual crew and Atlas told', async () => {
+    let asked = '';
+    const { context } = await setup({
+      'atlas chat': (request) => {
+        asked = request.messages.at(-1)!.content;
+        return say('Tell me more.');
+      },
+    });
+    const root = tempDir();
+    const idea = 'I want to build a website for my bakery, with a menu and opening hours';
+    const started = await quickStart(context, { idea }, root);
+    expect(started.project).toMatchObject({
+      name: 'Website for my bakery',
+      key: 'WEBS',
+      folder: join(root, 'website-for-my-bakery'),
+      brief: idea,
+    });
+    expect(context.projects.members(started.project.id).map((m) => m.clankId)).toEqual([
+      ...DEFAULT_PROJECT_CREW,
+    ]);
+    await until(
+      () => !context.chat.get(started.conversationId!).conversation.replying,
+      'Atlas has answered',
+    );
+    expect(asked).toBe(idea);
+
+    // The same idea again gets a folder and a key of its own.
+    const again = await quickStart(context, { idea }, root);
+    expect(again.project).toMatchObject({
+      key: 'WEBS2',
+      folder: join(root, 'website-for-my-bakery-2'),
+    });
+
+    // From a template, the crew and the first message are the template's.
+    const report = await quickStart(
+      context,
+      { idea: 'Which payment providers suit a small shop?', templateId: 'question-to-report' },
+      root,
+    );
+    expect(context.projects.members(report.project.id).map((m) => m.clankId)).toEqual([
+      'atlas',
+      'scout',
+      'quill',
+    ]);
+    await until(
+      () => !context.chat.get(report.conversationId!).conversation.replying,
+      'Atlas has answered',
+    );
+    expect(asked).toContain('I have a question: Which payment providers suit a small shop?');
+    await expect(
+      quickStart(context, { idea, templateId: 'nothing-like-it' }, root),
+    ).rejects.toThrow(/isn't installed/);
+  });
 
   it('are offered once: making the sample marks it as offered', async () => {
     const { context } = await setup({});

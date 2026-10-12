@@ -79,6 +79,11 @@ export const settingsSchema = z.object({
   onboarded: z.boolean(),
   /** The model every clank uses unless it has its own. Null until one is pulled and picked. */
   crewModel: modelIdSchema.nullable(),
+  /**
+   * The model first run is downloading for the crew. Once it's pulled it becomes the crew's model
+   * and first run is over, whether or not the window is open. Null when nothing is being set up.
+   */
+  setupModel: modelIdSchema.nullable(),
   /** Unload a model this many minutes after its last use, unless it is kept loaded. */
   modelIdleMinutes: z
     .number()
@@ -157,6 +162,7 @@ export const defaultSettings: Settings = {
   closeToTray: true,
   onboarded: false,
   crewModel: null,
+  setupModel: null,
   modelIdleMinutes: 10,
   contextPerSlot: 32_768,
   parallelSlots: null,

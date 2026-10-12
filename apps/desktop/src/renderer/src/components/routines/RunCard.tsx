@@ -1,12 +1,7 @@
-import {
-  ACTIVE_RUN_STATUSES,
-  COLUMN_TITLES,
-  type RoutineRunInfo,
-  type ScheduledActionInfo,
-} from '@clanks/core';
+import { ACTIVE_RUN_STATUSES, type RoutineRunInfo, type ScheduledActionInfo } from '@clanks/core';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
-import { usageText } from '../../lib/board';
+import { COLUMN_LABELS, usageText } from '../../lib/board';
 import { useNav } from '../../lib/nav';
 import { RUN_STATUS, timeIn, toLocalInput, when } from '../../lib/routines';
 import { useTRPC } from '../../lib/trpc';
@@ -328,7 +323,7 @@ export function RunCard(props: {
                         due {timeIn(new Date(ticket.dueAt), zone)}
                       </span>
                     )}
-                    <span className="text-[12px] text-dim">{COLUMN_TITLES[ticket.column]}</span>
+                    <span className="text-[12px] text-dim">{COLUMN_LABELS[ticket.column]}</span>
                   </button>
                 </li>
               ))}

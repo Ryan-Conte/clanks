@@ -1,6 +1,6 @@
 import type { ChatEvent, ChatLiveEvent, ChatRequest, ModelRecord } from '@clanks/core';
 import { type Provider, createFakeProvider } from '@clanks/providers';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { sqliteModelRepository } from '../store/models';
@@ -186,6 +186,47 @@ describe('ChatService', () => {
     expect(chat.list()[0]).toMatchObject({ id: conversation.id, replying: false });
   });
 
+  it('keeps pictures the user sends with a message, and tells a model that cannot see them', async () => {
+    const { chat, context, orchestrator } = setup();
+    const png = Buffer.from('not really a png').toString('base64');
+    const { conversation } = chat.start('atlas', '', null, null, [
+      { name: 'sketch.png', mediaType: 'image/png', data: png },
+    ]);
+    // A message with no words is titled for what it is.
+    expect(conversation.title).toBe('A picture');
+    await settled(chat, conversation.id);
+    const first = chat.get(conversation.id).messages[0]!;
+    expect(first.content).toBe('');
+    expect(first.parts).toEqual([
+      { type: 'image', round: 0, image: expect.any(String) as string, name: 'sketch.png' },
+    ]);
+    // It's kept with the chat's other pictures, where the window reads it from.
+    const part = first.parts[0]!;
+    const path = part.type === 'image' ? part.image : '';
+    expect(path).toMatch(new RegExp(`^${conversation.id}/user-[\\w-]+\\.png$`));
+    expect(readFileSync(join(orchestrator.paths.artifacts, path)).toString()).toBe(
+      'not really a png',
+    );
+    // The test model can't see, so it's told a picture is there.
+    const fake = context.providers.get('builtin') as ReturnType<typeof createFakeProvider>;
+    expect(fake.requests[0]!.messages.slice(1)).toEqual([
+      {
+        role: 'user',
+        content: "[The user sent a picture with this, which you can't see. Say so if it matters.]",
+      },
+    ]);
+    chat.send(conversation.id, 'Two more', [
+      { name: '', mediaType: 'image/jpeg', data: png },
+      { name: '', mediaType: 'image/jpeg', data: png },
+    ]);
+    await settled(chat, conversation.id);
+    expect(chat.get(conversation.id).messages[2]!.parts.map((p) => p.type)).toEqual([
+      'text',
+      'image',
+      'image',
+    ]);
+  });
+
   it('needs a model before anything is saved', () => {
     const { chat, context } = setup();
     context.settings.update({ crewModel: null });
@@ -320,6 +361,44 @@ describe('history', () => {
     ).toEqual([
       { role: 'user', content: 'One\n\nTwo' },
       { role: 'assistant', content: 'Reply' },
+    ]);
+  });
+
+  it("shows a model that can see the newest message's pictures, and only those", () => {
+    const sent = (content: string, ...images: string[]) =>
+      ({
+        role: 'user',
+        content,
+        parts: [
+          ...(content ? [{ type: 'text', round: 0, text: content }] : []),
+          ...images.map((image) => ({ type: 'image', round: 0, image, name: '' })),
+        ],
+      }) as Parameters<typeof toTurns>[0][number];
+    const history = [
+      sent('Like this one', 'c/old.png'),
+      message('assistant', 'Noted.'),
+      sent('And these', 'c/a.jpg', 'c/gone.jpg'),
+    ];
+    const read = (part: { image: string }) =>
+      part.image === 'c/gone.jpg' ? null : { mediaType: 'image/jpeg' as const, data: part.image };
+    expect(toTurns(history, read)).toEqual([
+      {
+        role: 'user',
+        content:
+          'Like this one\n\n[The user sent a picture with this. It was dropped to save room.]',
+      },
+      { role: 'assistant', content: 'Noted.' },
+      {
+        role: 'user',
+        content: "And these\n\n[A picture the user sent with this couldn't be read.]",
+        images: [{ mediaType: 'image/jpeg', data: 'c/a.jpg' }],
+      },
+    ]);
+    // One that can't see is told they're there, every time.
+    expect(toTurns(history).map((t) => t.content)).toEqual([
+      "Like this one\n\n[The user sent a picture with this, which you can't see. Say so if it matters.]",
+      'Noted.',
+      "And these\n\n[The user sent 2 pictures with this, which you can't see. Say so if it matters.]",
     ]);
   });
 

@@ -3,6 +3,7 @@ import { ProviderRegistry, createFakeProvider } from '@clanks/providers';
 import { TRPCError } from '@trpc/server';
 import { describe, expect, it } from 'vitest';
 import { appRouter, createAppCaller } from './router';
+import { finishSetup } from './setup';
 import { sqliteModelRepository } from './store/models';
 import { startTestOrchestrator } from './test-helpers';
 
@@ -154,6 +155,28 @@ describe('models router', () => {
     await caller.models.remove('tiny:1b');
     expect((await caller.settings.get()).crewModel).toBeNull();
     expect((await caller.models.snapshot()).library).toEqual([]);
+  });
+
+  it('sets the crew up in one step: the model is given to the crew once it is pulled', async () => {
+    const { orchestrator, caller } = setup();
+    await orchestrator.ready;
+    const { settings, models, store } = orchestrator.context;
+    // Nothing is fetched here: what's being set up is remembered, and picked up when it lands.
+    settings.update({ setupModel: 'tiny:1b' });
+    expect(finishSetup(models, settings)).toMatchObject({ crewModel: null, onboarded: false });
+    sqliteModelRepository(store.db).putModel(pulledModel('tiny:1b'));
+    models.emit('change');
+    expect(await caller.settings.get()).toMatchObject({
+      crewModel: 'tiny:1b',
+      onboarded: true,
+      setupModel: null,
+    });
+    // Setting up a model that's already here finishes at once, and keeps the crew's own choice.
+    sqliteModelRepository(store.db).putModel(pulledModel('other:1b'));
+    expect(await caller.models.setUp('other:1b')).toMatchObject({
+      crewModel: 'tiny:1b',
+      setupModel: null,
+    });
   });
 
   it('streams a reply to try a model', async () => {

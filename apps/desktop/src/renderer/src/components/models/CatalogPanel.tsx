@@ -12,8 +12,8 @@ export function CatalogPanel() {
 
   return (
     <Panel
-      title="Catalog"
-      description="Open models picked for the crew's roles, straight from Hugging Face and checked by sha256."
+      title="More models"
+      description="Open models picked to suit the crew, downloaded from Hugging Face and checked before they're used."
     >
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {catalog.map((item) => (
@@ -61,7 +61,7 @@ function CatalogCard({ item, recommended }: { item: CatalogItem; recommended: bo
           </span>
         </div>
         {item.pulled ? (
-          <Badge tone="mint">Pulled</Badge>
+          <Badge tone="mint">Downloaded</Badge>
         ) : (
           <Button
             size="sm"
@@ -69,7 +69,7 @@ function CatalogCard({ item, recommended }: { item: CatalogItem; recommended: bo
             disabled={pulling || pull.isPending}
             onClick={() => pull.mutate(item.id)}
           >
-            {pulling ? 'Pulling' : 'Pull'}
+            {pulling ? 'Downloading' : 'Download'}
           </Button>
         )}
       </div>

@@ -29,6 +29,7 @@ import { providersRouter } from './routers/providers';
 import { routinesRouter } from './routers/routines';
 import { mcpRouter, toolsRouter } from './routers/tools';
 import { workspaceRouter } from './routers/workspace';
+import { startSetup } from './setup';
 import { type OrchestratorContext, createCallerFactory, publicProcedure, router } from './trpc';
 
 /** Everything the Models screen shows that changes as it happens. */
@@ -43,6 +44,8 @@ function modelsSnapshot(ctx: OrchestratorContext) {
     catalog: models.catalog(),
     recommended: models.recommended(),
     crewModel: ctx.settings.get().crewModel,
+    /** The model first run is fetching for the crew, until it's there. */
+    setupModel: ctx.settings.get().setupModel,
     move: models.moveStatus(),
   };
 }
@@ -260,6 +263,14 @@ export const appRouter = router({
       }
       return ctx.settings.update({ crewModel: input, onboarded: true });
     }),
+
+    /**
+     * First run in one step: pulls the model, and gives it to the crew when it's there. On an
+     * NVIDIA card the faster build is downloaded with it.
+     */
+    setUp: modelProcedure
+      .input(modelIdSchema)
+      .mutation(({ ctx, input }) => startSetup(ctx.models, ctx.settings, input)),
 
     /** Asks for a folder, then moves the models there. Resolves false if the user cancels. */
     moveStorage: modelProcedure.mutation(async ({ ctx }) => {

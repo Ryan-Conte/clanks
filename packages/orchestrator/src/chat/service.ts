@@ -9,6 +9,8 @@ import {
   type ConversationSummary,
   type FinishReason,
   type GgufFacts,
+  type ImagePart,
+  type MessageImage,
   type MessagePart,
   type MessageRecord,
   type ModelChoice,
@@ -35,7 +37,7 @@ import {
 import { type Sandbox, commandShell, removeTree } from '@clanks/workspace';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ActivityService } from '../activity/service';
 import type { ArtifactService } from '../artifacts/service';
@@ -289,6 +291,7 @@ export class ChatService extends EventEmitter<{
     text: string,
     folder: string | null = null,
     projectId: string | null = null,
+    images: MessageImage[] = [],
   ): { conversation: Conversation; reply: MessageRecord } {
     const clank = this.options.crew.get(clankId);
     const where = projectId ? this.board().chatFolder(projectId, clank.id) : folder;
@@ -297,7 +300,7 @@ export class ChatService extends EventEmitter<{
     const conversation: Conversation = {
       id: randomUUID(),
       clankId: clank.id,
-      title: titleFrom(text),
+      title: titleFrom(text) || (images.length === 1 ? 'A picture' : 'Pictures'),
       folder: where === null ? null : checkFolder(where),
       projectId,
       ticketId: null,
@@ -306,7 +309,7 @@ export class ChatService extends EventEmitter<{
       updatedAt: now,
     };
     this.store.insertConversation(conversation);
-    this.appendUser(conversation.id, text);
+    this.appendUser(conversation.id, text, undefined, images);
     const reply = this.reply(conversation, choice);
     this.emit('list');
     return { conversation, reply };
@@ -519,13 +522,13 @@ export class ChatService extends EventEmitter<{
    * Sends a message. Notes the user left in the diff editor since the clank last heard from them
    * go with it, so they're never lost.
    */
-  send(conversationId: string, text: string): MessageRecord {
+  send(conversationId: string, text: string, images: MessageImage[] = []): MessageRecord {
     const conversation = this.require(conversationId);
     this.assertIdle(conversationId);
     const choice = this.modelFor(conversation.clankId, conversation.projectId);
     const notes = this.options.workspace.pendingNotes(conversationId);
     const content = notes.length > 0 ? `${text.trim()}\n\n${formatNotes(notes)}` : text;
-    this.appendUser(conversationId, content);
+    this.appendUser(conversationId, content, undefined, images);
     this.markSent(conversationId, notes);
     const updated = this.store.updateConversation(conversationId, { updatedAt: this.now() })!;
     const reply = this.reply(updated, choice);
@@ -875,20 +878,37 @@ export class ChatService extends EventEmitter<{
     const found = this.options.library().find((m) => m.id === model);
     if (!found || found.missing) {
       throw new ChatError(
-        `${model} isn't pulled any more. Pull it again, or pick another model for ${who}.`,
+        `${model} isn't on this computer any more. Download it again on the Models screen, or pick another model for ${who}.`,
       );
     }
   }
 
-  private appendUser(conversationId: string, text: string, author?: 'app'): MessageRecord {
+  private appendUser(
+    conversationId: string,
+    text: string,
+    author?: 'app',
+    images: MessageImage[] = [],
+  ): MessageRecord {
     const content = text.trim();
+    const id = randomUUID();
+    // Pictures are kept with the chat's others, and the message holds where.
+    const pictures = images.flatMap((image, i): ImagePart[] => {
+      const path = this.saveImage(conversationId, `user-${id}-${i}`, {
+        data: Buffer.from(image.data, 'base64'),
+        mediaType: image.mediaType,
+      });
+      return path ? [{ type: 'image', round: 0, image: path, name: image.name }] : [];
+    });
     const message: MessageRecord = {
-      id: randomUUID(),
+      id,
       conversationId,
       role: 'user',
       ...(author ? { author } : {}),
       content,
-      parts: [{ type: 'text', round: 0, text: content }],
+      parts: [
+        ...(content ? [{ type: 'text' as const, round: 0, text: content }] : []),
+        ...pictures,
+      ],
       reasoning: '',
       status: 'done',
       error: null,
@@ -1043,7 +1063,8 @@ export class ChatService extends EventEmitter<{
       let drift = this.drift.get(conversation.id) ?? 1;
       let share = CONVERSATION_SHARE;
       const turns = fitHistory(
-        toTurns(history),
+        // A model that can see is shown the pictures the user sent; another is told they're there.
+        toTurns(history, vision ? (part) => this.readImage(part.image) : undefined),
         (window * HISTORY_SHARE) / drift - prompt.tokens - toolTokens,
       );
       const messages: ChatMessage[] = [{ role: 'system', content: prompt.system }, ...turns];
@@ -1805,6 +1826,18 @@ export class ChatService extends EventEmitter<{
     }
   }
 
+  /** A picture kept with a chat, as a model takes it. Null when the file is gone. */
+  private readImage(path: string): ChatImage | null {
+    try {
+      return {
+        mediaType: path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
+        data: readFileSync(join(this.options.artifactsDir, path)).toString('base64'),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /** Keeps a picture a tool took in the chat's artifacts. Returns its path there. */
   private saveImage(
     conversationId: string,
@@ -2299,7 +2332,10 @@ export function tokensOf(message: ChatMessage): number {
     message.role === 'assistant'
       ? (message.toolCalls ?? []).reduce((sum, c) => sum + estimateTokens(c.name + c.arguments), 0)
       : 0;
-  const images = message.role === 'tool' ? (message.images?.length ?? 0) * IMAGE_TOKENS : 0;
+  const images =
+    message.role === 'tool' || message.role === 'user'
+      ? (message.images?.length ?? 0) * IMAGE_TOKENS
+      : 0;
   return estimateTokens(message.content) + calls + images;
 }
 
@@ -2309,23 +2345,51 @@ export function tokensOf(message: ChatMessage): number {
  * text turns by the same speaker are joined, since some chat templates insist the user and the
  * model take turns. Earlier tool results are cut short to save room.
  */
-export function toTurns(history: MessageRecord[]): ChatMessage[] {
+export function toTurns(
+  history: MessageRecord[],
+  /**
+   * Reads a picture the user sent, for a model that can see. Left out for one that can't, which is
+   * told a picture is there instead.
+   */
+  picture?: (part: ImagePart) => ChatImage | null,
+): ChatMessage[] {
   const turns: ChatMessage[] = [];
-  const say = (role: 'user' | 'assistant', content: string) => {
+  const say = (role: 'user' | 'assistant', content: string, images: ChatImage[] = []) => {
     const text = content.trim();
-    if (!text) return;
+    if (!text && images.length === 0) return;
     const last = turns.at(-1);
     if (last && last.role === role && !(last.role === 'assistant' && last.toolCalls?.length)) {
-      last.content += `\n\n${text}`;
+      last.content = [last.content, text].filter(Boolean).join('\n\n');
+      if (last.role === 'user' && images.length > 0) {
+        last.images = [...(last.images ?? []), ...images];
+      }
+    } else if (role === 'user' && images.length > 0) {
+      turns.push({ role, content: text, images });
     } else {
       turns.push({ role, content: text });
     }
   };
+  // Only the newest message's pictures go: each one costs as much as a page of text.
+  const newest = history.findLast(
+    (message) => message.role === 'user' && message.parts?.some((p) => p.type === 'image'),
+  );
   for (const message of history) {
     const parts: MessagePart[] =
       message.parts ?? (message.content ? [{ type: 'text', round: 0, text: message.content }] : []);
     if (message.role === 'user') {
-      say('user', textOf(parts) || message.content);
+      const sent = parts.filter((p): p is ImagePart => p.type === 'image');
+      const seen = picture && message === newest ? sent.flatMap((part) => picture(part) ?? []) : [];
+      const count = sent.length === 1 ? 'a picture' : `${sent.length} pictures`;
+      const missing = sent.length - seen.length;
+      const note =
+        missing === 0
+          ? ''
+          : !picture
+            ? `[The user sent ${count} with this, which you can't see. Say so if it matters.]`
+            : message === newest
+              ? `[${missing === 1 ? 'A picture' : `${missing} pictures`} the user sent with this couldn't be read.]`
+              : `[The user sent ${count} with this. ${sent.length === 1 ? 'It was' : 'They were'} dropped to save room.]`;
+      say('user', [textOf(parts) || message.content, note].filter(Boolean).join('\n\n'), seen);
       continue;
     }
     const rounds = [...new Set(parts.map((p) => p.round))].sort((a, b) => a - b);

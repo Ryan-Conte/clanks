@@ -15,7 +15,7 @@ import {
   routeFor,
 } from './board';
 import { looksSecret } from './context';
-import { budgetReached, suggestKey } from './projects';
+import { budgetReached, suggestFolder, suggestKey, suggestName } from './projects';
 import { changedStories, criteriaOf, normalizeStoryId, parseSpec } from './spec';
 
 const member = (m: Partial<WorkflowMember> & Pick<WorkflowMember, 'id'>): WorkflowMember => ({
@@ -267,5 +267,25 @@ describe('criteria and keys', () => {
     expect(suggestKey('2048 clone')).toBe('P2C');
     expect(suggestKey('Café')).toBe('CAFE');
     expect(suggestKey('!!')).toBe('PRJ');
+  });
+
+  it('suggests a name and a folder from what the user said they want', () => {
+    expect(suggestName('Make a landing page for my weekend surf school in Byron Bay')).toBe(
+      'Landing page',
+    );
+    expect(suggestName('I want to build a website for my bakery')).toBe('Website for my bakery');
+    expect(suggestName('Create a nextjs that sells surfboards should be a modern design')).toBe(
+      'Nextjs that sells surfboards',
+    );
+    expect(suggestName('make marketing material for https://scruka.com/ launch')).toBe(
+      'Marketing material',
+    );
+    expect(suggestName('Bean There, a coffee cart at the Saturday market.')).toBe('Bean There');
+    expect(suggestName('\n  Surf shop\nwith a blog')).toBe('Surf shop');
+    expect(suggestName('a')).toBe('A');
+    expect(suggestName('  ?! ')).toBe('New project');
+    expect(suggestFolder('Website for my bakery')).toBe('website-for-my-bakery');
+    expect(suggestFolder('Café #5!')).toBe('cafe-5');
+    expect(suggestFolder('…')).toBe('project');
   });
 });

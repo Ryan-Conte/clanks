@@ -174,9 +174,24 @@ export function toOpenAIMessages(messages: ChatMessage[]): unknown[] {
       }
       continue;
     }
-    if (pictures.length > 0) {
+    // Pictures the user put in their own message come after its words.
+    const own: ContentPart[] =
+      message.role === 'user'
+        ? (message.images ?? []).map((image) => ({
+            type: 'image_url',
+            image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+          }))
+        : [];
+    if (pictures.length > 0 || own.length > 0) {
       if (message.role === 'user') {
-        out.push({ role: 'user', content: [...pictures, { type: 'text', text: message.content }] });
+        out.push({
+          role: 'user',
+          content: [
+            ...pictures,
+            ...(message.content ? [{ type: 'text', text: message.content }] : []),
+            ...own,
+          ],
+        });
         pictures = [];
         continue;
       }

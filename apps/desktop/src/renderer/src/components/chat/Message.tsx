@@ -1,9 +1,10 @@
-import type { ClankSummary, MessagePart, MessageRecord } from '@clanks/core';
+import type { ClankSummary, ImagePart, MessagePart, MessageRecord } from '@clanks/core';
 import { memo, useDeferredValue } from 'react';
 import { formatCount, formatRate, formatSeconds } from '../../lib/format';
 import { Avatar } from '../Avatar';
 import { Dot, ErrorText, IconButton, RetryIcon } from '../ui';
 import { CopyButton, Markdown } from './Markdown';
+import { SentPictures } from './Pictures';
 import { ToolCard } from './ToolCard';
 
 export const Message = memo(function Message(props: {
@@ -25,8 +26,8 @@ export const Message = memo(function Message(props: {
         id={`message-${message.id}`}
         className="animate-rise flex flex-col gap-1.5 rounded-2xl border border-line bg-white/[0.03] px-4 py-3"
       >
-        <span className="text-[11px] font-medium tracking-[0.12em] text-dim uppercase">
-          clanks → {props.clank.name}
+        <span className="text-[12px] font-medium text-dim">
+          What {props.clank.name} was asked to do
         </span>
         <Markdown text={message.content} />
       </div>
@@ -38,12 +39,17 @@ export const Message = memo(function Message(props: {
         id={`message-${message.id}`}
         className="group animate-rise flex flex-col items-end gap-1"
       >
-        <p className="max-w-[80%] rounded-3xl rounded-br-lg bg-white/[0.08] px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap text-white">
-          {message.content}
-        </p>
-        <div className="opacity-0 transition-opacity group-hover:opacity-100">
-          <CopyButton text={message.content} />
-        </div>
+        <SentPictures parts={message.parts.filter((p): p is ImagePart => p.type === 'image')} />
+        {message.content && (
+          <p className="max-w-[80%] rounded-3xl rounded-br-lg bg-white/[0.08] px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-white">
+            {message.content}
+          </p>
+        )}
+        {message.content && (
+          <div className="opacity-0 transition-opacity group-hover:opacity-100">
+            <CopyButton text={message.content} />
+          </div>
+        )}
       </div>
     );
   }
@@ -111,19 +117,19 @@ function Reply({
         )}
         {message.finishReason === 'refusal' && <Note>The model declined to answer this.</Note>}
         {!streaming && (
-          <footer className="flex items-center gap-1 text-[12px] text-dim">
+          <footer
+            className={`flex items-center gap-1 text-[12px] text-dim transition-opacity ${message.status === 'failed' ? '' : 'opacity-0 group-hover:opacity-100'}`}
+          >
             {usage && (
+              // How long it took is enough at a glance; the rest is there for whoever wants it.
               <span
-                className="mr-1 font-mono text-[11px]"
-                title={message.model ? `${message.model.model}` : undefined}
+                className="tabular mr-1 text-[11px]"
+                title={`${formatCount(usage.promptTokens)} tokens in, ${formatCount(usage.completionTokens)} out, ${formatRate(usage.tokensPerSecond)}${message.model ? `, on ${message.model.model}` : ''}`}
               >
-                {formatCount(usage.promptTokens)} in · {formatCount(usage.completionTokens)} out ·{' '}
-                {formatRate(usage.tokensPerSecond)} · {formatSeconds(usage.durationMs)}
+                {formatSeconds(usage.durationMs)}
               </span>
             )}
-            <span
-              className={`flex items-center transition-opacity ${message.status === 'failed' ? '' : 'opacity-0 group-hover:opacity-100'}`}
-            >
+            <span className="flex items-center">
               {message.content && <CopyButton text={message.content} />}
               {canRetry && (
                 <IconButton
@@ -164,6 +170,9 @@ function Part(props: {
       );
     case 'note':
       return <Note>{part.text}</Note>;
+    // Only the user's messages carry pictures, and they show their own.
+    case 'image':
+      return null;
     case 'feedback':
       return (
         <div className="flex flex-col gap-1 self-end rounded-2xl rounded-br-md border border-line bg-white/[0.05] px-3.5 py-2.5">

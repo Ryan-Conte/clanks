@@ -29,7 +29,7 @@ Routines run inside clanks, so it has to be running at the time. Closing the win
 
 - An action goes out at its time, or up to 15 minutes late. After that it's **missed**, and never sent on its own: a post meant for 5pm doesn't appear at 9. You get **Post now**, **Reschedule** and **Dismiss**.
 - A run that was missed is skipped, started late, or left for you to decide, as the routine says.
-- Settings → Routines can start clanks when you sign in, keep the computer awake while work is due, and have your operating system start clanks a few minutes before a run. On Windows that can wake a sleeping computer; on macOS and Linux it can't.
+- Settings → This app, under Routines, can start clanks when you sign in, keep the computer awake while work is due, and have your operating system start clanks a few minutes before a run. On Windows that can wake a sleeping computer; on macOS and Linux it can't.
 - Some services can hold a post themselves. A step handed over that way goes out even with your computer off.
 
 ## Pausing

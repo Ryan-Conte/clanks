@@ -1,6 +1,5 @@
 import {
   type BoardSnapshot,
-  COLUMN_TITLES,
   type ClankSummary,
   type OutputType,
   TICKET_COLUMNS,
@@ -17,7 +16,15 @@ import {
   useRef,
   useState,
 } from 'react';
-import { TYPE_LABELS, actorName, cardStatus, ciText, namer, progressText } from '../../lib/board';
+import {
+  COLUMN_LABELS,
+  TYPE_LABELS,
+  actorName,
+  cardStatus,
+  ciText,
+  namer,
+  progressText,
+} from '../../lib/board';
 import { useCrew } from '../../lib/crew';
 import { useNav } from '../../lib/nav';
 import { timeIn, useNow } from '../../lib/routines';
@@ -116,8 +123,8 @@ export function Board({ snapshot, ticket }: { snapshot: BoardSnapshot; ticket: s
             className="mx-6 mb-2 flex items-center gap-2 rounded-xl border border-line bg-panel px-3 py-2 text-[13px]"
           >
             <span className="flex-1">
-              Stop {stoppingCard.key} and put it back in the backlog? Its work so far stays on its
-              branch, and it carries on from there when it starts again.
+              Stop {stoppingCard.key} and put it back in To do? Its work so far is kept, and it
+              carries on from there when it starts again.
             </span>
             <Button
               size="sm"
@@ -137,8 +144,8 @@ export function Board({ snapshot, ticket }: { snapshot: BoardSnapshot; ticket: s
         <span className="flex gap-1 px-6 pb-2" role="tablist" aria-label="View">
           {(
             [
-              ['columns', 'Columns'],
-              ['clanks', 'By clank'],
+              ['columns', 'By stage'],
+              ['clanks', 'By crew member'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -171,7 +178,7 @@ export function Board({ snapshot, ticket }: { snapshot: BoardSnapshot; ticket: s
                     key={column}
                     type="button"
                     onClick={() => setShowDone(true)}
-                    title="Show done tickets"
+                    title="Show what's done"
                     className="flex w-11 shrink-0 flex-col items-center gap-2 rounded-2xl border border-line bg-panel/40 py-3 text-[12px] text-dim hover:text-white"
                   >
                     <span className="font-mono">{cards.length}</span>
@@ -182,7 +189,7 @@ export function Board({ snapshot, ticket }: { snapshot: BoardSnapshot; ticket: s
               return (
                 <section
                   key={column}
-                  aria-label={COLUMN_TITLES[column]}
+                  aria-label={COLUMN_LABELS[column]}
                   onDragOver={(e) => {
                     if (dragging) e.preventDefault();
                   }}
@@ -191,16 +198,16 @@ export function Board({ snapshot, ticket }: { snapshot: BoardSnapshot; ticket: s
                 >
                   <header className="flex items-center justify-between px-3.5 pt-3 pb-2">
                     <span className="flex items-baseline gap-2 text-[13px] font-medium">
-                      {COLUMN_TITLES[column]}
-                      <span className="font-mono text-[11px] text-dim">{cards.length}</span>
+                      {COLUMN_LABELS[column]}
+                      <span className="tabular text-[11px] text-dim">{cards.length}</span>
                     </span>
                     {column === 'backlog' && (
-                      <IconButton label="Add a card" onClick={() => setAdding((a) => !a)}>
+                      <IconButton label="Add something to do" onClick={() => setAdding((a) => !a)}>
                         <PlusIcon />
                       </IconButton>
                     )}
                     {column === 'done' && (
-                      <IconButton label="Hide done tickets" onClick={() => setShowDone(false)}>
+                      <IconButton label="Hide what's done" onClick={() => setShowDone(false)}>
                         <XIcon />
                       </IconButton>
                     )}
@@ -269,11 +276,11 @@ export function Board({ snapshot, ticket }: { snapshot: BoardSnapshot; ticket: s
 
 function emptyText(column: TicketColumn): string {
   return {
-    backlog: 'Nothing waiting. Ask Atlas for work, or add a card.',
+    backlog: 'Nothing waiting. Tell Atlas what you want, or add it here with +.',
     build: 'Nobody is making anything right now.',
-    review: 'Nothing being checked.',
-    ready: 'Nothing waiting for you.',
-    done: 'Nothing done yet.',
+    review: 'Nothing is being checked.',
+    ready: 'Nothing is waiting for you.',
+    done: 'Nothing is finished yet.',
   }[column];
 }
 
@@ -463,7 +470,7 @@ function Card(props: {
         card.skipped.length > 0 ||
         card.delivery?.pr) && (
         <span className="flex flex-wrap items-center gap-1">
-          {card.proposed && <Badge tone="lavender">proposal</Badge>}
+          {card.proposed && <Badge tone="lavender">suggestion</Badge>}
           {card.delivery?.pr && (
             <span className="font-mono text-[10px] text-white/70">
               PR #{card.delivery.pr.number}
@@ -489,7 +496,7 @@ function Card(props: {
       {watchable && (
         <button
           type="button"
-          title="Watch: follow this run in its workbench (W)"
+          title="Watch it being worked on: the files, commands and pages (W)"
           onClick={(e) => {
             e.stopPropagation();
             props.onWatch();
@@ -598,7 +605,7 @@ function ByClank(props: {
                 </li>
               ))}
             </ul>
-            <TicketKeys label="Queued" tickets={queued} onOpen={props.onOpen} />
+            <TicketKeys label="Up next" tickets={queued} onOpen={props.onOpen} />
             <TicketKeys label="Done today" tickets={done} onOpen={props.onOpen} />
           </section>
         );
@@ -696,7 +703,7 @@ function AddTicket(props: {
           value={assignee}
           onChange={(e) => setAssignee(e.target.value)}
         >
-          <option value="">Open</option>
+          <option value="">Whoever is free</option>
           {makers.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -706,7 +713,7 @@ function AddTicket(props: {
       </span>
       <textarea
         aria-label="Description"
-        placeholder="Why, and what the maker needs to know (optional)"
+        placeholder="Why, and anything whoever makes it should know (optional)"
         rows={2}
         className={`${inputClass} h-auto py-2 text-[13px]`}
         value={description}
@@ -714,7 +721,7 @@ function AddTicket(props: {
       />
       <textarea
         aria-label="Acceptance criteria"
-        placeholder="Acceptance criteria, one per line (optional)"
+        placeholder="How you'll know it's done, one per line (optional)"
         rows={2}
         className={`${inputClass} h-auto py-2 text-[13px]`}
         value={criteria}

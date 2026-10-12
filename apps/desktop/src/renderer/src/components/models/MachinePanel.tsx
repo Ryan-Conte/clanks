@@ -14,7 +14,7 @@ export function MachinePanel({ compact = false }: { compact?: boolean }) {
 
   return (
     <Panel
-      title="This machine"
+      title="This computer"
       description="Models run here, on clanks' own copy of llama.cpp."
       testId="hardware"
       actions={

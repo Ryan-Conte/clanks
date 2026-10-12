@@ -12,9 +12,12 @@ export function LibraryPanel({ onTry }: { onTry: (id: string) => void }) {
   const library = snapshot?.library ?? [];
 
   return (
-    <Panel title="Your models" description="Pulled to this machine. They run without the network.">
+    <Panel
+      title="On this computer"
+      description="Models you've downloaded. They run here, with no internet needed."
+    >
       {library.length === 0 ? (
-        <p className="text-sm text-dim">Nothing pulled yet. Pick one from the catalog below.</p>
+        <p className="text-sm text-dim">Nothing downloaded yet. Pick one below.</p>
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {library.map((item) => (
@@ -78,7 +81,7 @@ function LibraryRow({
       <div className="flex flex-wrap items-center gap-2">
         {item.missing ? (
           <Button size="sm" variant="primary" onClick={() => pull.mutate(item.id)}>
-            Pull again
+            Download again
           </Button>
         ) : (
           <>

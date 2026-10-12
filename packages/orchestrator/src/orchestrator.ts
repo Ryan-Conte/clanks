@@ -34,6 +34,7 @@ import { ProviderService, type ProviderServiceOptions } from './providers';
 import { type AppRouter, appRouter } from './router';
 import { type SecretCipher, SecretStore } from './secrets';
 import { SettingsService } from './settings';
+import { finishSetup } from './setup';
 import { ShellService } from './shell';
 import { sqliteModelRepository } from './store/models';
 import { openStore } from './store/store';
@@ -443,6 +444,9 @@ export function startOrchestrator(options: OrchestratorOptions): Orchestrator {
     pumpTimer.unref();
   };
   models.on('change', pumpSoon);
+  // A model first run asked for becomes the crew's as soon as it's pulled.
+  models.on('change', () => finishSetup(models, settings));
+  finishSetup(models, settings);
   settings.on('change', pumpSoon);
   board.pumpAll();
   // Pull requests' checks, and any merged on GitHub, every few minutes.

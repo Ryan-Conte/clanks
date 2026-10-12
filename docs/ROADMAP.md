@@ -176,6 +176,21 @@ Schedule work for the crew, and have things go out at an exact time once you've 
 - Docs site and the download links on [clanks.si](https://clanks.si).
 - License chosen and published.
 
+## Milestone 12: One conversation
+
+Make clanks something anyone can pick up, technical or not: say what you want, talk to one clank, and let the crew work it out between them.
+
+- First run in one click: the model that suits the computer is downloaded and given to the crew when it lands, with the window open or closed.
+- Home is one box: a sentence makes the project, its folder and its crew, and puts you in a conversation with Atlas.
+- A project opens on that conversation, with the crew at work beside it. Whatever needs you comes to it, whichever clank it's from: questions, risky steps to allow, and finished work to approve.
+- Each piece of work is a message of its own there, with what was made in it: a document as a page, a design's pictures, the site as it looked when it was checked. It stays after you've decided.
+- Paste a screenshot or add a photo to any message, and a model that can see it does.
+- Plain words throughout: To do, In progress, Being checked; Code and Document rather than PR and Doc; Download rather than Pull. The board, the spec and the rest stay a tab away.
+- Settings in five groups, and the Models page with what the crew runs on first and the rest under Advanced.
+- The crew is told to talk to you in everyday words, and to make the technical choices itself.
+
+**Done when:** someone who has never used it types "a simple website for my bakery" and, without leaving the conversation with Atlas, answers the crew's questions, approves the spec, and approves the finished page.
+
 ## Later
 
 Ideas worth keeping, not yet scheduled.

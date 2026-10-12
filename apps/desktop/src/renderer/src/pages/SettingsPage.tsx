@@ -16,41 +16,83 @@ import {
   RulesPanel,
   WebSearchPanel,
 } from '../components/settings/ToolsPanels';
-import { Button, Dot, ErrorText, Panel, Row, Toggle, inputClass } from '../components/ui';
+import {
+  Button,
+  Chip,
+  Dot,
+  ErrorText,
+  PageHeader,
+  Panel,
+  Row,
+  Toggle,
+  inputClass,
+} from '../components/ui';
 import { formatTokens } from '../lib/format';
 import { useGitHub, useGitLab } from '../lib/github';
 import { BACKEND_NAMES, useModels } from '../lib/models';
+import type { SettingsSection } from '../lib/nav';
 import { useTRPC } from '../lib/trpc';
 
 const HF_TOKEN = 'hf:token';
 
-export function SettingsPage() {
+/** The settings in a handful of groups, each said the way someone would look for it. */
+const SECTIONS: [SettingsSection, string, string][] = [
+  ['you', 'You', 'What the crew knows about you, in every project.'],
+  ['safety', 'Approvals', 'What the crew asks you about before it does it.'],
+  ['connections', 'Connections', 'Accounts and services the crew can use, when you let it.'],
+  ['models', 'Models', 'How models run here, and models from other providers.'],
+  ['app', 'This app', 'Running in the background, updates and where things are kept.'],
+];
+
+export function SettingsPage({ section }: { section: SettingsSection | null }) {
+  const [picked, setPicked] = useState<SettingsSection>(section ?? 'you');
+  const [, , about] = SECTIONS.find(([id]) => id === picked)!;
   return (
     <div className="relative mx-auto flex max-w-3xl flex-col gap-8 px-10 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-[-0.03em]">Settings</h1>
-        <p className="text-dim">Who you are, and how clanks runs on this machine.</p>
-      </header>
-      <ProfilePanel />
-      <ModelSettingsPanel />
-      <CloudPanel />
-      <ServersPanel />
-      <IntegrationsPanel />
-      <McpPanel />
-      <WebSearchPanel />
-      <ApprovalsPanel />
-      <RulesPanel />
-      <LocalApiPanel />
-      <EmailPanel />
-      <GitHubPanel />
-      <GitLabPanel />
-      <MarketplacePanel />
-      <HuggingFacePanel />
-      <RoutinesPanel />
-      <BackgroundPanel />
-      <UpdatesPanel />
-      <CrashReportsPanel />
-      <AppPanel />
+      <PageHeader title="Settings" description={about} />
+      <nav className="flex flex-wrap gap-1.5" aria-label="Settings sections">
+        {SECTIONS.map(([id, label]) => (
+          <Chip key={id} active={picked === id} onClick={() => setPicked(id)}>
+            {label}
+          </Chip>
+        ))}
+      </nav>
+      {picked === 'you' && <ProfilePanel />}
+      {picked === 'safety' && (
+        <>
+          <ApprovalsPanel />
+          <RulesPanel />
+        </>
+      )}
+      {picked === 'connections' && (
+        <>
+          <IntegrationsPanel />
+          <EmailPanel />
+          <WebSearchPanel />
+          <GitHubPanel />
+          <GitLabPanel />
+          <McpPanel />
+          <MarketplacePanel />
+        </>
+      )}
+      {picked === 'models' && (
+        <>
+          <CloudPanel />
+          <ModelSettingsPanel />
+          <ServersPanel />
+          <HuggingFacePanel />
+          <LocalApiPanel />
+        </>
+      )}
+      {picked === 'app' && (
+        <>
+          <BackgroundPanel />
+          <RoutinesPanel />
+          <UpdatesPanel />
+          <CrashReportsPanel />
+          <AppPanel />
+        </>
+      )}
     </div>
   );
 }

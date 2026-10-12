@@ -1,15 +1,14 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { formatBytes, formatDuration, formatSpeed, formatTokens } from '../../lib/format';
-import { type PullItem, useModels } from '../../lib/models';
+import type { PullItem } from '../../lib/models';
 import { useTRPC } from '../../lib/trpc';
 import { Badge, Button, ErrorText, Panel, ProgressBar, inputClass } from '../ui';
 import { Capabilities, FitBadge } from './badges';
 
-/** Pull by catalog name or from any Hugging Face GGUF repo, and follow the downloads. */
+/** Download by catalog name or from any Hugging Face GGUF repo. The Models page shows it going. */
 export function PullPanel() {
   const trpc = useTRPC();
-  const snapshot = useModels();
   const [draft, setDraft] = useState('');
   const [ref, setRef] = useState('');
   const preview = useQuery({
@@ -25,9 +24,6 @@ export function PullPanel() {
       },
     }),
   );
-  // A finished pull shows up in the library; it needn't stay here too.
-  const pulls = (snapshot?.pulls ?? []).filter((p) => p.state !== 'done');
-
   const check = (event: FormEvent) => {
     event.preventDefault();
     setRef(draft.trim());
@@ -35,7 +31,7 @@ export function PullPanel() {
 
   return (
     <Panel
-      title="Pull a model"
+      title="Download a model by name"
       description={
         <>
           A catalog name such as <code className="font-mono text-white/80">qwen3.5:9b</code>, or any
@@ -84,7 +80,7 @@ export function PullPanel() {
           <div className="flex items-center justify-between gap-4">
             <p className="text-[13px] text-dim">
               {preview.data.pulled
-                ? 'Already pulled.'
+                ? 'Already downloaded.'
                 : preview.data.downloadBytes < preview.data.size
                   ? `${formatBytes(preview.data.downloadBytes)} to download; the rest is already here.`
                   : `${formatBytes(preview.data.downloadBytes)} to download from Hugging Face.`}
@@ -95,20 +91,12 @@ export function PullPanel() {
               disabled={preview.data.pulled || pull.isPending}
               onClick={() => pull.mutate(preview.data.id)}
             >
-              Pull
+              Download
             </Button>
           </div>
         </div>
       )}
       {pull.error && <ErrorText>{pull.error.message}</ErrorText>}
-
-      {pulls.length > 0 && (
-        <ul className="flex flex-col gap-4">
-          {pulls.map((item) => (
-            <PullRow key={item.id} item={item} />
-          ))}
-        </ul>
-      )}
     </Panel>
   );
 }
@@ -120,7 +108,7 @@ const STATE_LABEL: Record<PullItem['state'], string> = {
   verifying: 'Checking the download',
   paused: 'Paused',
   failed: 'Failed',
-  done: 'Pulled',
+  done: 'Downloaded',
 };
 
 export function PullRow({ item }: { item: PullItem }) {

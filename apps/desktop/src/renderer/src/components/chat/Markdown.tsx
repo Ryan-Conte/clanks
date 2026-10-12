@@ -64,6 +64,22 @@ const components: Components = {
   ),
 };
 
+/** Arrows a model wrote as LaTeX, which isn't rendered here: `$\rightarrow$` reads as →. */
+const ARROWS: Record<string, string> = {
+  rightarrow: '→',
+  to: '→',
+  Rightarrow: '⇒',
+  leftarrow: '←',
+  leftrightarrow: '↔',
+};
+
+function plainArrows(text: string): string {
+  return text.replace(
+    /\$\s*\\(rightarrow|to|Rightarrow|leftarrow|leftrightarrow)\s*\$/g,
+    (_, name: string) => ARROWS[name] ?? '→',
+  );
+}
+
 /**
  * A reply as Markdown, with tables and highlighted code. Raw HTML in it is never rendered: replies
  * are a model's output, and nothing in them is trusted.
@@ -76,7 +92,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
         rehypePlugins={[rehypeHighlight]}
         components={components}
       >
-        {text}
+        {plainArrows(text)}
       </ReactMarkdown>
     </div>
   );

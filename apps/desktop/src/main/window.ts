@@ -10,8 +10,8 @@ const TITLE_BAR_HEIGHT = 40;
 export function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     title: 'clanks',
-    width: 1280,
-    height: 800,
+    width: 1920,
+    height: 1080,
     minWidth: 900,
     minHeight: 600,
     show: false,

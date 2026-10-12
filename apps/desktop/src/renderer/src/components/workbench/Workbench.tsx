@@ -12,7 +12,7 @@ import { TerminalPane } from './TerminalPane';
 
 const MIN_WIDTH = 420;
 const TABS: [WorkbenchTab, string][] = [
-  ['diff', 'Diff'],
+  ['diff', 'Changes'],
   ['terminal', 'Terminal'],
   ['browser', 'Browser'],
   ['studio', 'Studio'],

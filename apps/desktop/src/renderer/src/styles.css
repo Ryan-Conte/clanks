@@ -12,9 +12,13 @@
   --color-dim: #8a8a93;
   --color-accent: #b9a7ff;
   --color-accent-2: #7ce7d2;
+  /* A surface lifted off a panel: menus, the box you write in, a card under the pointer. */
+  --color-raised: #15151a;
 
   --animate-pulse-dot: pulse-dot 2.4s ease-in-out infinite;
   --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-pop: pop 0.16s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-breathe: breathe 3.2s ease-in-out infinite;
 
   @keyframes pulse-dot {
     0%,
@@ -36,6 +40,28 @@
       transform: translateY(0);
     }
   }
+
+  @keyframes pop {
+    0% {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* A clank at work: a soft ring that swells and fades. */
+  @keyframes breathe {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent-2) 45%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent-2) 0%, transparent);
+    }
+  }
 }
 
 :root {
@@ -53,6 +79,15 @@ body {
   @apply bg-ink text-zinc-100 antialiased;
 }
 
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+/* Numbers that change in place, such as counts and times, keep their width. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Frameless window: the title bar drags the window, and leaves room for the window controls:
    the traffic lights on the left on macOS, the overlay on the right on Windows and Linux. */
 .titlebar {
@@ -68,7 +103,9 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-dot,
-  .animate-rise {
+  .animate-rise,
+  .animate-pop,
+  .animate-breathe {
     animation: none;
   }
 }
@@ -95,7 +132,7 @@ body {
 
 /* Replies, rendered from Markdown. */
 .markdown {
-  @apply text-[14px] leading-relaxed break-words text-white/90;
+  @apply text-[15px] leading-relaxed break-words text-white/90;
 }
 .markdown > * + * {
   margin-top: 0.8em;
@@ -154,6 +191,68 @@ body {
 }
 .markdown th {
   @apply bg-white/[0.04] font-medium text-white;
+}
+
+/*
+ * A document as a page: a written hand-in shown in the conversation the way its PDF prints, in the
+ * same type and colours as the export (PAGE_CSS in the orchestrator's exports).
+ */
+.paper {
+  background: #fff;
+  color: #16161a;
+  font-family: 'Inter Variable', Inter, 'Segoe UI', system-ui, sans-serif;
+}
+.paper .markdown {
+  color: #16161a;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.paper .markdown h1,
+.paper .markdown h2,
+.paper .markdown h3,
+.paper .markdown h4,
+.paper .markdown strong,
+.paper .markdown th {
+  color: #16161a;
+}
+.paper .markdown h1 {
+  font-size: 1.7em;
+  letter-spacing: -0.01em;
+  margin-top: 0;
+}
+.paper .markdown h2 {
+  font-size: 1.25em;
+}
+.paper .markdown a {
+  color: #2a4bd7;
+  text-decoration-color: #2a4bd766;
+}
+.paper .markdown :not(pre) > code {
+  background: #f1f1f5;
+  color: #16161a;
+}
+.paper .markdown blockquote {
+  border-color: #d0d0d8;
+  color: #4a4a55;
+}
+.paper .markdown li::marker {
+  color: #6a6a75;
+}
+.paper .markdown hr,
+.paper .markdown th,
+.paper .markdown td {
+  border-color: #d0d0d8;
+}
+.paper .markdown th {
+  background: #f1f1f5;
+}
+.paper .code-block {
+  background: #f1f1f5;
+  border-color: #d0d0d8;
+  color: #16161a;
+}
+.paper .code-block > div {
+  border-color: #d0d0d8;
 }
 
 /* Code, in the clanks.si palette. */

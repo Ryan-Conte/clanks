@@ -1,11 +1,15 @@
-import type {
-  BrowserState,
-  ChatLiveEvent,
-  ClankSummary,
-  ConversationSummary,
-  MessageRecord,
-  ModelChoice,
-  WorkspaceState,
+import {
+  type BoardSnapshot,
+  type BrowserState,
+  type ChatLiveEvent,
+  type ClankSummary,
+  type ConversationSummary,
+  LEAD_CLANK,
+  type MessageImage,
+  type MessageRecord,
+  type ModelChoice,
+  type TicketCard,
+  type WorkspaceState,
 } from '@clanks/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSubscription } from '@trpc/tanstack-react-query';
@@ -14,27 +18,37 @@ import { Avatar } from '../components/Avatar';
 import { Composer } from '../components/chat/Composer';
 import { Message } from '../components/chat/Message';
 import { PromptPanel } from '../components/chat/PromptPanel';
+import { Deliverable } from '../components/project/Deliverable';
+import { ProjectAsks } from '../components/project/Overview';
 import {
   Button,
-  CodeIcon,
+  Chip,
   ErrorText,
+  EyeIcon,
   FolderIcon,
   IconButton,
   LayersIcon,
+  Menu,
   PencilIcon,
+  PlusIcon,
   TrashIcon,
   XIcon,
   inputClass,
 } from '../components/ui';
 import { Workbench } from '../components/workbench/Workbench';
 import {
+  plainBlurb,
+  plainJob,
+  startersFor,
   useClank,
   useClankModel,
   useConversations,
   useCrew,
   useProviders,
+  useSeesPictures,
   whereItRuns,
 } from '../lib/crew';
+import { handedInAt } from '../lib/board';
 import { useModels } from '../lib/models';
 import { useNav } from '../lib/nav';
 import { folderName, useProject } from '../lib/projects';
@@ -42,6 +56,15 @@ import { useTRPC } from '../lib/trpc';
 import { type WorkbenchFocus, WorkbenchContext, useWorkbench } from '../lib/workbench';
 
 type ChatData = { conversation: ConversationSummary; messages: MessageRecord[] };
+
+/**
+ * A chat shown as a project's conversation: the board it's about, whose questions, approvals and
+ * finished work show in the thread, and what stands beside it, which is the crew at work.
+ */
+interface InProject {
+  snapshot: BoardSnapshot;
+  aside: ReactNode;
+}
 
 /** Applies one live event to a conversation as the window holds it. */
 function apply(data: ChatData, event: ChatLiveEvent): ChatData {
@@ -103,95 +126,124 @@ function apply(data: ChatData, event: ChatLiveEvent): ChatData {
   }
 }
 
+/** Things to say to the lead in a project that already has work going. */
+const PROJECT_STARTERS = ['Where are we up to?', 'What do you need from me?'];
+
 /** A chat that isn't saved yet: it becomes one with its first message. */
-export function DraftChat({ clankId, projectId }: { clankId: string; projectId: string | null }) {
+export function DraftChat({
+  clankId,
+  projectId,
+  inProject,
+}: {
+  clankId: string;
+  projectId: string | null;
+  inProject?: InProject;
+}) {
   const trpc = useTRPC();
   const { go } = useNav();
   const clank = useClank(clankId);
   const project = useProject(projectId);
-  const crew = useCrew();
+  const model = useClankModel(clank);
   const [folder, setFolder] = useState<string | null>(null);
   const start = useMutation(trpc.chat.start.mutationOptions());
   const choose = useMutation(
     trpc.chat.chooseFolder.mutationOptions({ onSuccess: (picked) => picked && setFolder(picked) }),
   );
   if (!clank) return null;
+  const send = async (text: string, images: MessageImage[] = []) => {
+    try {
+      const { conversation } = await start.mutateAsync(
+        project
+          ? { clankId, text, images, projectId: project.id }
+          : { clankId, text, images, folder },
+      );
+      go({ page: 'chat', id: conversation.id, projectId: conversation.projectId });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const starters = project
+    ? (inProject?.snapshot.tickets.length ?? 0) > 0
+      ? PROJECT_STARTERS
+      : []
+    : startersFor(clank.id);
 
   return (
-    <ChatFrame clank={clank} conversation={null}>
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 pb-10 text-center">
-        <Avatar colour={clank.avatar} size="lg" />
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-[-0.02em]">{clank.name}</h1>
-          <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase">{clank.role}</p>
-        </div>
-        <p className="max-w-md text-sm text-dim">{clank.summary}</p>
-        {project ? (
-          <div className="flex flex-col items-center gap-3">
-            <span
-              className="flex items-center gap-1.5 rounded-full border border-line px-3 py-0.5 text-[13px] text-white/85"
-              title={`${clank.name} works on its own copy of ${project.folder}, and on ${project.name}'s board`}
-            >
-              <FolderIcon /> {project.name}
-            </span>
-            <span className="flex items-center gap-1" aria-label="Who to talk to">
-              {crew
-                .filter((c) => project.crew.some((m) => m.clankId === c.id))
-                .map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    title={`Chat with ${c.name} in ${project.name}`}
-                    aria-pressed={c.id === clank.id}
-                    onClick={() => go({ page: 'draft', clankId: c.id, projectId: project.id })}
-                    className={`rounded-full p-0.5 ${c.id === clank.id ? 'ring-2 ring-accent/70' : 'opacity-60 hover:opacity-100'}`}
-                  >
-                    <Avatar colour={c.avatar} size="xs" />
-                  </button>
+    <ChatFrame clank={clank} conversation={null} {...(inProject ? { inProject } : {})}>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-8">
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+            <Avatar colour={clank.avatar} size="lg" />
+            <div className="flex flex-col gap-1.5">
+              <h1 className="text-2xl font-semibold tracking-[-0.02em]">
+                {project ? `Tell ${clank.name} what you want` : clank.name}
+              </h1>
+              <p className="mx-auto max-w-md text-[15px] leading-relaxed text-dim">
+                {project
+                  ? `${clank.name} ${clank.id === LEAD_CLANK ? 'leads the crew on' : 'works on'} ${project.name}. Say it in your own words, and the crew takes it from there.`
+                  : plainBlurb(clank)}
+              </p>
+            </div>
+            {starters.length > 0 && model && (
+              <ul className="flex max-w-xl flex-wrap justify-center gap-2 pt-1">
+                {starters.map((starter) => (
+                  <li key={starter}>
+                    <Chip disabled={start.isPending} onClick={() => void send(starter)}>
+                      {starter}
+                    </Chip>
+                  </li>
                 ))}
-            </span>
+              </ul>
+            )}
+            {!project &&
+              (folder ? (
+                <span
+                  className="flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-3 text-[13px] text-white/85"
+                  title={`${clank.name} works on its own copy of ${folder}`}
+                >
+                  <FolderIcon />
+                  <span className="max-w-64 truncate">{folderName(folder)}</span>
+                  <IconButton label="Don't use a folder" onClick={() => setFolder(null)}>
+                    <XIcon />
+                  </IconButton>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title={`Let ${clank.name} read and change the files in a folder. It works on its own copy.`}
+                  onClick={() => choose.mutate()}
+                >
+                  <FolderIcon /> Work on a folder
+                </Button>
+              ))}
+            {choose.error && <ErrorText>{choose.error.message}</ErrorText>}
           </div>
-        ) : folder ? (
-          <span
-            className="flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-3 text-[13px] text-white/85"
-            title={`${clank.name} works on its own copy of ${folder}`}
-          >
-            <FolderIcon />
-            <span className="max-w-64 truncate">{folderName(folder)}</span>
-            <IconButton label="Don't use a folder" onClick={() => setFolder(null)}>
-              <XIcon />
-            </IconButton>
-          </span>
-        ) : (
-          <Button size="sm" variant="ghost" onClick={() => choose.mutate()}>
-            <FolderIcon /> Work on a folder
-          </Button>
-        )}
-        {choose.error && <ErrorText>{choose.error.message}</ErrorText>}
+          {inProject?.snapshot.tickets
+            .filter((t) => t.column === 'ready')
+            .map((card) => (
+              <Deliverable key={card.id} card={card} snapshot={inProject.snapshot} />
+            ))}
+          {inProject && <ProjectAsks snapshot={inProject.snapshot} skipConversation={null} />}
+        </div>
       </div>
       <ComposerArea
         clank={clank}
         replying={false}
         notes={0}
         error={start.error?.message ?? null}
-        onSend={async (text) => {
-          try {
-            const { conversation } = await start.mutateAsync(
-              project ? { clankId, text, projectId: project.id } : { clankId, text, folder },
-            );
-            go({ page: 'chat', id: conversation.id });
-            return true;
-          } catch {
-            return false;
-          }
-        }}
+        onSend={send}
         onStop={() => {}}
       />
     </ChatFrame>
   );
 }
 
-export function LiveChat({ id }: { id: string }) {
+/** A message, or a piece of the crew's work handed to the user at that point in the conversation. */
+type Entry = { at: number; message: MessageRecord } | { at: number; work: TicketCard };
+
+export function LiveChat({ id, inProject }: { id: string; inProject?: InProject }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const snapshot = useModels();
@@ -210,12 +262,15 @@ export function LiveChat({ id }: { id: string }) {
   const stop = useMutation(trpc.chat.stop.mutationOptions());
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const board = inProject?.snapshot;
+  const waitingOnUser = board?.needsYou.length ?? 0;
+  const finished = board?.tickets.filter((t) => t.doneAt !== null).length ?? 0;
 
   // Keep to the bottom as a reply streams in, unless the user scrolled up to read.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [query.data?.messages]);
+  }, [query.data?.messages, waitingOnUser, finished]);
 
   if (query.error) {
     return (
@@ -228,9 +283,19 @@ export function LiveChat({ id }: { id: string }) {
   const { conversation, messages } = query.data;
   const waiting = waitingFor(conversation, messages, model, snapshot);
   const last = messages.at(-1);
+  // The crew's work is in the conversation where it was handed over: everything still waiting,
+  // and what was decided since this conversation began.
+  const entries: Entry[] = [
+    ...messages.map((message) => ({ at: +message.createdAt, message })),
+    ...(board?.tickets ?? [])
+      .filter(
+        (t) => t.column === 'ready' || (t.doneAt !== null && +t.doneAt >= +conversation.createdAt),
+      )
+      .map((work) => ({ at: handedInAt(work), work })),
+  ].sort((a, b) => a.at - b.at);
 
   return (
-    <ChatFrame clank={clank} conversation={conversation}>
+    <ChatFrame clank={clank} conversation={conversation} {...(inProject ? { inProject } : {})}>
       <div
         ref={scroller}
         onScroll={(e) => {
@@ -240,38 +305,43 @@ export function LiveChat({ id }: { id: string }) {
         className="min-h-0 flex-1 overflow-y-auto"
       >
         <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-8">
-          {messages.map((message) => (
-            <Message
-              key={message.id}
-              message={message}
-              clank={clank}
-              canRetry={
-                !conversation.replying &&
-                message.role === 'assistant' &&
-                message === messages.at(-1)
-              }
-              waiting={waiting}
-              answerable={!conversation.replying && message === last}
-              onAnswer={(text) => {
-                stick.current = true;
-                send.mutate({ conversationId: id, text });
-              }}
-              onRetry={() => {
-                stick.current = true;
-                retry.mutate(id);
-              }}
-            />
-          ))}
+          {entries.map((entry) =>
+            'work' in entry ? (
+              <Deliverable key={`work:${entry.work.id}`} card={entry.work} snapshot={board!} />
+            ) : (
+              <Message
+                key={entry.message.id}
+                message={entry.message}
+                clank={clank}
+                canRetry={
+                  !conversation.replying &&
+                  entry.message.role === 'assistant' &&
+                  entry.message === last
+                }
+                waiting={waiting}
+                answerable={!conversation.replying && entry.message === last}
+                onAnswer={(text) => {
+                  stick.current = true;
+                  send.mutate({ conversationId: id, text });
+                }}
+                onRetry={() => {
+                  stick.current = true;
+                  retry.mutate(id);
+                }}
+              />
+            ),
+          )}
+          {board && <ProjectAsks snapshot={board} skipConversation={id} />}
         </div>
       </div>
       <ChatComposer
         clank={clank}
         conversation={conversation}
         error={(send.error ?? retry.error)?.message ?? null}
-        onSend={async (text) => {
+        onSend={async (text, images) => {
           stick.current = true;
           try {
-            await send.mutateAsync({ conversationId: id, text });
+            await send.mutateAsync({ conversationId: id, text, images });
             return true;
           } catch {
             return false;
@@ -288,7 +358,7 @@ function ChatComposer(props: {
   clank: ClankSummary;
   conversation: ConversationSummary;
   error: string | null;
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, images: MessageImage[]) => Promise<boolean>;
   onStop: () => void;
 }) {
   const notes = useWorkbenchNotes();
@@ -319,7 +389,7 @@ function waitingFor(
   const replyModel = messages.at(-1)?.model ?? model;
   if (!conversation.replying || replyModel?.provider !== 'builtin') return 'Thinking…';
   const loaded = snapshot?.runtime.loaded.find((l) => l.modelId === replyModel.model);
-  if (!loaded || loaded.state === 'loading') return `Loading ${replyModel.model}…`;
+  if (!loaded || loaded.state === 'loading') return 'Waking up. The first reply takes a moment…';
   if (loaded.state === 'restarting') return 'The model is restarting…';
   return 'Thinking…';
 }
@@ -354,14 +424,18 @@ function useBrowserState(conversation: ConversationSummary | null): BrowserState
 function ChatFrame({
   clank,
   conversation,
+  inProject,
   children,
 }: {
   clank: ClankSummary;
   conversation: ConversationSummary | null;
+  inProject?: InProject;
   children: ReactNode;
 }) {
   const [showPrompt, setShowPrompt] = useState(false);
-  const [open, setOpen] = useState(true);
+  // A project's conversation has the crew beside it. The workbench, which shows the files and
+  // commands behind the work, opens when it's asked for.
+  const [open, setOpen] = useState(!inProject);
   const [focus, setFocus] = useState<WorkbenchFocus | null>(null);
   const state = useWorkspaceState(conversation);
   const browser = useBrowserState(conversation);
@@ -374,7 +448,7 @@ function ChatFrame({
   const [seenTabs, setSeenTabs] = useState(0);
   if (tabCount !== seenTabs) {
     setSeenTabs(tabCount);
-    if (tabCount > seenTabs) show({ tab: 'browser' });
+    if (tabCount > seenTabs && !inProject) show({ tab: 'browser' });
   }
   const hasFolder = conversation?.folder != null;
   const hasWorkbench = hasFolder || tabCount > 0;
@@ -394,11 +468,12 @@ function ChatFrame({
 
   return (
     <WorkbenchContext value={workbench}>
-      <div className="flex h-full min-h-0">
+      <div className="flex h-full min-h-0 flex-1">
         <div className="@container flex min-w-[22rem] flex-1 flex-col">
           <ChatHeader
             clank={clank}
             conversation={conversation}
+            embedded={Boolean(inProject)}
             showPrompt={showPrompt}
             onTogglePrompt={() => setShowPrompt((s) => !s)}
           />
@@ -411,8 +486,10 @@ function ChatFrame({
             onClose={() => setShowPrompt(false)}
           />
         )}
-        {workbench.open && (
+        {workbench.open ? (
           <Workbench clankId={clank.id} folder={hasFolder} role={conversation?.role ?? null} />
+        ) : (
+          !showPrompt && inProject?.aside
         )}
       </div>
     </WorkbenchContext>
@@ -422,10 +499,12 @@ function ChatFrame({
 function ChatHeader(props: {
   clank: ClankSummary;
   conversation: ConversationSummary | null;
+  /** Shown as a project's conversation, under the project's own header. */
+  embedded: boolean;
   showPrompt: boolean;
   onTogglePrompt: () => void;
 }) {
-  const { clank, conversation } = props;
+  const { clank, conversation, embedded } = props;
   const trpc = useTRPC();
   const { go } = useNav();
   const providers = useProviders();
@@ -435,160 +514,155 @@ function ChatHeader(props: {
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const project = useProject(conversation?.projectId);
   const rename = useMutation(
     trpc.chat.rename.mutationOptions({ onSuccess: () => setRenaming(false) }),
   );
   const remove = useMutation(
-    trpc.chat.delete.mutationOptions({ onSuccess: () => go({ page: 'home' }) }),
+    trpc.chat.delete.mutationOptions({
+      onSuccess: () =>
+        go(project ? { page: 'project', id: project.id, tab: 'overview' } : { page: 'home' }),
+    }),
   );
   const pickFolder = useMutation(trpc.chat.pickFolder.mutationOptions());
   const clearFolder = useMutation(trpc.chat.clearFolder.mutationOptions());
   const error = [rename, remove, pickFolder, clearFolder].find((m) => m.error)?.error;
-  const project = useProject(conversation?.projectId);
+  const own = conversation !== null && !conversation.role;
+  const projectId = project?.id ?? null;
 
   return (
-    <header className="flex flex-col gap-2 border-b border-line px-5 py-3">
+    <header
+      className={`flex flex-col gap-2 border-b border-line px-5 ${embedded ? 'py-2' : 'py-3'}`}
+    >
       <div className="flex items-center justify-between gap-4">
         <button
           type="button"
           onClick={() => go({ page: 'crew', clankId: clank.id })}
           className="flex min-w-0 items-center gap-3 rounded-lg text-left"
-          title={`${clank.name}'s profile`}
+          title={`${clank.name}: ${plainJob(clank)}. Open its profile.`}
         >
-          <Avatar colour={clank.avatar} />
-          <span className="flex min-w-0 flex-col">
-            <span className="flex items-baseline gap-2">
-              <span className="text-sm font-medium">{clank.name}</span>
-              <span className="text-xs text-dim">{clank.role}</span>
-            </span>
+          <Avatar colour={clank.avatar} size={embedded ? 'xs' : 'sm'} />
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="text-sm font-medium">{clank.name}</span>
+            <span className="truncate text-xs text-dim">{clank.role}</span>
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-1">
-          {/* With the workbench open the chat is narrow; the model shows on each reply anyway. */}
-          {model && (
-            <span
-              className="mr-2 hidden max-w-64 truncate rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-dim @3xl:inline-block"
-              title={`${model.model} · ${whereItRuns(model, providers)}`}
-            >
-              {model.model} · {whereItRuns(model, providers)}
-            </span>
-          )}
-          {conversation && project && (
+          {!embedded && conversation && project && (
             <button
               type="button"
               onClick={() =>
                 go({
                   page: 'project',
                   id: project.id,
-                  tab: 'board',
+                  tab: conversation.ticketId ? 'board' : 'overview',
                   ticket: conversation.ticketId,
                 })
               }
-              className="mr-1 flex items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5 text-[12px] text-white/80 hover:bg-white/[0.05]"
+              className="mr-1 flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-[12px] text-white/80 hover:bg-white/[0.05]"
               title={
                 conversation.role
-                  ? `${clank.name}'s ${conversation.role === 'planner' ? 'planning' : conversation.role === 'consult' ? "answer to another clank's question" : 'run on a ticket'} in ${project.name}. Open it on the board.`
-                  : `${clank.name} works on its own copy of ${project.folder}, and on ${project.name}'s board`
+                  ? `${clank.name}'s ${conversation.role === 'planner' ? 'planning' : conversation.role === 'consult' ? "answer to another clank's question" : 'work on a ticket'} in ${project.name}. Go back to the project.`
+                  : `Back to ${project.name}`
               }
             >
-              <FolderIcon />
-              <span className="max-w-32 truncate">{project.name}</span>
-              {conversation.role && (
-                <span className="font-mono text-[11px] text-dim">
-                  {conversation.role === 'planner'
-                    ? 'plan'
-                    : conversation.role === 'consult'
-                      ? 'answer'
-                      : conversation.title.split(':')[0]}
-                </span>
-              )}
+              <span aria-hidden="true">‹</span>
+              <span className="max-w-40 truncate">{project.name}</span>
             </button>
           )}
-          {conversation &&
-            !project &&
-            (conversation.folder ? (
-              <span
-                className="mr-1 flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-2.5 text-[12px] text-white/80"
-                title={`${clank.name} works on its own copy of ${conversation.folder}, and follows its CLANKS.md or AGENTS.md`}
-              >
-                <FolderIcon />
-                <span className="max-w-32 truncate">{folderName(conversation.folder)}</span>
-                <IconButton
-                  label="Stop using this folder"
-                  disabled={conversation.replying}
-                  onClick={() => clearFolder.mutate(conversation.id)}
-                >
-                  <XIcon />
-                </IconButton>
-              </span>
-            ) : (
+          {conversation && !project && conversation.folder && (
+            <span
+              className="mr-1 flex items-center gap-1.5 rounded-full border border-line py-0.5 pr-0.5 pl-2.5 text-[12px] text-white/80"
+              title={`${clank.name} works on its own copy of ${conversation.folder}, and follows its CLANKS.md or AGENTS.md`}
+            >
+              <FolderIcon />
+              <span className="max-w-32 truncate">{folderName(conversation.folder)}</span>
               <IconButton
-                label="Work on a folder: the clank gets its own copy, and follows its CLANKS.md or AGENTS.md"
+                label="Stop using this folder"
                 disabled={conversation.replying}
-                onClick={() => pickFolder.mutate(conversation.id)}
+                onClick={() => clearFolder.mutate(conversation.id)}
               >
-                <FolderIcon />
+                <XIcon />
               </IconButton>
-            ))}
+            </span>
+          )}
           {(conversation?.folder || browsing) && (
-            <IconButton
-              label={
+            <Button
+              size="sm"
+              variant={workbenchOpen ? 'secondary' : 'ghost'}
+              title={
                 workbenchOpen
-                  ? 'Hide the workbench'
-                  : conversation?.folder
-                    ? 'Show the workbench: diff, terminal, browser and activity'
-                    : 'Show the workbench: browser and activity'
+                  ? `Hide the files, commands and pages behind ${clank.name}'s work`
+                  : `See the files ${clank.name} changes, the commands it runs and the pages it opens, as it works`
               }
               onClick={() => setWorkbenchOpen(!workbenchOpen)}
-              className={workbenchOpen ? 'bg-white/[0.08] text-white' : ''}
             >
-              <CodeIcon />
-            </IconButton>
+              <EyeIcon /> {workbenchOpen ? 'Hide the work' : 'Watch the work'}
+            </Button>
           )}
-          <IconButton
-            label={`What ${clank.name} is told`}
-            onClick={props.onTogglePrompt}
-            className={props.showPrompt ? 'bg-white/[0.08] text-white' : ''}
-          >
-            <LayersIcon />
-          </IconButton>
-          {conversation && !conversation.role && (
-            <>
-              <IconButton
-                label="Rename"
-                onClick={() => {
+          <Menu
+            label="More"
+            items={[
+              embedded && projectId !== null
+                ? {
+                    label: 'New chat',
+                    hint: `Start again with ${clank.name}. This one is kept.`,
+                    icon: <PlusIcon />,
+                    onSelect: () => go({ page: 'draft', clankId: clank.id, projectId }),
+                  }
+                : null,
+              conversation &&
+                !project &&
+                !conversation.folder && {
+                  label: 'Work on a folder',
+                  hint: `${clank.name} gets its own copy of it to read and change.`,
+                  icon: <FolderIcon />,
+                  disabled: conversation.replying,
+                  onSelect: () => pickFolder.mutate(conversation.id),
+                },
+              {
+                label: `What ${clank.name} is told`,
+                hint: model
+                  ? `Its instructions. It runs on ${model.model}, ${whereItRuns(model, providers)}.`
+                  : 'Its instructions, word for word.',
+                icon: <LayersIcon />,
+                onSelect: props.onTogglePrompt,
+              },
+              own && {
+                label: 'Rename',
+                icon: <PencilIcon />,
+                onSelect: () => {
                   setTitle(conversation.title);
                   setRenaming(true);
-                }}
-              >
-                <PencilIcon />
-              </IconButton>
-              {confirmDelete ? (
-                <span className="flex items-center gap-1 pl-1">
-                  <Button size="sm" variant="danger" onClick={() => remove.mutate(conversation.id)}>
-                    Delete chat
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-                    Keep
-                  </Button>
-                </span>
-              ) : (
-                <IconButton
-                  label={
-                    conversation.folder
-                      ? 'Delete chat. Its worktree goes too; the branch stays, with any work left in it committed.'
-                      : 'Delete chat'
-                  }
-                  onClick={() => setConfirmDelete(true)}
-                >
-                  <TrashIcon />
-                </IconButton>
-              )}
-            </>
-          )}
+                },
+              },
+              own && {
+                label: 'Delete chat',
+                icon: <TrashIcon />,
+                danger: true,
+                onSelect: () => setConfirmDelete(true),
+              },
+            ]}
+          />
         </div>
       </div>
-      {conversation?.projectId && <RunningNow conversation={conversation} />}
+      {conversation?.projectId && conversation.role && <RunningNow conversation={conversation} />}
+      {confirmDelete && conversation && (
+        <p className="flex flex-wrap items-center gap-2 text-[13px] text-white/85">
+          <span className="flex-1">
+            Delete this chat?
+            {conversation.folder && !project
+              ? ` ${clank.name}'s copy of the folder goes too; any work left in it is kept on its branch.`
+              : " It can't be brought back."}
+          </span>
+          <Button size="sm" variant="danger" onClick={() => remove.mutate(conversation.id)}>
+            Delete chat
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+            Keep
+          </Button>
+        </p>
+      )}
       {renaming && conversation && (
         <form
           className="flex gap-2"
@@ -648,7 +722,7 @@ function RunningNow({ conversation }: { conversation: ConversationSummary }) {
           >
             <Avatar colour={clank?.avatar ?? 'slate'} size="xs" live={!c.asking} />
             {clank?.name ?? c.clankId}
-            <span className="font-mono text-[11px] text-dim">{c.title.split(':')[0]}</span>
+            <span className="text-[11px] text-dim">{c.title.split(':')[0]}</span>
             {c.asking && <span className="text-amber-200">!</span>}
           </button>
         );
@@ -663,31 +737,23 @@ function ComposerArea(props: {
   /** Notes from the diff editor that will go with the next message. */
   notes: number;
   error: string | null;
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, images: MessageImage[]) => Promise<boolean>;
   onStop: () => void;
 }) {
   const { go } = useNav();
   const model = useClankModel(props.clank);
+  const sees = useSeesPictures(props.clank);
   return (
     <div className="shrink-0">
       {!model ? (
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-6 pb-2">
           <p className="text-sm text-dim">
-            {props.clank.name} has no model to run on yet. Pick one for the crew, or give{' '}
-            {props.clank.name} its own.
+            {props.clank.name} can't answer yet: the crew needs its AI model first. It's one
+            download.
           </p>
-          <span className="flex shrink-0 gap-2">
-            <Button size="sm" onClick={() => go({ page: 'models' })}>
-              Models
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => go({ page: 'crew', clankId: props.clank.id })}
-            >
-              Profile
-            </Button>
-          </span>
+          <Button size="sm" variant="primary" onClick={() => go({ page: 'setup' })}>
+            Set up the crew
+          </Button>
         </div>
       ) : (
         <>
@@ -708,6 +774,7 @@ function ComposerArea(props: {
         name={props.clank.name}
         replying={props.replying}
         disabled={!model}
+        blind={!sees}
         onSend={props.onSend}
         onStop={props.onStop}
       />

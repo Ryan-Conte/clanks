@@ -269,6 +269,109 @@ export function suggestKey(name: string): string {
   return key.length >= 2 ? key : 'PRJ';
 }
 
+/** Words an idea opens with that say nothing about what it is: "I want to make a…". */
+const NAME_OPENERS = new Set([
+  'a',
+  'an',
+  'the',
+  'i',
+  'id',
+  'we',
+  'want',
+  'need',
+  'would',
+  'like',
+  'to',
+  'please',
+  'can',
+  'could',
+  'you',
+  'help',
+  'me',
+  'us',
+  'lets',
+  'make',
+  'create',
+  'build',
+  'design',
+  'write',
+  'plan',
+  'start',
+  'set',
+  'up',
+  'my',
+  'our',
+  'some',
+  'new',
+]);
+
+/** Words a name stops before, once it has two words: "landing page [for a surf school]". */
+const NAME_STOPS = new Set([
+  'for',
+  'to',
+  'in',
+  'on',
+  'at',
+  'by',
+  'from',
+  'about',
+  'with',
+  'that',
+  'which',
+  'who',
+  'so',
+  'because',
+  'and',
+  'should',
+  'where',
+  'when',
+]);
+
+/** Words a name doesn't end on. */
+const NAME_TRAILERS = new Set([...NAME_STOPS, 'a', 'an', 'the', 'my', 'our', 'of', 'is', 'are']);
+
+const NAME_WORDS = 5;
+
+/**
+ * A project's name from what the user said they want: "Make a landing page for my surf school" is
+ * "Landing page". A guess to start from, which the user can change.
+ */
+export function suggestName(idea: string): string {
+  const line =
+    idea
+      .trim()
+      .split(/\n|[.!?;:](?:\s|$)|,\s/)
+      .find((part) => /[\p{L}\p{N}]/u.test(part)) ?? '';
+  const words = line.split(/\s+/).filter(Boolean);
+  const plain = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  while (words.length > 1 && NAME_OPENERS.has(plain(words[0]!))) words.shift();
+  const kept: string[] = [];
+  for (const word of words) {
+    if (kept.length >= 2 && NAME_STOPS.has(plain(word))) break;
+    kept.push(word);
+    if (kept.length === NAME_WORDS) break;
+  }
+  while (kept.length > 1 && NAME_TRAILERS.has(plain(kept.at(-1)!))) kept.pop();
+  const name = kept
+    .join(' ')
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N})]+$/gu, '')
+    .slice(0, 60)
+    .trim();
+  return name ? name[0]!.toUpperCase() + name.slice(1) : 'New project';
+}
+
+/** A folder name for a project: "Surf shop" is surf-shop. */
+export function suggestFolder(name: string): string {
+  const slug = name
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '');
+  return slug || 'project';
+}
+
 /** A sign-in waiting for the user to enter its code on github.com. */
 export interface GitHubDeviceCode {
   userCode: string;

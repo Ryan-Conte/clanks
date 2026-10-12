@@ -3,7 +3,7 @@
 ## A model won't load, or is slow
 
 - **"Too large"** on the Models page means it won't fit your memory. Pick a smaller one, or a smaller quantisation of the same one.
-- **Slow replies** usually mean part of the model is on the CPU. The Models page shows where it loaded. Close other programs that use the graphics card, or lower the context per slot in Settings → Running models.
+- **Slow replies** usually mean part of the model is on the CPU. The Models page shows where it loaded. Close other programs that use the graphics card, or lower the context per slot in Settings → Models → Running models.
 - **An NVIDIA card that isn't used:** the Models page offers the CUDA build as a download.
 - **The reply was cut off:** the conversation outgrew the model's context. A run recovers by itself; in a chat, start a new one or use a model with more context.
 
@@ -13,9 +13,9 @@ Its card says why. The usual reasons:
 
 - **Waiting for a model or a free run.** It starts when one frees up. A project runs three at once unless you change that.
 - **Paused: budget.** Raise the budget in the project's settings.
-- **A question.** Open the card and answer it.
+- **A question.** It's in your conversation with Atlas, on the project's Overview. Answer it there.
 - **Paused, or failed.** Open it, read what happened, and press **Carry on**, with a note if the clank needs telling something.
-- **Hold new work** is on, in the project's header.
+- **The crew is paused.** The project's header says so, with **Carry on**. Pausing is in its **⋯** menu.
 
 ## Work that keeps coming back
 
@@ -30,7 +30,7 @@ Approving merges the work. If your folder has changes you haven't committed, or 
 Look at its card on the project's Routines tab. It says which:
 
 - **Missed:** it wasn't approved by its time, or clanks wasn't running, or the computer was asleep. Use **Post now** or **Reschedule**.
-- **Failed:** the service turned it down, and its own words are on the card. A revoked or expired account needs connecting again in Settings → Integrations.
+- **Failed:** the service turned it down, and its own words are on the card. A revoked or expired account needs connecting again in Settings → Connections.
 - **Outcome unknown:** clanks stopped while sending it. Check the service, then say whether it went out. clanks won't send it again on a guess.
 
 ## Starting over

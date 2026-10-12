@@ -3,23 +3,36 @@ import {
   type ClankSummary,
   type OutputType,
   type TicketCard,
+  type TicketColumn,
   type Usage,
   compactNumber,
 } from '@clanks/core';
 import type { Tone } from '../components/ui';
 import { formatSeconds } from './format';
 
-/** How each output type reads on a card. */
+/** How each output type reads on a card, in words that need no knowledge of how code is shipped. */
 export const TYPE_LABELS: Record<OutputType, string> = {
   spec: 'Spec',
   design: 'Design',
-  pr: 'PR',
+  pr: 'Code',
   copy: 'Copy',
-  doc: 'Doc',
+  doc: 'Document',
   email: 'Email',
   research: 'Research',
   campaign: 'Campaign',
   other: 'Other',
+};
+
+/**
+ * The board's columns as the window names them. The crew's own words for them, which go into
+ * prompts, are `COLUMN_TITLES` in core.
+ */
+export const COLUMN_LABELS: Record<TicketColumn, string> = {
+  backlog: 'To do',
+  build: 'In progress',
+  review: 'Being checked',
+  ready: 'Ready for you',
+  done: 'Done',
 };
 
 /** The fields of a written hand-in its own view shows, so they aren't listed again below it. */
@@ -64,7 +77,7 @@ export function cardStatus(
       : {
           ...base,
           icon: '✓',
-          text: card.sent?.at ? 'Sent' : card.delivery?.merged ? 'Merged' : 'Done',
+          text: card.sent?.at ? 'Sent' : card.delivery?.merged ? 'Added to the project' : 'Done',
           tone: 'dim',
         };
   }
@@ -73,21 +86,26 @@ export function cardStatus(
       return {
         ...base,
         icon: '!',
-        text: `Bounced ${card.bounces} times, came to you`,
+        text: `Sent back ${card.bounces} times, so it came to you`,
         tone: 'amber',
       };
     }
     if (card.delivery?.error) {
-      return { ...base, icon: '!', text: "Couldn't merge: see the ticket", tone: 'amber' };
+      return {
+        ...base,
+        icon: '!',
+        text: "Couldn't be added to the project: open it",
+        tone: 'amber',
+      };
     }
     if (card.sent?.error) {
-      return { ...base, icon: '!', text: "Couldn't send: see the ticket", tone: 'amber' };
+      return { ...base, icon: '!', text: "Couldn't be sent: open it", tone: 'amber' };
     }
     const signer = card.route.at(-1)?.clankId;
     return {
       ...base,
       icon: '✓',
-      text: signer ? `${name(signer)} signed off` : 'Ready for you',
+      text: signer ? `Checked by ${name(signer)}, ready for you` : 'Ready for you',
       tone: 'mint',
     };
   }
@@ -98,7 +116,7 @@ export function cardStatus(
     return {
       ...base,
       icon: '✕',
-      text: `Failed: ${card.reason ?? 'no reason given'}`,
+      text: `Hit a problem: ${card.reason ?? 'no reason given'}`,
       tone: 'rose',
     };
   }
@@ -110,7 +128,7 @@ export function cardStatus(
     return {
       ...base,
       icon: '◐',
-      text: `${card.step < 0 ? 'Ready · ' : clankId ? `${name(clankId)} next · ` : ''}${card.reason?.replace(/\.$/, '') ?? 'Waiting for a free slot'}`,
+      text: `${card.step < 0 ? 'Ready · ' : clankId ? `${name(clankId)} next · ` : ''}${card.reason?.replace(/\.$/, '') ?? 'Waiting its turn'}`,
       tone: card.reason?.startsWith('Paused:') ? 'amber' : 'dim',
     };
   }
@@ -130,18 +148,25 @@ export function cardStatus(
     .filter((t) => t && t.column !== 'done')
     .map((t) => t!.key);
   if (waiting.length > 0) {
-    return { ...base, icon: '○', text: `Waits on ${waiting.join(', ')}`, tone: 'dim' };
+    return { ...base, icon: '○', text: `Waits for ${waiting.join(', ')}`, tone: 'dim' };
   }
   if (card.proposed)
-    return { ...base, icon: '○', text: 'Proposed, waiting for you', tone: 'lavender' };
+    return { ...base, icon: '○', text: 'Suggested by the crew, waiting for you', tone: 'lavender' };
   return {
     ...base,
     icon: '○',
-    text: card.assignee
-      ? `${name(card.assignee)} · next`
-      : `Open: next free ${TYPE_LABELS[card.type]} maker`,
+    text: card.assignee ? `${name(card.assignee)} · next` : 'Open: whoever is free next',
     tone: 'dim',
   };
+}
+
+/**
+ * When a piece of work came to the user: its last check, which a hand-in after changes renews. It's
+ * where the work sits in the conversation, before and after it's decided.
+ */
+export function handedInAt(card: TicketCard): number {
+  const signed = card.reviews.at(-1)?.at;
+  return +(signed ? new Date(signed) : (card.doneAt ?? card.updatedAt));
 }
 
 /** A clank's name, or the id when it's not in the crew list. */

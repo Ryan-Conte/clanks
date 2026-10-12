@@ -114,7 +114,17 @@ export interface FeedbackPart {
   text: string;
 }
 
-export type MessagePart = TextPart | ToolPart | NotePart | FeedbackPart;
+/** A picture the user put in their message: a screenshot they pasted, or a photo. */
+export interface ImagePart {
+  type: 'image';
+  round: number;
+  /** Where it's kept, in the chat's artifacts, as a tool call's picture is. */
+  image: string;
+  /** Its file's name when it had one, to tell pictures apart. */
+  name: string;
+}
+
+export type MessagePart = TextPart | ToolPart | NotePart | FeedbackPart | ImagePart;
 
 export interface MessageRecord {
   id: string;
@@ -163,20 +173,56 @@ export function textOf(parts: MessagePart[]): string {
 
 export const conversationIdSchema = z.uuid();
 
-export const newConversationSchema = z.object({
-  clankId: clankIdSchema,
-  /** The first message, so a chat is only saved once there's something in it. */
-  text: z.string().trim().min(1).max(200_000),
-  /** A folder for the chat to be about from the start. */
-  folder: z.string().min(1).max(4096).nullable().optional(),
-  /** A project for the chat to be in, whose workspace it's about. */
-  projectId: z.uuid().nullable().optional(),
+/** How many pictures one message carries. Each costs a model about a page of text. */
+export const MAX_MESSAGE_IMAGES = 4;
+
+/**
+ * The most pixels a picture is sent with. The window scales a bigger one down before it sends it:
+ * a local model takes about a megapixel, and more than that has taken its server down.
+ */
+export const MESSAGE_IMAGE_PIXELS = 1_000_000;
+
+/** A picture as the window sends it with a message. */
+export const messageImageSchema = z.object({
+  name: z.string().trim().max(200).default(''),
+  mediaType: z.enum(['image/jpeg', 'image/png']),
+  /** Base64, already scaled down. */
+  data: z
+    .string()
+    .min(1)
+    .max(8_000_000)
+    .regex(/^[A-Za-z0-9+/]+={0,2}$/, "That isn't a picture"),
 });
 
-export const sendMessageSchema = z.object({
-  conversationId: conversationIdSchema,
-  text: z.string().trim().min(1).max(200_000),
-});
+export type MessageImage = z.infer<typeof messageImageSchema>;
+
+const messageImagesSchema = z.array(messageImageSchema).max(MAX_MESSAGE_IMAGES).default([]);
+
+/** A message says something or shows something: its words can be empty when it has a picture. */
+const said = (message: { text: string; images: MessageImage[] }) =>
+  message.text !== '' || message.images.length > 0;
+
+export const newConversationSchema = z
+  .object({
+    clankId: clankIdSchema,
+    /** The first message, so a chat is only saved once there's something in it. */
+    text: z.string().trim().max(200_000),
+    /** Pictures that go with it. */
+    images: messageImagesSchema,
+    /** A folder for the chat to be about from the start. */
+    folder: z.string().min(1).max(4096).nullable().optional(),
+    /** A project for the chat to be in, whose workspace it's about. */
+    projectId: z.uuid().nullable().optional(),
+  })
+  .refine(said, 'Write something, or add a picture');
+
+export const sendMessageSchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    text: z.string().trim().max(200_000),
+    images: messageImagesSchema,
+  })
+  .refine(said, 'Write something, or add a picture');
 
 export const approvalDecisionSchema = z.discriminatedUnion('decision', [
   z.object({ decision: z.literal('allow') }),

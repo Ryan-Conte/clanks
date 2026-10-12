@@ -12,8 +12,8 @@ const STATUS: Record<
   { label: string; tone: 'dim' | 'lavender' | 'amber' | 'mint' }
 > = {
   draft: { label: 'Draft, being written', tone: 'lavender' },
-  review: { label: 'Draft, with Atlas for sign-off', tone: 'lavender' },
-  signed_off: { label: 'Signed off, waiting for you', tone: 'amber' },
+  review: { label: 'Draft, being checked by Atlas', tone: 'lavender' },
+  signed_off: { label: 'Checked, waiting for you', tone: 'amber' },
   approved: { label: 'Approved', tone: 'mint' },
 };
 
@@ -29,15 +29,15 @@ export function SpecView({ snapshot }: { snapshot: BoardSnapshot }) {
       <div className="mx-auto flex max-w-xl flex-col items-center gap-4 px-8 py-20 text-center">
         <h2 className="text-xl font-semibold tracking-tight">No spec yet</h2>
         <p className="text-sm text-dim">
-          Tell Atlas what you want to make. It talks the idea through with you, then briefs Scribe,
-          who writes the user stories and acceptance criteria. Atlas signs it off, and you approve
-          it here before anything is built.
+          The spec is the plan in writing: what will be made, as short stories with a checklist for
+          each. Tell Atlas what you want. Scribe writes it up, Atlas checks it, and you approve it
+          before anything is built.
         </p>
         <Button
           variant="primary"
-          onClick={() => go({ page: 'draft', clankId: 'atlas', projectId: snapshot.project.id })}
+          onClick={() => go({ page: 'project', id: snapshot.project.id, tab: 'overview' })}
         >
-          Chat with Atlas
+          Talk to Atlas
         </Button>
       </div>
     );
